@@ -36,3 +36,19 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# Archivos de datos de Sicar (contienen info del negocio, no van en git)
+articulosExportados.xlsx
+RepExistencias.xlsx
+
+# Imágenes de productos generadas por Medusa
+*s_s_selected*.jpg
+*s_s_selected*.png
+*s_s_selected*.jpeg
+*s_s_selected*.webp
+
+# Archivos de configuración local de Claude
+launch-admin.js
+launch-api.js
+start-admin.bat
+start-api.bat
