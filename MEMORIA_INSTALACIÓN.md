@@ -23,7 +23,7 @@
 2026-04-07
 
 ### Última verificación
-2026-04-08 19:30 (verificación automática)
+2026-04-08 20:00 (verificación automática)
 
 ### Servicios corriendo
 
@@ -39,7 +39,7 @@
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
 | ferremex-admin | 15880 | 4h+ | 0 | 17.3 MB |
-| ferremex-api | 6636 | 4h+ | 0 | 16.3 MB |
+| ferremex-api | 6636 | 4h+ | 0 | 16.5 MB |
 
 > ✅ Ambos procesos estables sin reinicios en esta sesión.
 
@@ -79,7 +79,7 @@
 ### Repositorio
 - **GitHub:** https://github.com/ferremextlaxiaco/ferremex
 - **Rama principal:** master
-- **Último commit:** (ver abajo — reparar-inventario)
+- **Último commit:** (ver abajo)
 
 ### Estructura del proyecto
 ```
@@ -196,4 +196,7 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Descubierto: `productModule.createProducts()` directo NO crea inventory items (solo el workflow HTTP lo hace)
 - Escrito `reparar-inventario.ts`: crea 20,033 inventory items + 20,044 links variant↔item + 3,270 levels
 - Inventario visible en http://localhost:9000/inventory ✅
+- Fix: inventory items tenían title=SKU en lugar del nombre del producto
+- reparar-inventario.ts corregido: ahora usa `v.title` (descripción) como title del item
+- Verificado: 20,044 items tienen nombre correcto (ej. "Barreta de uña 3/4' x 60 cm, Truper")
 - **Fase 1 COMPLETA (catálogo + imágenes + inventario)**

@@ -68,9 +68,10 @@ export default async function repararInventario({ container }: ExecArgs) {
   logger.info("Cargando variantes del catálogo...")
   const variants = await productModule.listProductVariants(
     {},
-    { select: ["id", "sku"], take: 999999 }
+    { select: ["id", "sku", "title"], take: 999999 }
   )
   logger.info(`Variantes en catálogo: ${variants.length}`)
+  const titulosPorSku = new Map(variants.filter(v => v.sku).map(v => [v.sku!, v.title ?? v.sku!]))
 
   // -------------------------------------------------------------------------
   // 3. Detectar qué variants ya tienen inventory_item linkeado
@@ -114,7 +115,7 @@ export default async function repararInventario({ container }: ExecArgs) {
         const created = await inventoryModule.createInventoryItems(
           lote.map((v) => ({
             sku: v.sku!,
-            title: v.sku!,
+            title: titulosPorSku.get(v.sku!) ?? v.sku!,
             requires_shipping: true,
           }))
         )
