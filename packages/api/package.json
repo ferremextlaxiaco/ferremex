@@ -22,6 +22,7 @@
     "seed": "medusa exec ./src/scripts/seed.ts",
     "import:productos": "medusa exec ./src/scripts/import-productos.ts",
     "attach:imagenes": "medusa exec ./src/scripts/attach-imagenes.ts",
+    "reparar:inventario": "medusa exec ./src/scripts/reparar-inventario.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",

@@ -23,7 +23,7 @@
 2026-04-07
 
 ### Última verificación
-2026-04-08
+2026-04-08 19:30 (verificación automática)
 
 ### Servicios corriendo
 
@@ -31,15 +31,15 @@
 |---------|--------|-------------|--------|
 | MedusaJS API | 9000 | ferremex-api | ✅ online |
 | Vite Admin Dev Server | 7000 | ferremex-admin | ✅ online |
-| Redis | 6379 | Docker (redis-ferremex) | ✅ online (Up 4 hours) |
+| Redis | 6379 | Docker (redis-ferremex) | ✅ online |
 | PostgreSQL | 5432 | Servicio Windows | ✅ online |
 
 ### Estado PM2
 
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
-| ferremex-admin | 15880 | 3h | 0 | 18.2 MB |
-| ferremex-api | 6636 | 3h | 0 | 16.7 MB |
+| ferremex-admin | 15880 | 4h+ | 0 | 17.3 MB |
+| ferremex-api | 6636 | 4h+ | 0 | 16.3 MB |
 
 > ✅ Ambos procesos estables sin reinicios en esta sesión.
 
@@ -79,7 +79,7 @@
 ### Repositorio
 - **GitHub:** https://github.com/ferremextlaxiaco/ferremex
 - **Rama principal:** master
-- **Último commit:** `423ef3c` — Fase 0: infraestructura Ferremex corriendo en red local
+- **Último commit:** (ver abajo — reparar-inventario)
 
 ### Estructura del proyecto
 ```
@@ -110,7 +110,7 @@ C:\ferremex\
 - **Registro de vendedores:** activado
 
 ### Decisiones pendientes
-- [ ] Renombrar almacén "European Warehouse" → "Sucursal Tlaxiaco" (pendiente confirmación)
+- [x] ~~Renombrar almacén "European Warehouse"~~ → renombrado a "Almacén Principal" ✅
 - [ ] PAC para CFDI: Facturama vs Facturapi (decidir cuando POS esté activo)
 - [ ] Disco de la Matriz: SSD o HDD (no confirmado)
 - [ ] Impresoras de tickets en las cajas: marca/modelo pendiente
@@ -132,17 +132,25 @@ Productos reales de Ferremex cargados en el sistema.
 - **20,032 artículos** importados desde `articulosExportados.xlsx` (exportado de Sicar)
 - **41 categorías** creadas automáticamente
 - **3,270 artículos** con existencia > 0 registrada en inventario
-- Script idempotente: se puede volver a correr sin duplicar datos
+- **2,673 productos** con thumbnail asignado desde carpeta "Imagenes de productos/"
+- **20,033 inventory items** creados y linkeados a sus variants
+- **3,270 inventory levels** con existencia > 0 en Almacén Principal
+- Scripts idempotentes: se pueden volver a correr sin duplicar datos
 
 ### Cómo actualizar el catálogo (cuando cambien precios en Sicar)
 1. Exportar desde Sicar: `PROCESOS → EXPORTAR → articulosExportados.xlsx`
 2. Reemplazar el archivo en `C:\ferremex\articulosExportados.xlsx`
 3. Ejecutar: `cd C:\ferremex\packages\api && bun run import:productos`
 
-### Script de importación
-- **Archivo:** `packages/api/src/scripts/import-productos.ts`
-- **Comando:** `bun run import:productos` (desde `packages/api`)
-- **Fuente:** `articulosExportados.xlsx` en raíz del proyecto
+### Cómo actualizar imágenes
+1. Colocar imágenes en `C:\ferremex\Imagenes de productos\` (patrón: `{SKU}s_s_selected{N}.jpg`)
+2. Ejecutar: `cd C:\ferremex\packages\api && bun run attach:imagenes`
+
+### Scripts disponibles (desde `packages/api`)
+- `bun run import:productos` — importa/actualiza catálogo desde articulosExportados.xlsx
+- `bun run attach:imagenes` — asigna thumbnails a productos desde carpeta de imágenes
+- `bun run reparar:inventario` — crea inventory items + links + levels (solo necesario una vez)
+- Las imágenes se copian a `packages/api/static/` y se sirven en `http://localhost:9000/static/`
 
 ---
 
@@ -179,5 +187,13 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Fix: xlsx usa require() en lugar de import() dinámico por compatibilidad ESM/CJS con Medusa
 - Importación ejecutada exitosamente: 20,032 productos, 41 categorías, 0 errores
 - `packages/api/package.json` actualizado: dependencia `xlsx@^0.18.5` y script `import:productos`
-- **Fase 1 COMPLETA**
-- Pendiente: renombrar almacén "European Warehouse" → nombre real de Ferremex
+- Almacén renombrado "European Warehouse" → "Almacén Principal" via script
+- Escrito `packages/api/src/scripts/attach-imagenes.ts` — asigna thumbnails desde "Imagenes de productos/"
+- 2,673 imágenes asignadas exitosamente; imágenes servidas desde `packages/api/static/`
+- Fix: `productModule.updateProducts([{id,..}])` falla con `Product.0` — correcto es `updateProducts(id, data)`
+- `packages/api/static/` y `"Imagenes de productos/"` agregados a .gitignore
+- Commit `6688d2b`: Fase 1 completa + imágenes de productos
+- Descubierto: `productModule.createProducts()` directo NO crea inventory items (solo el workflow HTTP lo hace)
+- Escrito `reparar-inventario.ts`: crea 20,033 inventory items + 20,044 links variant↔item + 3,270 levels
+- Inventario visible en http://localhost:9000/inventory ✅
+- **Fase 1 COMPLETA (catálogo + imágenes + inventario)**
