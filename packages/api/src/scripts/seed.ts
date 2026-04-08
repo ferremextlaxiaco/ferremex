@@ -191,13 +191,13 @@ export default async function seedDemoData({ container }: ExecArgs) {
   logger.info("Seeding stock location data...");
   const stockLocationModule = container.resolve(Modules.STOCK_LOCATION);
   const existingStockLocations = await stockLocationModule.listStockLocations({
-    name: "European Warehouse",
+    name: "Almacén Principal",
   });
 
   let stockLocation;
   if (existingStockLocations.length) {
     stockLocation = existingStockLocations[0];
-    logger.info("Stock location 'European Warehouse' already exists, skipping.");
+    logger.info("Stock location 'Almacén Principal' already exists, skipping.");
   } else {
     const { result: stockLocationResult } = await createStockLocationsWorkflow(
       container
@@ -205,10 +205,10 @@ export default async function seedDemoData({ container }: ExecArgs) {
       input: {
         locations: [
           {
-            name: "European Warehouse",
+            name: "Almacén Principal",
             address: {
-              city: "Copenhagen",
-              country_code: "DK",
+              city: "Heroica Ciudad de Tlaxiaco",
+              country_code: "MX",
               address_1: "",
             },
           },
@@ -267,47 +267,23 @@ export default async function seedDemoData({ container }: ExecArgs) {
   }
 
   const existingFulfillmentSets = await fulfillmentModuleService.listFulfillmentSets({
-    name: "European Warehouse delivery",
+    name: "Almacén Principal - Envíos",
   });
 
   let fulfillmentSet;
   if (existingFulfillmentSets.length) {
     fulfillmentSet = existingFulfillmentSets[0];
-    logger.info("Fulfillment set 'European Warehouse delivery' already exists, skipping.");
+    logger.info("Fulfillment set 'Almacén Principal - Envíos' already exists, skipping.");
   } else {
     fulfillmentSet = await fulfillmentModuleService.createFulfillmentSets({
-      name: "European Warehouse delivery",
+      name: "Almacén Principal - Envíos",
       type: "shipping",
       service_zones: [
         {
-          name: "Europe",
+          name: "México",
           geo_zones: [
             {
-              country_code: "gb",
-              type: "country",
-            },
-            {
-              country_code: "de",
-              type: "country",
-            },
-            {
-              country_code: "dk",
-              type: "country",
-            },
-            {
-              country_code: "se",
-              type: "country",
-            },
-            {
-              country_code: "fr",
-              type: "country",
-            },
-            {
-              country_code: "es",
-              type: "country",
-            },
-            {
-              country_code: "it",
+              country_code: "mx",
               type: "country",
             },
           ],
