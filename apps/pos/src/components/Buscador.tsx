@@ -2,6 +2,12 @@ import { useRef, useState } from "react"
 import { buscarProductos, type ProductoPOS } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
 
+function stockClass(existencia: number) {
+  if (existencia <= 0) return "stock-cero"
+  if (existencia <= 3) return "stock-bajo"
+  return "stock-ok"
+}
+
 export function Buscador() {
   const [query, setQuery] = useState("")
   const [resultados, setResultados] = useState<ProductoPOS[]>([])
@@ -19,7 +25,6 @@ export function Buscador() {
       const res = await buscarProductos(texto)
       setResultados(res)
       if (res.length === 1 && res[0]) {
-        // Un único resultado: agregar automáticamente al carrito
         agregarAlCarrito(res[0])
         setQuery("")
         setResultados([])
@@ -40,10 +45,7 @@ export function Buscador() {
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (e.key === "Enter") buscar(query)
-    if (e.key === "Escape") {
-      setResultados([])
-      setQuery("")
-    }
+    if (e.key === "Escape") { setResultados([]); setQuery("") }
   }
 
   return (
@@ -59,11 +61,7 @@ export function Buscador() {
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
         />
-        <button
-          className="btn-primary"
-          onClick={() => buscar(query)}
-          disabled={buscando}
-        >
+        <button className="btn-primary" onClick={() => buscar(query)} disabled={buscando}>
           {buscando ? "…" : "Buscar"}
         </button>
       </div>
@@ -80,7 +78,9 @@ export function Buscador() {
               </div>
               <div className="resultado-derecha">
                 <span className="resultado-precio">${p.precio.toFixed(2)}</span>
-                <span className="resultado-stock">Stock: {p.existencia}</span>
+                <span className={`resultado-stock ${stockClass(p.existencia)}`}>
+                  {p.existencia > 0 ? `Stock: ${p.existencia}` : "Sin stock"}
+                </span>
                 <button
                   className="btn-agregar"
                   onClick={() => agregarAlCarrito(p)}

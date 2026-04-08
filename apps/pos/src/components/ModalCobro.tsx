@@ -15,20 +15,16 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
+  useEffect(() => { inputRef.current?.focus() }, [])
 
   const pago = parseFloat(pagoStr) || 0
   const cambio = pago - total
   const pagoValido = pago >= total
 
   async function handleConfirmar() {
-    if (!pagoValido || procesando) return
-    if (!state.cajero) return
+    if (!pagoValido || procesando || !state.cajero) return
     setProcesando(true)
     setError(null)
-
     try {
       const venta = await registrarVenta({
         cajero: state.cajero.nombre,
@@ -41,18 +37,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         })),
         pago_efectivo: pago,
       })
-
-      // Abrir cajón (no bloquea si falla)
       await abrirCajon()
-
-      // Limpiar carrito
       dispatch({ type: "CLEAR" })
-
-      // Notificar para imprimir ticket
       onVentaCompletada(venta)
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Error desconocido"
-      setError(msg)
+      setError(err instanceof Error ? err.message : "Error desconocido")
       setProcesando(false)
     }
   }
@@ -77,7 +66,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         </div>
 
         <div className="cobro-total">
-          <span>Total</span>
+          <span className="cobro-total-label">Total</span>
           <span className="cobro-total-valor">${total.toFixed(2)}</span>
         </div>
 
@@ -96,7 +85,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         </div>
 
         <div className={`cobro-cambio ${pagoValido ? "cambio-ok" : "cambio-insuficiente"}`}>
-          <span>Cambio</span>
+          <span className="cobro-cambio-label">Cambio</span>
           <span className="cobro-cambio-valor">
             {pagoValido ? `$${cambio.toFixed(2)}` : "—"}
           </span>

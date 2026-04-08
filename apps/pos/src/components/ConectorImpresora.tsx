@@ -20,23 +20,16 @@ export function ConectorImpresora() {
 
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div
-        style={{
-          width: 10,
-          height: 10,
-          borderRadius: "50%",
-          background: conectado ? "#22c55e" : "#ef4444",
-          flexShrink: 0,
-        }}
-      />
       {conectado ? (
-        <span style={{ fontSize: 12, color: "#666" }}>Impresora conectada</span>
+        <button className="btn-conectar-impresora conectada" disabled>
+          <span style={{ fontSize: 9 }}>●</span> Impresora lista
+        </button>
       ) : (
-        <button onClick={handleConectar} className="btn-secondary btn-sm">
-          Conectar impresora / cajón
+        <button className="btn-conectar-impresora" onClick={handleConectar}>
+          <span style={{ fontSize: 9 }}>●</span> Conectar impresora / cajón
         </button>
       )}
-      {error && <span style={{ fontSize: 12, color: "#ef4444" }}>{error}</span>}
+      {error && <span style={{ fontSize: 12, color: "var(--red)" }}>{error}</span>}
     </div>
   )
 }

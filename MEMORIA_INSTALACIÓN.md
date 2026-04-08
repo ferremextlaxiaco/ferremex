@@ -23,7 +23,7 @@
 2026-04-07
 
 ### Última verificación
-2026-04-08 21:00 (verificación automática)
+2026-04-08 21:30 (verificación automática)
 
 ### Servicios corriendo
 
@@ -45,9 +45,9 @@
 
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
-| ferremex-admin | 15880 | 5h+ | 0 | 14.7 MB |
-| ferremex-api | 20360 | ~2m | 3 | 56.6 MB |
-| ferremex-pos | 18824 | 20m | 1 | 56.4 MB |
+| ferremex-admin | 15880 | 6h | 0 | 14.8 MB |
+| ferremex-api | 20360 | 37m | 3 | 48.7 MB |
+| ferremex-pos | 18824 | 57m | 1 | 47.9 MB |
 
 > ⚠️ ferremex-api tiene 3 reinicios — normal durante sesión de desarrollo activa.
 
@@ -251,3 +251,25 @@ en `packages/api/src/api/middlewares.ts`.
   → Solución: eliminar middleware cors explícito — el proxy Vite (7002→9000) ya resuelve CORS
 - Rutas antiguas `packages/api/src/api/store/pos/` eliminadas (reemplazadas por `caja/`)
 - API arranca limpio ✅ — búsqueda en prueba
+
+### Sesión 2026-04-08 (continuación tarde)
+- Bug 500 en búsqueda: `import cors from 'cors'` en middlewares.ts → módulo no instalado
+  → Fix: eliminado el import (proxy Vite resuelve CORS, no se necesita el paquete)
+- Bug 500 persistente: `Entity 'ProductVariant' does not have property 'prices'`
+  → En Medusa 2.x, prices NO son relación directa de ProductVariant
+  → Fix ruta `/caja/productos`: usar `query.graph` con `entity:"product_variant"` para cross-módulo join
+  → Requirió 2 queries: primero `productModule.listProducts()`, luego `query.graph` con variant IDs
+- Bug precios en $0: solo 22 price sets para 20,032 productos (import directo no crea price sets)
+  → Verificado: 20,008 price sets SÍ existen (el import los creó correctamente)
+  → Real cause: path `variants.price_set.prices` no funciona desde `entity:"product"` en query.graph
+  → Fix final: 2 queries separadas — listProducts para buscar, query.graph por variant IDs para precios
+- Creado `src/scripts/asignar-precios.ts` (idempotente, crea price sets vía pricingModule + remoteLink)
+  → Script innecesario al final (ya había 19,986 prices MXN en DB) pero queda disponible
+- Rediseño visual POS: modo oscuro estilo Home Depot
+  → Paleta: fondo #111, panels #1c1c1c, naranja #F96302, texto #f0f0f0
+  → pos.css completamente reescrito
+  → Buscador: cards oscuras con stock coloreado (verde/amarillo/gris)
+  → Carrito: panel dark con total naranja bold
+  → Modal cobro: overlay oscuro con borde naranja
+  → ConectorImpresora: pill button con estado visual
+- Commit `152ef0c`: Fase 2 POS completa guardada en git
