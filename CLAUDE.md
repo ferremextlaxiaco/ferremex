@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Ferremex is a hardware store (ferretería) in Tlaxiaco, Oaxaca, México, building an e-commerce and POS platform on top of Mercur (a Medusa 2.x marketplace framework). The stack runs locally on a Windows machine and is also accessed from store terminals on the local network (`192.168.1.105`).
 
-**Phase status:** Fase 0 (infrastructure) is complete. See `MEMORIA_INSTALACIÓN.md` for current phase tracking and `CLAUDE CONTEXTO FERREMEX.md` for business context and n8n automation rules.
+**Phase status:** Fase 0 (infrastructure) and Fase 1 (product catalog) are complete. See `MEMORIA_INSTALACIÓN.md` for current phase tracking and `CLAUDE CONTEXTO FERREMEX.md` for business context and n8n automation rules. Next: Fase 2 — POS de mostrador.
 
 ---
 
@@ -72,6 +72,17 @@ bun run test:integration:http      # HTTP integration tests
 bun run test:integration:modules   # module-level integration tests
 ```
 
+### From `packages/api` — Catalog & Inventory scripts (Fase 1)
+
+```bash
+bun run import:productos    # import/update catalog from articulosExportados.xlsx (root)
+bun run attach:imagenes     # assign thumbnails from "Imagenes de productos/" folder
+bun run reparar:inventario  # create inventory items + variant links + stock levels (one-time)
+```
+
+Images are copied to `packages/api/static/` and served at `http://localhost:9000/static/`.
+Source files (`articulosExportados.xlsx`, `RepExistencias.xlsx`, image folder) live at the repo root and are git-ignored.
+
 ### Mercur CLI (run from project root, where `blocks.json` lives)
 
 ```bash
@@ -134,12 +145,13 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 
 ## Known Gotchas
 
-See `.claude/lessons.md` for the full list. Critical items:
-
 - **Admin panel requires Vite first**: Start the Vite dev server (`ferremex-admin` in PM2) before the API. The API proxies Vite — if Vite isn't up, the dashboard returns errors.
 - **`base: '/dashboard'` is required**: If removed from `apps/admin/vite.config.ts`, Vite asset paths break under the API proxy.
 - **PM2 launchers must be `.js` files**: `.bat` launchers caused infinite restart loops. The current `launch-api.js` / `launch-admin.js` approach is stable.
 - **Codegen**: Run `dev:codegen` from `packages/api` after changing route paths or request/response types that feed `@acme/api/_generated`.
+- **`createProducts()` does not create inventory**: Calling `productModule.createProducts()` directly skips inventory item creation. Use the HTTP workflow endpoint, or run `reparar:inventario` afterwards.
+- **`updateProducts()` signature**: `productModule.updateProducts([{id, ...}])` (array form) throws `Product.0` errors. Correct call is `updateProducts(id, data)` (single item form).
+- **xlsx import**: Use `require()` instead of dynamic `import()` for the `xlsx` package — ESM/CJS incompatibility with Medusa's build pipeline.
 
 ---
 
@@ -150,6 +162,18 @@ See `.claude/lessons.md` for the full list. Critical items:
 | Login / Admin panel | http://localhost:9000/login | http://192.168.1.105:9000/login |
 | Admin orders | http://localhost:9000/orders | http://192.168.1.105:9000/orders |
 | Vendor portal | http://localhost:9000/seller | http://192.168.1.105:9000/seller |
+
+---
+
+## n8n Automation Layer
+
+n8n runs in Docker Desktop at `http://localhost:5678` (dev/test only). Production workflows live on a separate VPS — never activate a workflow on the VPS without testing locally first.
+
+Full rules in `CLAUDE CONTEXTO FERREMEX.md`. Key points:
+- **Active workflow**: "Automatización de Facturas" (ID: `DZ2HVxs6Lxl3OnP3`) — monitors Gmail for supplier invoices, sorts PDFs/XMLs into `/facturas/año/mes/Proveedor/`.
+- **Inactive workflow**: "Descarga Facturas Truper" (ID: `MKUgZ9Oa5oiVyysZ`) — downloads invoices from Truper's REST API.
+- n8n MCP (`n8n-mcp`) is configured to point at localhost only. Never wire it to the production VPS.
+- Node names must be descriptive Spanish (e.g. "Descargar PDF", not "HTTP Request"). All non-obvious nodes need an explanatory note.
 
 ---
 

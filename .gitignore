@@ -60,3 +60,9 @@ Imagenes de productos/
 
 # Archivos temporales de Vite
 *.timestamp-*.mjs
+
+# Datos de ventas POS (contienen info financiera del negocio)
+packages/api/data/
+
+# Lanzadores PM2 locales
+launch-pos.js

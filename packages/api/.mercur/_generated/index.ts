@@ -696,4 +696,9 @@ export type Routes = {
         };
         uploads: typeof import("@mercurjs/core-plugin/api/vendor/uploads/route");
     };
+    caja: {
+        corte: typeof import("../../src/api/caja/corte/route");
+        productos: typeof import("../../src/api/caja/productos/route");
+        ventas: typeof import("../../src/api/caja/ventas/route");
+    };
 };
