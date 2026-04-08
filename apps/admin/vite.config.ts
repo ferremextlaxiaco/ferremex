@@ -4,6 +4,7 @@ import { mercurDashboardPlugin } from '@mercurjs/dashboard-sdk'
 
 // https://vite.dev/config/
 export default defineConfig({
+  base: '/dashboard',
   plugins: [
     react(),
     mercurDashboardPlugin({

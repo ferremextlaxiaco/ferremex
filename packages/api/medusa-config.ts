@@ -31,7 +31,7 @@ module.exports = defineConfig({
     {
       resolve: '@mercurjs/core-plugin/modules/admin-ui',
       options: {
-        appDir: path.join(__dirname, '../../apps/admin'),
+        appDir: path.join(__dirname, '../../apps/admin/dist'),
         path: '/dashboard',
       } as DashboardModuleOptions
     },

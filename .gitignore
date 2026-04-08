@@ -52,3 +52,11 @@ launch-admin.js
 launch-api.js
 start-admin.bat
 start-api.bat
+
+# Imágenes de productos (directorio de archivos estáticos servidos por Medusa)
+packages/api/static/
+"Imagenes de productos/"
+Imagenes de productos/
+
+# Archivos temporales de Vite
+*.timestamp-*.mjs
