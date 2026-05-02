@@ -37,6 +37,8 @@ export function Carrito({ onCobrar }: CarritoProps) {
                 <button
                   className="btn-cantidad"
                   onClick={() => dispatch({ type: "INCREMENT", sku: item.sku })}
+                  disabled={item.cantidad >= item.existencia}
+                  title={item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
                 >
                   +
                 </button>

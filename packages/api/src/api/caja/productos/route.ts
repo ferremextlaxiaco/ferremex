@@ -1,16 +1,50 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 
+/** Convierte una URL absoluta de thumbnail a ruta relativa /static/... */
+function thumbnailPath(url: string | null | undefined): string | null {
+  if (!url) return null
+  try {
+    return new URL(url).pathname // http://localhost:9000/static/x.jpg → /static/x.jpg
+  } catch {
+    return url.startsWith("/") ? url : null
+  }
+}
+
 /**
- * GET /caja/productos?q=<texto>  o  ?sku=<clave>
- * Busca productos para el POS. Sin publishable API key requerida.
+ * Normalización fonética para español:
+ * - quita acentos
+ * - qu → k, c[ei] → s, z → s  (ce/ci/za/ze/zi suenan igual que se/si/sa...)
+ * - v → b
+ * - ll → y
+ * - h → "" (muda)
+ * - todo carácter no alfanumérico → espacio
  *
- * En Medusa 2.x, los precios están en el módulo Pricing vinculados a variantes.
- * query.graph con entity:"product" no resuelve bien el join cross-módulo hacia prices.
- * Por eso se hace en dos pasos:
- *   1. productModule.listProducts() para buscar por texto / SKU
- *   2. query.graph con entity:"product_variant" para obtener price_set.prices
+ * Así "cierra" y "sierra" quedan iguales, "pvc" y "pbc" quedan iguales, etc.
  */
+function normalizarFonetico(texto: string): string {
+  return texto
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")  // quitar acentos (á→a, é→e…)
+    .replace(/ll/g, "y")              // ll → y  (antes que otras reglas)
+    .replace(/qu/g, "k")              // qu → k
+    .replace(/c(?=[ei])/g, "s")       // ce → se, ci → si
+    .replace(/z/g, "s")               // z → s
+    .replace(/v/g, "b")               // v → b
+    .replace(/h/g, "")                // h muda
+    .replace(/[^a-z0-9]/g, " ")       // todo lo demás → espacio
+    .replace(/\s+/g, " ")
+    .trim()
+}
+
+/** Parte la query normalizada en palabras de ≥ 2 caracteres */
+function palabrasQuery(q: string): string[] {
+  return normalizarFonetico(q)
+    .split(" ")
+    .filter((w) => w.length >= 2)
+}
+
 export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const productModule = req.scope.resolve(Modules.PRODUCT)
   const inventoryModule = req.scope.resolve(Modules.INVENTORY)
@@ -18,33 +52,100 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   const q = String(req.query["q"] ?? "").trim()
   const skuExacto = String(req.query["sku"] ?? "").trim()
+  const categoryId = String(req.query["category_id"] ?? "").trim() || null
+  const departamento = String(req.query["departamento"] ?? "").trim() || null
 
-  if (!q && !skuExacto) {
+  if (!q && !skuExacto && !categoryId && !departamento) {
     res.json([])
     return
   }
 
-  // ---------------------------------------------------------------------------
-  // 1. Obtener variantes que coincidan con la búsqueda
-  // ---------------------------------------------------------------------------
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean }
+  const variantesBase: VarianteBase[] = []
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let variantesBase: { id: string; sku: string | null; title: string | null }[] = []
+  // ── Intento de match exacto por SKU o código de barras ──────────────────
+  const codigoCandidato = skuExacto || (q && !q.includes(" ") ? q : "")
+  if (codigoCandidato) {
+    // Buscar por SKU y por barcode en paralelo
+    const [varsPorSku, varsPorBarcode] = await Promise.all([
+      productModule.listProductVariants(
+        { sku: [codigoCandidato] },
+        { select: ["id", "sku", "title", "product_id"], take: 1 }
+      ),
+      productModule.listProductVariants(
+        { barcode: [codigoCandidato] },
+        { select: ["id", "sku", "title", "product_id"], take: 1 }
+      ),
+    ])
+    const varEncontrada = varsPorSku[0] ?? varsPorBarcode[0] ?? null
+    if (varEncontrada) {
+      let thumbnail: string | null = null
+      let impuesto = false
+      if (varEncontrada.product_id) {
+        try {
+          const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
+          thumbnail = thumbnailPath(prod.thumbnail)
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          impuesto = !!(prod.metadata as any)?.impuesto
+        } catch { /* sin thumbnail */ }
+      }
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto })
+    }
+  }
 
-  if (skuExacto) {
-    const vars = await productModule.listProductVariants(
-      { sku: [skuExacto] },
-      { select: ["id", "sku", "title"], take: 1 }
+  if (variantesBase.length > 0) {
+    // Ya encontramos por SKU exacto — saltar la búsqueda fonética
+  } else if (!skuExacto) {
+    // ── Búsqueda por texto / filtros ────────────────────────────────────────
+
+    // Paso 1: cargar todos los productos (solo id + title + metadata, sin relaciones → rápido)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filtrosPaso1: any = {}
+    if (categoryId) filtrosPaso1.category_id = [categoryId]
+
+    const todosLosProductos = await productModule.listProducts(
+      filtrosPaso1,
+      { select: ["id", "title", "metadata"], take: 99999 }
     )
-    variantesBase = vars.map((v) => ({ id: v.id, sku: v.sku ?? null, title: v.title ?? null }))
-  } else {
+
+    // Paso 2: filtrar en JS (fonética multi-palabra + departamento)
+    const palabras = q ? palabrasQuery(q) : []
+
+    const productosFiltrados = todosLosProductos.filter((p) => {
+      // Filtro departamento (metadata)
+      if (departamento) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((p.metadata as any)?.departamento !== departamento) return false
+      }
+      // Filtro fonético multi-palabra
+      if (palabras.length > 0) {
+        const titleNorm = normalizarFonetico(p.title ?? "")
+        if (!palabras.every((pal) => titleNorm.includes(pal))) return false
+      }
+      return true
+    })
+
+    if (productosFiltrados.length === 0) {
+      res.json([])
+      return
+    }
+
+    // Mapa productId → impuesto (para aplicar IVA al precio base)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const impuestoPorProductoId = new Map(productosFiltrados.map((p) => [p.id, !!(p.metadata as any)?.impuesto]))
+
+    // Paso 3: cargar solo los productos que coincidieron, ahora con thumbnail + variants
+    const idsMatch = productosFiltrados.map((p) => p.id)
     const productos = await productModule.listProducts(
-      { q },
-      { select: ["id"], relations: ["variants"], take: 20 }
+      { id: idsMatch },
+      { select: ["id", "thumbnail"], relations: ["variants"], take: idsMatch.length + 10 }
     )
+
     for (const p of productos) {
+      const thumb = thumbnailPath(p.thumbnail)
+      const impuesto = impuestoPorProductoId.get(p.id) ?? false
       for (const v of p.variants ?? []) {
-        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null })
+        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto })
       }
     }
   }
@@ -54,12 +155,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  // ---------------------------------------------------------------------------
-  // 2. Obtener precios vía query.graph (product_variant → price_set → prices)
-  // ---------------------------------------------------------------------------
-
+  // ── Precios via query.graph (cross-módulo: variant → price_set → prices) ──
   const variantIds = variantesBase.map((v) => v.id)
-
   const { data: variantsConPrecios } = await query.graph({
     entity: "product_variant",
     filters: { id: variantIds },
@@ -67,24 +164,17 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     pagination: { take: variantIds.length + 10 },
   })
 
-  // Construir mapa variant_id → precio en centavos MXN
   const precioPorVariantId = new Map<string, number>()
   for (const v of variantsConPrecios) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const precios: any[] = (v as any).price_set?.prices ?? []
-    const precioMXN = precios.find((p) => p.currency_code === "mxn")?.amount
-    if (precioMXN !== undefined) {
-      precioPorVariantId.set(v.id, precioMXN)
-    }
+    const mxn = precios.find((p) => p.currency_code === "mxn")?.amount
+    if (mxn !== undefined) precioPorVariantId.set(v.id, mxn)
   }
 
-  // ---------------------------------------------------------------------------
-  // 3. Obtener existencias en inventario
-  // ---------------------------------------------------------------------------
-
+  // ── Existencias en inventario ─────────────────────────────────────────────
   const skus = variantesBase.map((v) => v.sku).filter(Boolean) as string[]
   const existenciaPorSku = new Map<string, number>()
-
   if (skus.length > 0) {
     const inventoryItems = await inventoryModule.listInventoryItems(
       { sku: skus },
@@ -99,28 +189,27 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const itemPorId = new Map(inventoryItems.map((i) => [i.id, i.sku]))
       for (const nivel of niveles) {
         const sku = itemPorId.get(nivel.inventory_item_id)
-        if (sku) {
-          existenciaPorSku.set(sku, (existenciaPorSku.get(sku) ?? 0) + (nivel.stocked_quantity ?? 0))
-        }
+        if (sku) existenciaPorSku.set(sku, (existenciaPorSku.get(sku) ?? 0) + (nivel.stocked_quantity ?? 0))
       }
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // 4. Componer respuesta
-  // ---------------------------------------------------------------------------
-
   const resultados = variantesBase
     .map((v) => {
-      const precioCents = precioPorVariantId.get(v.id) ?? 0
+      const precioBase = (precioPorVariantId.get(v.id) ?? 0) / 100
+      // Si el producto tiene impuesto, el precio base es sin IVA → aplicar 16%
+      const precio = v.impuesto ? Math.round(precioBase * 1.16 * 100) / 100 : precioBase
       return {
         sku: v.sku ?? "",
         descripcion: v.title ?? "",
-        precio: precioCents / 100,
+        precio,
         existencia: existenciaPorSku.get(v.sku ?? "") ?? 0,
+        thumbnail: v.thumbnail,
       }
     })
     .filter((r) => r.sku && r.descripcion)
+    // ── Ordenar: primero los que tienen stock ─────────────────────────────
+    .sort((a, b) => b.existencia - a.existencia)
 
   res.json(resultados)
 }

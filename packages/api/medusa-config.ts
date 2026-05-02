@@ -42,6 +42,15 @@ module.exports = defineConfig({
         path: '/seller',
       } as DashboardModuleOptions
     },
+    {
+      resolve: '@mercurjs/core-plugin/modules/vendor-ui',
+      options: {
+        appDir: path.join(__dirname, '../../apps/pos'),
+        path: '/pos',
+        // @ts-expect-error: viteDevServerPort is supported but not typed
+        viteDevServerPort: 7002,
+      } as DashboardModuleOptions
+    },
   ],
   plugins: [{
     resolve: "@mercurjs/core-plugin",

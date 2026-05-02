@@ -8,6 +8,7 @@ export default defineConfig({
     port: 7002,
     proxy: {
       "/caja": "http://localhost:9000",
+      "/static": "http://localhost:9000",
     },
   },
 })

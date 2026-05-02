@@ -697,8 +697,11 @@ export type Routes = {
         uploads: typeof import("@mercurjs/core-plugin/api/vendor/uploads/route");
     };
     caja: {
+        categorias: typeof import("../../src/api/caja/categorias/route");
         corte: typeof import("../../src/api/caja/corte/route");
         productos: typeof import("../../src/api/caja/productos/route");
+        ticketConfig: typeof import("../../src/api/caja/ticket-config/route");
+        usuarios: typeof import("../../src/api/caja/usuarios/route");
         ventas: typeof import("../../src/api/caja/ventas/route");
     };
 };

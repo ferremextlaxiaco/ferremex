@@ -37,7 +37,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         })),
         pago_efectivo: pago,
       })
-      await abrirCajon()
+      // El cajón es best-effort — un fallo no cancela la venta
+      try { await abrirCajon() } catch { /* sin cajón, continuar */ }
       dispatch({ type: "CLEAR" })
       onVentaCompletada(venta)
     } catch (err) {

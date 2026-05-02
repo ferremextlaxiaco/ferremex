@@ -59,7 +59,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  // Descontar inventario
+  // Cargar inventario y validar stock antes de procesar
   const skus = items.map((i) => i.sku)
   const inventoryItems = await inventoryModule.listInventoryItems(
     { sku: skus },
@@ -72,6 +72,21 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   )
   const nivelPorItemId = new Map(niveles.map((n) => [n.inventory_item_id, n]))
 
+  // Validar que ningún item supere el stock disponible
+  for (const item of items) {
+    const inventoryItemId = itemPorSku.get(item.sku)
+    if (!inventoryItemId) continue
+    const nivel = nivelPorItemId.get(inventoryItemId)
+    if (!nivel) continue
+    if (item.cantidad > nivel.stocked_quantity) {
+      res.status(400).json({
+        error: `Stock insuficiente para "${item.descripcion}": solicitado ${item.cantidad}, disponible ${nivel.stocked_quantity}`,
+      })
+      return
+    }
+  }
+
+  // Descontar inventario
   for (const item of items) {
     const inventoryItemId = itemPorSku.get(item.sku)
     if (!inventoryItemId) continue

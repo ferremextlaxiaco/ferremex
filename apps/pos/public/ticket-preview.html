@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vista previa — Ticket Ferremex</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 16px;
+      gap: 20px;
+    }
+
+    h1 {
+      font-size: 14px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 0;
+    }
+
+    .acciones {
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      padding: 10px 24px;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .btn-imprimir {
+      background: #e26e2e;
+      color: #fff;
+    }
+
+    .btn-imprimir:hover { background: #c85a1c; }
+
+    /* ── El ticket ── */
+    .ticket {
+      width: 76mm;
+      font-family: "Courier New", monospace;
+      font-size: 11pt;
+      color: #000;
+      background: #fff;
+      padding: 4mm 3mm;
+      border: 1px dashed #aaa;
+      box-shadow: 2px 2px 8px rgba(0,0,0,0.15);
+    }
+
+    .ticket-header { text-align: center; margin-bottom: 4mm; }
+    .ticket-negocio { font-size: 16pt; font-weight: bold; letter-spacing: 2px; margin: 0; }
+    .ticket-sub { font-size: 9pt; margin: 1mm 0 0; }
+
+    .ticket-separador {
+      text-align: center;
+      margin: 3mm 0;
+      font-size: 10pt;
+      letter-spacing: -1px;
+    }
+
+    .ticket-meta { font-size: 10pt; margin: 1mm 0; }
+
+    .ticket-tabla {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 2mm 0;
+      font-size: 9pt;
+    }
+
+    .ticket-col-desc { width: 45%; }
+    .ticket-col-num  { width: 18.3%; text-align: right; }
+
+    .ticket-tabla th {
+      font-weight: bold;
+      border-bottom: 1px solid #000;
+      padding-bottom: 1mm;
+      font-size: 9pt;
+    }
+
+    .ticket-tabla td { padding: 1mm 0; vertical-align: top; }
+
+    .ticket-fila-resumen {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11pt;
+      margin: 1mm 0;
+    }
+
+    .ticket-cambio { font-weight: bold; font-size: 12pt; margin-top: 2mm; }
+    .ticket-gracias { text-align: center; font-size: 10pt; margin-top: 2mm; }
+
+    /* Impresión */
+    @page {
+      size: 80mm auto;
+      margin: 0;
+    }
+
+    @media print {
+      body { visibility: hidden; background: #fff; }
+      .acciones, h1 { display: none; }
+
+      .ticket {
+        visibility: visible;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 76mm;
+        border: none;
+        box-shadow: none;
+        padding: 2mm;
+      }
+
+      .ticket * { visibility: visible; }
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Vista previa del ticket — ábrelo en Chrome</h1>
+
+  <div class="acciones">
+    <button class="btn-imprimir" onclick="window.print()">🖨 Imprimir ticket</button>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       TICKET DE EJEMPLO — edita los datos aquí
+       ════════════════════════════════════════ -->
+  <div class="ticket">
+
+    <div class="ticket-header">
+      <p class="ticket-negocio">FERREMEX</p>
+      <p class="ticket-sub">Tlaxiaco, Oaxaca</p>
+      <p class="ticket-sub">Tel: (953) 555-0000</p>
+    </div>
+
+    <div class="ticket-separador">————————————————</div>
+
+    <p class="ticket-meta">Folio: POS-20260408-A3F1</p>
+    <p class="ticket-meta">Fecha: 08/04/2026, 10:32:15 a.m.</p>
+    <p class="ticket-meta">Cajero: André</p>
+
+    <div class="ticket-separador">————————————————</div>
+
+    <table class="ticket-tabla">
+      <thead>
+        <tr>
+          <th class="ticket-col-desc">Artículo</th>
+          <th class="ticket-col-num">Cant</th>
+          <th class="ticket-col-num">P.U.</th>
+          <th class="ticket-col-num">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="ticket-col-desc">Tornillo 1/4" x 1" zincado</td>
+          <td class="ticket-col-num">3</td>
+          <td class="ticket-col-num">$4.50</td>
+          <td class="ticket-col-num">$13.50</td>
+        </tr>
+        <tr>
+          <td class="ticket-col-desc">Cable THW calibre 12 negro</td>
+          <td class="ticket-col-num">1</td>
+          <td class="ticket-col-num">$85.00</td>
+          <td class="ticket-col-num">$85.00</td>
+        </tr>
+        <tr>
+          <td class="ticket-col-desc">Foco LED 9W luz blanca</td>
+          <td class="ticket-col-num">2</td>
+          <td class="ticket-col-num">$45.00</td>
+          <td class="ticket-col-num">$90.00</td>
+        </tr>
+        <tr>
+          <td class="ticket-col-desc">Cinta de aislar negra 18m</td>
+          <td class="ticket-col-num">1</td>
+          <td class="ticket-col-num">$22.00</td>
+          <td class="ticket-col-num">$22.00</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="ticket-separador">————————————————</div>
+
+    <div class="ticket-fila-resumen">
+      <span>TOTAL</span>
+      <span>$210.50</span>
+    </div>
+    <div class="ticket-fila-resumen">
+      <span>Efectivo</span>
+      <span>$300.00</span>
+    </div>
+    <div class="ticket-fila-resumen ticket-cambio">
+      <span>Cambio</span>
+      <span>$89.50</span>
+    </div>
+
+    <div class="ticket-separador">————————————————</div>
+
+    <p class="ticket-gracias">¡Gracias por su compra!</p>
+    <p class="ticket-gracias">Conserve su ticket</p>
+
+  </div>
+
+</body>
+</html>

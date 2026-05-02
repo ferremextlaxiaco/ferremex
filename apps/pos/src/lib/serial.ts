@@ -26,6 +26,10 @@ export function impresoraConectada(): boolean {
 }
 
 export async function abrirCajon(): Promise<void> {
+  if (!serialDisponible()) {
+    console.warn("Web Serial no disponible (requiere HTTPS o localhost)")
+    return
+  }
   if (!puertoActivo) {
     // Intento silencioso de reconexión con permisos previos
     const puertos = await navigator.serial.getPorts()

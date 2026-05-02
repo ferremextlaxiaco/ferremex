@@ -5,6 +5,9 @@ import { PosProvider } from "./lib/pos-store"
 import { Login } from "./pages/Login"
 import { Venta } from "./pages/Venta"
 import { Corte } from "./pages/Corte"
+import { Admin } from "./pages/Admin"
+import { AdminTickets } from "./pages/AdminTickets"
+import { AdminUsuarios } from "./pages/AdminUsuarios"
 import "./pos.css"
 
 createRoot(document.getElementById("root")!).render(
@@ -15,6 +18,11 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/" element={<Login />} />
           <Route path="/venta" element={<Venta />} />
           <Route path="/corte" element={<Corte />} />
+          <Route path="/admin" element={<Admin />}>
+            <Route index element={<Navigate to="/admin/tickets" replace />} />
+            <Route path="tickets" element={<AdminTickets />} />
+            <Route path="usuarios" element={<AdminUsuarios />} />
+          </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </PosProvider>
