@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Ferremex is a hardware store (ferretería) in Tlaxiaco, Oaxaca, México, building an e-commerce and POS platform on top of Mercur (a Medusa 2.x marketplace framework). The stack runs locally on a Windows machine and is also accessed from store terminals on the local network (`192.168.1.105`).
 
-**Phase status:** Fase 0 (infrastructure) and Fase 1 (product catalog) are complete. See `MEMORIA_INSTALACIÓN.md` for current phase tracking and `CLAUDE CONTEXTO FERREMEX.md` for business context and n8n automation rules. Next: Fase 2 — POS de mostrador.
+**Phase status:** Fases 0–1 complete; Fase 2 (POS de mostrador) is in progress. See `MEMORIA_INSTALACIÓN.md` for current phase tracking and `CLAUDE CONTEXTO FERREMEX.md` for business context and n8n automation rules.
 
 ---
 
@@ -20,6 +20,7 @@ This is a **Turborepo monorepo** managed with **bun** (`bun@1.3.11`):
 packages/api/       → MedusaJS 2.x backend (port 9000)
 apps/admin/         → Admin dashboard (Vite dev server, port 7000)
 apps/vendor/        → Vendor portal (served by the API proxy)
+apps/pos/           → POS de mostrador (Vite dev server, port 7002)
 ```
 
 ### How the dashboards are served
@@ -36,14 +37,72 @@ apps/vendor/        → Vendor portal (served by the API proxy)
 
 ### Process management (PM2)
 
-Processes are managed via PM2 using `ecosystem.config.js`. The launchers are Node.js scripts (`launch-api.js`, `launch-admin.js`) — **not `.bat` files**, which failed on auto-restart.
+Processes are managed via PM2 using `ecosystem.config.js`. The launchers are Node.js scripts (`launch-api.js`, `launch-admin.js`, `launch-pos.js`) — **not `.bat` files**, which failed on auto-restart.
 
 ```bash
-pm2 start ecosystem.config.js   # start both processes
+pm2 start ecosystem.config.js   # start all three processes
 pm2 status                       # check running processes
 pm2 logs                         # tail logs for all processes
 pm2 restart ferremex-api         # restart a single process
 ```
+
+---
+
+## POS App (Fase 2)
+
+The POS lives at `apps/pos/` (Vite, port 7002, `base: "/pos"`). It is a standalone React 18 app with React Router 6.
+
+### Route structure
+
+```
+/pos/           → Login — cajero selection by name + PIN
+/pos/venta      → Main sale screen: search + cart + checkout
+/pos/corte      → Shift closing / cash count
+/pos/admin      → Admin shell (requires permisos.puede_ver_admin)
+  /tickets      → Ticket format config + live preview
+  /usuarios     → POS user management
+  /clientes     → Customer CRUD
+  /articulos    → Article/product CRUD (ArticlesModule)
+  /generador    → Ticket generator / peripheral config tester
+```
+
+### State management (`apps/pos/src/lib/pos-store.ts`)
+
+React Context + useReducer. Key state: `cajero`, `items` (cart), `ticketConfig`, `clienteActivo`. No Redux. `buildTurnoId()` generates shift IDs in the format `YYYY-MM-DD-m` or `-t`.
+
+### Data persistence
+
+- **Clientes**: `localStorage` (`pos_clientes`, `pos_grupos`) — NOT in Medusa DB yet.
+- **Ventas / cortes / usuarios / ticket-config**: JSON files at `packages/api/data/*.json`.
+
+### Client library
+
+All backend calls go through `apps/pos/src/lib/client.ts` which hits `/caja/*` endpoints. The Vite dev server proxies `/caja` and `/static` to `localhost:9000`.
+
+### ESC/POS and cash drawer
+
+`apps/pos/src/lib/serial.ts` uses **Web Serial API** (Chrome only — does not work in Firefox or Safari). It sends ESC/POS commands directly to the thermal printer for receipts and `[0x1B, 0x70, 0x00, 0x19, 0x19]` to open the cash drawer.
+
+---
+
+## Backend — `/caja/` Routes
+
+POS routes live at `packages/api/src/api/caja/` and do NOT go under `/store/` (which requires `x-publishable-api-key`). CORS for `/caja/*` is handled by the Vite proxy in dev (no explicit `cors` package needed).
+
+| Method | Route | Purpose |
+|--------|-------|---------|
+| GET | `/caja/productos` | Product search for POS (q, sku, category_id, departamento). Phonetic Spanish search. Returns stock + price. |
+| GET | `/caja/categorias` | List categories + departamentos extracted from metadata. |
+| POST | `/caja/ventas` | Record a sale. Decrements inventory. Generates folio `POS-YYYYMMDD-XXXX`. |
+| GET | `/caja/corte` | Sales summary for a shift (cajero + turno_id). |
+| POST | `/caja/corte` | Close shift. |
+| GET/POST/PUT/DELETE | `/caja/usuarios` | POS user CRUD. Enforces at least one active admin. |
+| GET/POST/PUT/DELETE | `/caja/articulos` | Product CRUD for admin (ArticlesModule). Full ArticuloPOS mapping. |
+| GET/PUT | `/caja/ticket-config` | Ticket header/footer/print options. Handles legacy field migration. |
+
+### Product pricing model
+
+Products have **4 price tiers** (`precio1`–`precio4`): Mostrador / Cliente / Distribuidor / Especial. Price tier is selected per sale by `clienteActivo.num_precio`. Prices are stored as Medusa price sets (MXN). The articulos route fetches them via `query.graph` with variant IDs.
 
 ---
 
@@ -75,9 +134,10 @@ bun run test:integration:modules   # module-level integration tests
 ### From `packages/api` — Catalog & Inventory scripts (Fase 1)
 
 ```bash
-bun run import:productos    # import/update catalog from articulosExportados.xlsx (root)
-bun run attach:imagenes     # assign thumbnails from "Imagenes de productos/" folder
-bun run reparar:inventario  # create inventory items + variant links + stock levels (one-time)
+bun run import:productos        # import/update catalog from articulosExportados.xlsx (root)
+bun run attach:imagenes         # assign thumbnails from "Imagenes de productos/" folder
+bun run reparar:inventario      # create inventory items + variant links + stock levels (one-time)
+bun run actualizar:localizacion # sync metadata.localizacion from RepExistencias.xlsx (col "Loc.")
 ```
 
 Images are copied to `packages/api/static/` and served at `http://localhost:9000/static/`.
@@ -99,6 +159,7 @@ Before touching code, read the area guide:
 - **Backend** (routes, modules, workflows, links, subscribers, jobs): `packages/api/CLAUDE.md`
 - **Admin UI** (custom pages, forms, tabs): `apps/admin/CLAUDE.md`
 - **Vendor UI** (vendor pages and flows): `apps/vendor/CLAUDE.md`
+- **POS** (caja routes + React app): this file + `MEMORIA_INSTALACIÓN.md`
 
 ## Adding Features — Registry First
 
@@ -123,6 +184,7 @@ Do not change these silently — they affect the whole system:
 - `apps/admin/src/*` and `apps/vendor/src/*` — page and route structure
 - `apps/admin/vite.config.ts` — must keep `base: '/dashboard'`
 - `apps/vendor/vite.config.ts` — Vite bootstrap for vendor panel
+- `apps/pos/vite.config.ts` — must keep `base: '/pos'` and proxy `/caja` + `/static`
 
 ---
 
@@ -147,11 +209,15 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 
 - **Admin panel requires Vite first**: Start the Vite dev server (`ferremex-admin` in PM2) before the API. The API proxies Vite — if Vite isn't up, the dashboard returns errors.
 - **`base: '/dashboard'` is required**: If removed from `apps/admin/vite.config.ts`, Vite asset paths break under the API proxy.
-- **PM2 launchers must be `.js` files**: `.bat` launchers caused infinite restart loops. The current `launch-api.js` / `launch-admin.js` approach is stable.
+- **PM2 launchers must be `.js` files**: `.bat` launchers caused infinite restart loops. The current `launch-api.js` / `launch-admin.js` / `launch-pos.js` approach is stable.
 - **Codegen**: Run `dev:codegen` from `packages/api` after changing route paths or request/response types that feed `@acme/api/_generated`.
 - **`createProducts()` does not create inventory**: Calling `productModule.createProducts()` directly skips inventory item creation. Use the HTTP workflow endpoint, or run `reparar:inventario` afterwards.
 - **`updateProducts()` signature**: `productModule.updateProducts([{id, ...}])` (array form) throws `Product.0` errors. Correct call is `updateProducts(id, data)` (single item form).
 - **xlsx import**: Use `require()` instead of dynamic `import()` for the `xlsx` package — ESM/CJS incompatibility with Medusa's build pipeline.
+- **POS `/caja/*` must not import the `cors` npm package**: The Vite proxy already resolves cross-origin in dev. Adding `import cors from 'cors'` to middlewares fails at runtime because the package isn't installed in the Medusa workspace.
+- **Medusa 2.x prices are not a direct relation**: `ProductVariant` does not have a `prices` property. Fetch prices via `query.graph` with `entity: "product_variant"` and variant IDs as a separate query.
+- **Web Serial API = Chrome only**: The cash drawer and direct ESC/POS printing in `serial.ts` require Chrome (or Chromium). POS terminals must use Chrome.
+- **Clientes are in localStorage, not Medusa DB**: `clientes.ts` reads/writes `localStorage` (`pos_clientes`, `pos_grupos`). Data lives in the browser — each POS terminal has its own client list until Fase 4 migrates this to the database.
 
 ---
 
@@ -162,6 +228,7 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 | Login / Admin panel | http://localhost:9000/login | http://192.168.1.105:9000/login |
 | Admin orders | http://localhost:9000/orders | http://192.168.1.105:9000/orders |
 | Vendor portal | http://localhost:9000/seller | http://192.168.1.105:9000/seller |
+| POS | http://localhost:7002/pos/ | http://192.168.1.105:7002/pos/ |
 
 ---
 

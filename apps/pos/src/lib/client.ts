@@ -57,6 +57,60 @@ export interface CorteResponse {
   ventas: VentaRegistro[]
 }
 
+// ── Artículos (admin CRUD) ────────────────────────────────────────────────────
+
+export interface ArticuloPOS {
+  id: string
+  clave: string
+  claveAlterna: string
+  descripcion: string
+  categoria: string
+  departamento: string
+  unidadCompra: string
+  unidadVenta: string
+  factor: number
+  aplicarIva: boolean
+  precioCompra: number
+  precioNeto: boolean
+  precio1: number
+  precio2: number
+  precio3: number
+  precio4: number
+  claveSat: string
+  inventarioMin: number
+  inventarioMax: number
+  localizacion: string
+  peso: number
+  ventaGranel: boolean
+  thumbnail: string | null
+}
+
+export async function listarArticulos(q?: string): Promise<ArticuloPOS[]> {
+  const params = new URLSearchParams()
+  if (q) params.set("q", q)
+  return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
+}
+
+export async function crearArticulo(
+  data: Omit<ArticuloPOS, "id" | "thumbnail">
+): Promise<ArticuloPOS> {
+  return apiFetch<ArticuloPOS>("/caja/articulos", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+}
+
+export async function actualizarArticulo(data: ArticuloPOS): Promise<ArticuloPOS> {
+  return apiFetch<ArticuloPOS>("/caja/articulos", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  })
+}
+
+export async function eliminarArticulo(id: string): Promise<void> {
+  await apiFetch(`/caja/articulos?id=${id}`, { method: "DELETE" })
+}
+
 // ── Usuarios POS ─────────────────────────────────────────────────────────────
 
 export interface PosUsuario {
@@ -78,10 +132,15 @@ export interface PosUsuario {
 
 export interface TicketConfig {
   encabezado: {
+    logo: string | null
     nombre: string
-    linea2: string
-    linea3: string
+    direccion: string
+    telefono: string
+    email: string
     rfc: string
+    // campos legacy del servidor (migración automática al cargar)
+    linea2?: string
+    linea3?: string
   }
   pie: string[]
   opciones: {
@@ -94,6 +153,21 @@ export interface TicketConfig {
     cotizacion: { titulo: string; activo: boolean }
     cancelacion: { titulo: string; activo: boolean }
     nota_credito: { titulo: string; activo: boolean }
+  }
+}
+
+export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
+  const enc = raw.encabezado
+  return {
+    ...raw,
+    encabezado: {
+      logo: enc.logo ?? null,
+      nombre: enc.nombre ?? "FERREMEX",
+      direccion: enc.direccion ?? enc.linea2 ?? "Tlaxiaco, Oaxaca",
+      telefono: enc.telefono ?? (enc.linea3?.startsWith("Tel") ? enc.linea3.replace(/^Tel:\s*/, "") : enc.linea3 ?? "(953) 555-0000"),
+      email: enc.email ?? "",
+      rfc: enc.rfc ?? "",
+    },
   }
 }
 

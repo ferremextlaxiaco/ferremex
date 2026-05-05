@@ -6,6 +6,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 7002,
+    host: "0.0.0.0",
     proxy: {
       "/caja": "http://localhost:9000",
       "/static": "http://localhost:9000",

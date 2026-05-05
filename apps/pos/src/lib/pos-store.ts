@@ -1,5 +1,6 @@
 import { createElement, createContext, useContext, useReducer, type ReactNode } from "react"
 import type { TicketConfig } from "./client"
+import type { Cliente } from "./clientes"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -33,6 +34,7 @@ interface PosState {
   cajero: Cajero | null
   items: CartItem[]
   ticketConfig: TicketConfig | null
+  clienteActivo: Cliente | null
 }
 
 type PosAction =
@@ -43,6 +45,7 @@ type PosAction =
   | { type: "REMOVE"; sku: string }
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
+  | { type: "SET_CLIENTE"; cliente: Cliente | null }
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -55,6 +58,9 @@ function posReducer(state: PosState, action: PosAction): PosState {
 
     case "SET_TICKET_CONFIG":
       return { ...state, ticketConfig: action.config }
+
+    case "SET_CLIENTE":
+      return { ...state, clienteActivo: action.cliente }
 
     case "ADD_ITEM": {
       const existe = state.items.find((i) => i.sku === action.item.sku)
@@ -92,7 +98,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return { ...state, items: state.items.filter((i) => i.sku !== action.sku) }
 
     case "CLEAR":
-      return { ...state, items: [] }
+      // Al vaciar el carrito (o completar una venta) se reinicia el cliente activo
+      return { ...state, items: [], clienteActivo: null }
 
     default:
       return state
@@ -112,7 +119,12 @@ interface PosContextValue {
 const PosContext = createContext<PosContextValue | null>(null)
 
 export function PosProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(posReducer, { cajero: null, items: [], ticketConfig: null })
+  const [state, dispatch] = useReducer(posReducer, {
+    cajero: null,
+    items: [],
+    ticketConfig: null,
+    clienteActivo: null,
+  })
   const total = state.items.reduce((sum, i) => sum + i.precio * i.cantidad, 0)
   return createElement(PosContext.Provider, { value: { state, dispatch, total } }, children)
 }

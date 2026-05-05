@@ -4,7 +4,7 @@ import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
 import { ModalCobro } from "../components/ModalCobro"
 import { Ticket } from "../components/Ticket"
-import { ConectorImpresora } from "../components/ConectorImpresora"
+import { SelectorCliente } from "../components/SelectorCliente"
 import { usePOS } from "../lib/pos-store"
 import type { VentaResponse } from "../lib/client"
 
@@ -35,7 +35,7 @@ export function Venta() {
       <header className="pos-header">
         <span className="pos-marca">FERREMEX POS</span>
         <div className="pos-header-centro">
-          <ConectorImpresora />
+          <SelectorCliente />
         </div>
         <div className="pos-header-derecha">
           <span className="pos-cajero">👤 {state.cajero.nombre}</span>

@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<!--
+  FERREMEX — Ajuste de Inventario v2
+  Flujo: buscar → popup → seleccionar → tabla de ajuste → confirmar
+
+  Example 1: "PVC" (texto) → búsqueda fonética en títulos → popup con resultados
+  Example 2: "15268" (numérico) → solo busca por SKU/barcode exacto → resultado preciso
+  Example 3: Nueva cantidad negativa → modal de advertencia antes de continuar
+-->
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ajuste de Inventario — Ferremex</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+  <style>
+    :root {
+      --orange: #F96302;
+      --bg:     #f5f5f7;
+      --panel:  #ffffff;
+      --border: #e4e4e7;
+      --text:   #18181b;
+      --muted:  #71717a;
+      --hover:  #f1f1f3;
+      --success:#16a34a;
+      --danger: #dc2626;
+      --warn:   #d97706;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { background: var(--bg); color: var(--text); font-size: 13px; overflow: hidden; height: 100vh; display: flex; flex-direction: column; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; margin: 0; }
+
+    /* ── Topbar ── */
+    #topbar { background: var(--panel); border-bottom: 1px solid var(--border); padding: 10px 18px; display: flex; align-items: center; gap: 10px; flex-shrink: 0; position: relative; z-index: 200; }
+    .brand { font-weight: 800; color: var(--orange); font-size: 14px; letter-spacing: .04em; white-space: nowrap; }
+    .page-sep { color: var(--border); }
+    .page-title { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    #search-wrap { position: relative; flex: 1; max-width: 480px; }
+    #search-input { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 70px 7px 34px; font-size: 13px; outline: none; transition: border-color .15s, box-shadow .15s; }
+    #search-input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(249,99,2,.1); }
+    .s-icon { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; font-size: 14px; }
+    #search-spinner { position: absolute; right: 68px; top: 50%; transform: translateY(-50%); color: var(--orange); display: none; font-size: 13px; }
+    #btn-search { position: absolute; right: 0; top: 0; bottom: 0; background: var(--orange); border: none; color: #fff; border-radius: 0 6px 6px 0; padding: 0 12px; font-size: 14px; cursor: pointer; transition: background .15s; display: flex; align-items: center; }
+    #btn-search:hover { background: #e05800; }
+    #btn-confirm { white-space: nowrap; }
+    .count-badge { display: inline-flex; align-items: center; justify-content: center; background: #fff; color: var(--orange); border-radius: 10px; font-size: 11px; font-weight: 800; padding: 0 5px; margin-left: 4px; min-width: 18px; line-height: 18px; }
+
+    /* ── Search popup ── */
+    #search-popup { position: fixed; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,0.13); z-index: 999; display: none; flex-direction: column; overflow: hidden; }
+    #popup-header { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--bg); flex-shrink: 0; }
+    #popup-count { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    #popup-list { overflow-y: auto; max-height: 380px; }
+    #popup-list::-webkit-scrollbar { width: 4px; }
+    #popup-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    #popup-footer { border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; display: none; align-items: center; gap: 10px; padding: 8px 14px; }
+    .popup-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border); transition: background .1s; }
+    .popup-item:last-child { border-bottom: none; }
+    .popup-item:hover { background: var(--hover); }
+    .popup-item.hi { background: rgba(249,99,2,.07) !important; border-left: 3px solid var(--orange); padding-left: 11px; }
+    .popup-item.added { opacity: .55; cursor: default; }
+    /* thumbnail */
+    .pi-thumb { width: 36px; height: 36px; flex-shrink: 0; border-radius: 4px; border: 1px solid var(--border); object-fit: contain; background: var(--bg); }
+    .pi-noimg { width: 36px; height: 36px; flex-shrink: 0; border-radius: 4px; border: 1px solid var(--border); background: var(--bg); display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 14px; }
+    .pi-sku { font-family: monospace; font-size: 11px; color: var(--muted); width: 68px; flex-shrink: 0; }
+    .pi-desc { flex: 1; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pi-stock { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
+    .pi-stock.ok   { background: rgba(22,163,74,.1);  color: var(--success); }
+    .pi-stock.zero { background: rgba(113,113,122,.1); color: var(--muted); }
+    .pi-price { flex-shrink: 0; font-size: 12px; font-weight: 700; width: 68px; text-align: right; }
+    .pi-add { flex-shrink: 0; background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 4px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .12s; font-size: 14px; }
+    .pi-add:hover { background: var(--orange); border-color: var(--orange); color: #fff; }
+    .pi-check { flex-shrink: 0; color: var(--success); font-size: 15px; width: 26px; text-align: center; }
+    .popup-empty { padding: 32px 20px; text-align: center; color: var(--muted); font-size: 13px; }
+    /* pagination nav */
+    .pag-nav { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 3px 10px; font-size: 12px; cursor: pointer; transition: all .12s; }
+    .pag-nav:hover:not(:disabled) { border-color: var(--orange); color: var(--orange); }
+    .pag-nav:disabled { opacity: .35; cursor: not-allowed; }
+    .pag-info { flex: 1; text-align: center; font-size: 11px; color: var(--muted); }
+
+    /* ── Main table ── */
+    #main { flex: 1; overflow-y: auto; overflow-x: auto; }
+    #main::-webkit-scrollbar { width: 5px; }
+    #main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 14px; color: var(--muted); padding: 40px; }
+    .empty-state i { font-size: 48px; opacity: .2; }
+    .empty-state p { margin: 0; font-size: 14px; }
+    .empty-state small { font-size: 12px; opacity: .7; }
+    table.adj { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.adj thead th { position: sticky; top: 0; background: #f0f0f2; color: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; z-index: 10; }
+    table.adj tbody td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; background: var(--panel); }
+    table.adj tbody tr:hover td { background: var(--hover); }
+    .sku-mono { font-family: monospace; font-size: 11px; color: var(--muted); }
+    .desc-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+    .loc-cell { font-size: 11px; color: var(--muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .stock-badge { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+    .stock-badge.ok   { background: rgba(22,163,74,.1);  color: var(--success); }
+    .stock-badge.zero { background: rgba(113,113,122,.1); color: var(--muted); }
+    .stock-badge.neg  { background: rgba(220,38,38,.08); color: var(--danger); }
+    .qty-input { background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 5px 8px; font-size: 13px; font-weight: 700; width: 88px; text-align: right; outline: none; transition: border-color .15s; }
+    .qty-input:focus { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(249,99,2,.1); }
+    .qty-input.err { border-color: var(--danger); }
+    .dif-pos  { color: var(--success); font-weight: 700; }
+    .dif-neg  { color: var(--danger);  font-weight: 700; }
+    .dif-zero { color: var(--muted); }
+    .rm-btn { background: none; border: none; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 4px; font-size: 15px; transition: background .12s, color .12s; }
+    .rm-btn:hover { background: rgba(220,38,38,.08); color: var(--danger); }
+
+    /* ── Summary bar ── */
+    #summary { background: var(--panel); border-top: 1px solid var(--border); padding: 10px 18px; display: none; align-items: center; gap: 28px; flex-shrink: 0; }
+    .sum-item { display: flex; flex-direction: column; gap: 1px; }
+    .sum-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+    .sum-val { font-size: 15px; font-weight: 800; }
+
+    /* ── Modals ── */
+    .modal-content { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+    .modal-header { border-bottom-color: var(--border); padding: 14px 18px; }
+    .modal-footer { border-top-color: var(--border); padding: 12px 18px; }
+    .modal-body   { padding: 16px 18px; }
+    .btn-orange { background: var(--orange); border: none; color: #fff; font-weight: 600; }
+    .btn-orange:hover { background: #e05800; color: #fff; }
+    .btn-sec { background: var(--bg); border: 1px solid var(--border); color: var(--text); }
+    .btn-sec:hover { background: var(--hover); }
+
+    /* ── Misc ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin .7s linear infinite; display: inline-block; }
+    .toast-container { z-index: 9999; }
+    .inv-toast { background: var(--panel); border: 1px solid var(--border); min-width: 280px; color: var(--text); }
+  </style>
+</head>
+<body>
+
+<!-- ── Topbar ─────────────────────────────────────────────────────── -->
+<div id="topbar">
+  <span class="brand">FERREMEX</span>
+  <span class="page-sep">|</span>
+  <span class="page-title">Ajuste de Inventario</span>
+
+  <div id="search-wrap">
+    <i class="bi bi-search s-icon"></i>
+    <input id="search-input" type="text" autocomplete="off"
+      placeholder="Buscar por nombre, clave o código de barras…">
+    <i class="bi bi-arrow-repeat spin" id="search-spinner"></i>
+    <button id="btn-search" title="Buscar">
+      <i class="bi bi-search"></i>
+    </button>
+  </div>
+
+  <button class="btn btn-sm btn-sec ms-auto" id="btn-clear-all" style="display:none">
+    <i class="bi bi-x-lg me-1"></i>Limpiar todo
+  </button>
+  <button class="btn btn-sm btn-orange" id="btn-confirm" disabled>
+    <i class="bi bi-check-lg me-1"></i>Confirmar ajuste
+    <span class="count-badge" id="confirm-badge">0</span>
+  </button>
+</div>
+
+<!-- ── Search popup ───────────────────────────────────────────────── -->
+<div id="search-popup">
+  <div id="popup-header">
+    <span id="popup-count"></span>
+    <span style="font-size:10px;color:var(--muted);margin-left:12px">
+      Clic = seleccionar &nbsp;·&nbsp; Doble clic o Enter = agregar
+    </span>
+    <button class="btn btn-sm btn-sec ms-auto" id="popup-close" style="padding:2px 8px;font-size:11px">
+      <i class="bi bi-x-lg"></i> Cerrar
+    </button>
+  </div>
+  <div id="popup-list"></div>
+  <div id="popup-footer"></div>
+</div>
+
+<!-- ── Main content ───────────────────────────────────────────────── -->
+<div id="main">
+  <div class="empty-state" id="empty-state">
+    <i class="bi bi-box-seam"></i>
+    <p>Ningún artículo seleccionado</p>
+    <small>Usa el buscador para agregar artículos al ajuste</small>
+  </div>
+
+  <table class="adj" id="adj-table" style="display:none">
+    <thead>
+      <tr>
+        <th>Clave</th>
+        <th>Descripción</th>
+        <th>Localización</th>
+        <th style="text-align:center">Stock actual</th>
+        <th style="text-align:right">Nueva cantidad</th>
+        <th style="text-align:right">Diferencia</th>
+        <th style="text-align:right">Monto ($)</th>
+        <th style="width:36px"></th>
+      </tr>
+    </thead>
+    <tbody id="adj-tbody"></tbody>
+  </table>
+</div>
+
+<!-- ── Summary bar ────────────────────────────────────────────────── -->
+<div id="summary">
+  <div class="sum-item">
+    <span class="sum-lbl">Artículos</span>
+    <span class="sum-val" id="sum-n">0</span>
+  </div>
+  <div class="sum-item">
+    <span class="sum-lbl">Con cambio</span>
+    <span class="sum-val" id="sum-changed">0</span>
+  </div>
+  <div class="sum-item">
+    <span class="sum-lbl">Incremento</span>
+    <span class="sum-val dif-pos" id="sum-pos">+0</span>
+  </div>
+  <div class="sum-item">
+    <span class="sum-lbl">Decremento</span>
+    <span class="sum-val dif-neg" id="sum-neg">−0</span>
+  </div>
+  <div class="sum-item">
+    <span class="sum-lbl">Monto neto</span>
+    <span class="sum-val" id="sum-amount">$0.00</span>
+  </div>
+</div>
+
+<!-- ── Negative stock warning ─────────────────────────────────────── -->
+<div class="modal fade" id="neg-modal" tabindex="-1" data-bs-backdrop="static">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h6 class="modal-title m-0" style="font-size:14px;font-weight:700;color:var(--warn)">
+          <i class="bi bi-exclamation-triangle me-2"></i>Stock negativo
+        </h6>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:13px;margin:0" id="neg-msg"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-sm btn-sec" id="btn-neg-cancel">Cancelar</button>
+        <button class="btn btn-sm" style="background:var(--warn);border:none;color:#fff;font-weight:700" id="btn-neg-ok">Confirmar de todos modos</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toasts ─────────────────────────────────────────────────────── -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-wrap"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+'use strict';
+
+// ══════════════════════════════════════════════════════════════
+// STATE
+// ══════════════════════════════════════════════════════════════
+const S = {
+  adjList:       [],     // articles selected for adjustment
+  adjValues:     {},     // { [id]: newQty }
+  popupResults:  [],     // last search results (full list)
+  popupPage:     0,      // current popup page (0-based)
+  popupIndex:    -1,     // global index of keyboard-highlighted row
+  popupQuery:    '',     // last executed query (needed for page nav)
+  queryModified: false,  // true when user edits search after last search
+  searching:     false,
+  searchTimer:   null,
+  _negResolve:   null,
+};
+
+// Bootstrap instances
+const negModal = new bootstrap.Modal(document.getElementById('neg-modal'));
+
+// ══════════════════════════════════════════════════════════════
+// API
+// ══════════════════════════════════════════════════════════════
+async function apiSearch(q) {
+  const r = await fetch(`/caja/articulos?q=${encodeURIComponent(q)}`);
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+async function apiAdjust(ajustes) {
+  const r = await fetch('/caja/ajuste-inventario', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ajustes }),
+  });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+// ══════════════════════════════════════════════════════════════
+// SEARCH + POPUP
+// ══════════════════════════════════════════════════════════════
+function onSearchInput() {
+  S.queryModified = true;                         // usuario modificó el texto
+  if (!this.value.trim()) { hidePopup(); S.queryModified = false; }
+}
+
+function triggerSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (q.length < 2) return;
+  S.queryModified = false;
+  doSearch(q);
+}
+
+async function doSearch(q) {
+  if (S.searching) return;
+  S.searching = true;
+  document.getElementById('search-spinner').style.display = 'block';
+  try {
+    const data = await apiSearch(q);
+
+    // Auto-agregar si hay coincidencia exacta de SKU o código de barras
+    const qLow  = q.trim().toLowerCase();
+    const exact = data.find(a =>
+      a.clave?.toLowerCase()        === qLow ||
+      a.claveAlterna?.toLowerCase() === qLow
+    );
+    if (exact) {
+      document.getElementById('search-input').value = '';
+      addArticle(exact);
+      toast(`Agregado: ${exact.descripcion || exact.clave}`, 'success');
+      return;
+    }
+
+    S.popupResults = data;
+    S.popupPage    = 0;
+    S.popupIndex   = data.length > 0 ? 0 : -1;
+    S.popupQuery   = q;
+    showPopup();
+  } catch(e) {
+    toast(`Error al buscar: ${e.message}`, 'danger');
+  } finally {
+    S.searching = false;
+    document.getElementById('search-spinner').style.display = 'none';
+  }
+}
+
+const MAX_POPUP = 12; // items per page
+
+function showPopup() {
+  const q       = S.popupQuery;
+  const results = S.popupResults;
+  const popup   = document.getElementById('search-popup');
+  const list    = document.getElementById('popup-list');
+  const footer  = document.getElementById('popup-footer');
+  const count   = document.getElementById('popup-count');
+
+  // Position popup below search input
+  const rect = document.getElementById('search-input').getBoundingClientRect();
+  popup.style.top     = (rect.bottom + 6) + 'px';
+  popup.style.left    = rect.left + 'px';
+  popup.style.width   = Math.max(rect.width, 640) + 'px';
+  popup.style.display = 'flex';
+
+  if (results.length === 0) {
+    count.textContent = 'Sin resultados';
+    list.innerHTML    = `<div class="popup-empty"><i class="bi bi-search" style="font-size:24px;display:block;margin-bottom:8px;opacity:.3"></i>No se encontraron artículos para "<strong>${esc(q || '')}</strong>"</div>`;
+    footer.style.display = 'none';
+    return;
+  }
+
+  const totalPages = Math.ceil(results.length / MAX_POPUP);
+  S.popupPage      = Math.min(Math.max(S.popupPage, 0), totalPages - 1);
+  const start      = S.popupPage * MAX_POPUP;
+  const pageItems  = results.slice(start, start + MAX_POPUP);
+
+  count.textContent = `${results.length} resultado${results.length !== 1 ? 's' : ''}`;
+  list.innerHTML    = pageItems.map((a, i) => popupItemHtml(a, start + i)).join('');
+  attachPopupEvents();
+
+  // Pagination footer
+  if (totalPages > 1) {
+    footer.style.display = 'flex';
+    footer.innerHTML = `
+      <button class="pag-nav" id="pp-prev" ${S.popupPage === 0 ? 'disabled' : ''}>
+        <i class="bi bi-chevron-left"></i> Anterior
+      </button>
+      <span class="pag-info">Página ${S.popupPage + 1} de ${totalPages}</span>
+      <button class="pag-nav" id="pp-next" ${S.popupPage >= totalPages - 1 ? 'disabled' : ''}>
+        Siguiente <i class="bi bi-chevron-right"></i>
+      </button>`;
+    // stopPropagation evita que el clic burbujee al handler de "clic afuera"
+    // después de que showPopup() reconstruye el innerHTML (el botón queda detached del DOM
+    // y el handler de documento lo interpreta como clic fuera del popup)
+    document.getElementById('pp-prev').addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.popupPage--;
+      S.popupIndex = S.popupPage * MAX_POPUP;
+      showPopup();
+    });
+    document.getElementById('pp-next').addEventListener('click', (e) => {
+      e.stopPropagation();
+      S.popupPage++;
+      S.popupIndex = S.popupPage * MAX_POPUP;
+      showPopup();
+    });
+  } else {
+    footer.style.display = 'none';
+  }
+}
+
+function popupItemHtml(a, globalIdx) {
+  const isAdded  = S.adjList.some(x => x.id === a.id);
+  const stock    = a.existencia ?? 0;
+  const stCls    = stock > 0 ? 'ok' : 'zero';
+  const hiCls    = globalIdx === S.popupIndex ? ' hi' : '';
+  const addedCls = isAdded ? ' added' : '';
+  const thumb    = a.thumbnail
+    ? `<img class="pi-thumb" src="${esc(a.thumbnail)}" alt="" loading="lazy">`
+    : `<span class="pi-noimg"><i class="bi bi-box"></i></span>`;
+  return `<div class="popup-item${hiCls}${addedCls}" data-idx="${globalIdx}">
+    ${thumb}
+    <span class="pi-sku">${esc(a.clave || '—')}</span>
+    <span class="pi-desc" title="${esc(a.descripcion || '')}">${esc(a.descripcion || '—')}</span>
+    <span class="pi-stock ${stCls}">${stock}</span>
+    <span class="pi-price">${fmt(a.precio1)}</span>
+    ${isAdded
+      ? `<span class="pi-check"><i class="bi bi-check-circle-fill" style="color:var(--success)"></i></span>`
+      : `<button class="pi-add" data-idx="${globalIdx}" title="Agregar"><i class="bi bi-plus-lg"></i></button>`
+    }
+  </div>`;
+}
+
+function attachPopupEvents() {
+  document.querySelectorAll('.popup-item').forEach(row => {
+    const idx = +row.dataset.idx;
+
+    // preventDefault en mousedown → el input de búsqueda nunca pierde el foco
+    row.addEventListener('mousedown', (e) => e.preventDefault());
+
+    // Clic simple → seleccionar (highlight naranja fijo) y enfocar input para Enter
+    row.addEventListener('click', function() {
+      if (row.classList.contains('added')) return;
+      S.popupIndex = idx;
+      highlightPopup();
+      document.getElementById('search-input').focus();
+    });
+
+    // Doble clic → agregar directamente
+    row.addEventListener('dblclick', function() {
+      if (row.classList.contains('added')) return;
+      addArticle(S.popupResults[idx]);
+    });
+
+    // Hover: NO mueve S.popupIndex (el highlight naranja lo da solo clic/teclado)
+    // El efecto visual del hover lo maneja el CSS :hover normal
+  });
+
+  // Botón + → agrega directamente
+  document.querySelectorAll('.pi-add').forEach(btn => {
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', function(e) {
+      e.stopPropagation();
+      addArticle(S.popupResults[+this.dataset.idx]);
+    });
+  });
+}
+
+function highlightPopup() {
+  document.querySelectorAll('.popup-item').forEach(row => {
+    row.classList.toggle('hi', +row.dataset.idx === S.popupIndex);
+  });
+}
+
+function hidePopup() {
+  document.getElementById('search-popup').style.display = 'none';
+  // Los resultados se conservan para poder reabrir con el botón Buscar.
+  // Solo se limpian cuando comienza una nueva búsqueda (en doSearch).
+}
+
+// Keyboard navigation in popup
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+  const popup = document.getElementById('search-popup');
+  if (popup.style.display === 'none') return;
+
+  const total = S.popupResults.length;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    if (S.popupIndex < total - 1) {
+      S.popupIndex++;
+      const newPage = Math.floor(S.popupIndex / MAX_POPUP);
+      if (newPage !== S.popupPage) { S.popupPage = newPage; showPopup(); }
+      else highlightPopup();
+      document.querySelector(`.popup-item[data-idx="${S.popupIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    if (S.popupIndex > 0) {
+      S.popupIndex--;
+      const newPage = Math.floor(S.popupIndex / MAX_POPUP);
+      if (newPage !== S.popupPage) { S.popupPage = newPage; showPopup(); }
+      else highlightPopup();
+      document.querySelector(`.popup-item[data-idx="${S.popupIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+    }
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    if (S.queryModified) {
+      // El usuario cambió el texto → buscar
+      triggerSearch();
+    } else if (S.popupIndex >= 0 && S.popupResults[S.popupIndex]) {
+      // Hay un item seleccionado → agregar
+      addArticle(S.popupResults[S.popupIndex]);
+    } else {
+      triggerSearch();
+    }
+  } else if (e.key === 'Escape') {
+    hidePopup();
+    this.blur();
+  }
+});
+
+// Close popup on outside click
+document.addEventListener('click', function(e) {
+  if (!document.getElementById('search-wrap').contains(e.target) &&
+      !document.getElementById('search-popup').contains(e.target)) {
+    hidePopup();
+  }
+});
+document.getElementById('popup-close').addEventListener('click', () => {
+  hidePopup();
+  document.getElementById('search-input').value = '';
+});
+
+// ══════════════════════════════════════════════════════════════
+// ADJUSTMENT LIST
+// ══════════════════════════════════════════════════════════════
+function addArticle(article) {
+  if (S.adjList.some(a => a.id === article.id)) {
+    // Already added — scroll to row and flash it
+    hidePopup();
+    document.getElementById('search-input').value = '';
+    const row = document.querySelector(`tr[data-id="${CSS.escape(article.id)}"]`);
+    if (row) {
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      row.style.outline = '2px solid var(--orange)';
+      setTimeout(() => row.style.outline = '', 1200);
+    }
+    return;
+  }
+
+  S.adjList.push(article);
+  S.adjValues[article.id] = article.existencia ?? 0;
+
+  // Clear search and close popup after adding
+  document.getElementById('search-input').value = '';
+  hidePopup();
+
+  renderAdjTable();
+  updateControls();
+
+  // Focus the qty input for the new row
+  setTimeout(() => {
+    document.querySelector(`tr[data-id="${CSS.escape(article.id)}"] .qty-input`)?.focus();
+  }, 60);
+}
+
+function removeArticle(id) {
+  S.adjList = S.adjList.filter(a => a.id !== id);
+  delete S.adjValues[id];
+  renderAdjTable();
+  updateControls();
+}
+
+function renderAdjTable() {
+  const empty = document.getElementById('empty-state');
+  const table = document.getElementById('adj-table');
+  const tbody = document.getElementById('adj-tbody');
+  const summary = document.getElementById('summary');
+
+  if (S.adjList.length === 0) {
+    empty.style.display = 'flex';
+    table.style.display = 'none';
+    summary.style.display = 'none';
+    return;
+  }
+
+  empty.style.display = 'none';
+  table.style.display = '';
+  summary.style.display = 'flex';
+
+  tbody.innerHTML = S.adjList.map(a => rowHtml(a)).join('');
+  attachRowEvents();
+  updateSummary();
+}
+
+function rowHtml(a) {
+  const current = a.existencia ?? 0;
+  const newVal  = S.adjValues[a.id] ?? current;
+  const diff    = newVal - current;
+  const amount  = diff * (a.precio1 ?? 0);
+  const stCls   = current > 0 ? 'ok' : current < 0 ? 'neg' : 'zero';
+  const dCls    = diff > 0 ? 'dif-pos' : diff < 0 ? 'dif-neg' : 'dif-zero';
+  const diffStr = diff > 0 ? `+${diff}` : `${diff}`;
+  const amtStr  = diff > 0 ? `+${fmt(amount)}` : diff < 0 ? `−${fmt(Math.abs(amount))}` : '$0.00';
+  return `<tr data-id="${esc(a.id)}">
+    <td class="sku-mono">${esc(a.clave || '—')}</td>
+    <td><span class="desc-cell" title="${esc(a.descripcion || '')}">${esc(a.descripcion || '—')}</span></td>
+    <td><span class="loc-cell" title="${esc(a.localizacion || '')}">${esc(a.localizacion || '—')}</span></td>
+    <td style="text-align:center"><span class="stock-badge ${stCls}">${current}</span></td>
+    <td style="text-align:right">
+      <input class="qty-input" type="number" step="1" value="${newVal}"
+        data-id="${esc(a.id)}" data-current="${current}" data-precio="${a.precio1 ?? 0}">
+    </td>
+    <td style="text-align:right" class="${dCls}" data-diff="${esc(a.id)}">${diffStr}</td>
+    <td style="text-align:right" class="${dCls}" data-amount="${esc(a.id)}">${amtStr}</td>
+    <td style="text-align:center">
+      <button class="rm-btn" data-rm="${esc(a.id)}" title="Quitar del ajuste">
+        <i class="bi bi-x-lg"></i>
+      </button>
+    </td>
+  </tr>`;
+}
+
+function attachRowEvents() {
+  document.querySelectorAll('.qty-input').forEach(inp => inp.addEventListener('input', onQtyInput));
+  document.querySelectorAll('[data-rm]').forEach(btn => {
+    btn.addEventListener('click', () => removeArticle(btn.dataset.rm));
+  });
+}
+
+async function onQtyInput() {
+  const id      = this.dataset.id;
+  const current = parseFloat(this.dataset.current) || 0;
+  const precio  = parseFloat(this.dataset.precio)  || 0;
+  let val       = parseFloat(this.value);
+
+  if (isNaN(val)) { this.classList.add('err'); return; }
+  this.classList.remove('err');
+
+  // Negative stock warning
+  if (val < 0) {
+    const art = S.adjList.find(a => a.id === id);
+    const ok  = await confirmNegative(val, art?.descripcion || '');
+    if (!ok) { this.value = Math.max(0, current); val = parseFloat(this.value); }
+  }
+
+  S.adjValues[id] = val;
+  const diff   = val - current;
+  const amount = diff * precio;
+  const cls    = diff > 0 ? 'dif-pos' : diff < 0 ? 'dif-neg' : 'dif-zero';
+
+  const diffEl = document.querySelector(`[data-diff="${CSS.escape(id)}"]`);
+  const amtEl  = document.querySelector(`[data-amount="${CSS.escape(id)}"]`);
+  if (diffEl) { diffEl.className = cls; diffEl.textContent = diff > 0 ? `+${diff}` : `${diff}`; }
+  if (amtEl)  { amtEl.className  = cls; amtEl.textContent  = diff > 0 ? `+${fmt(amount)}` : diff < 0 ? `−${fmt(Math.abs(amount))}` : '$0.00'; }
+
+  updateSummary();
+  updateControls();
+}
+
+function updateSummary() {
+  let changed = 0, posU = 0, negU = 0, netAmt = 0;
+  S.adjList.forEach(a => {
+    const cur  = a.existencia ?? 0;
+    const newV = S.adjValues[a.id] ?? cur;
+    const d    = newV - cur;
+    if (d !== 0) { changed++; netAmt += d * (a.precio1 ?? 0); }
+    if (d > 0) posU += d;
+    if (d < 0) negU += Math.abs(d);
+  });
+  document.getElementById('sum-n').textContent = S.adjList.length;
+  document.getElementById('sum-changed').textContent = changed;
+  document.getElementById('sum-pos').textContent = `+${posU}`;
+  document.getElementById('sum-neg').textContent = `−${negU}`;
+  const amEl = document.getElementById('sum-amount');
+  amEl.textContent = (netAmt >= 0 ? '+' : '−') + fmt(Math.abs(netAmt));
+  amEl.className = 'sum-val ' + (netAmt > 0 ? 'dif-pos' : netAmt < 0 ? 'dif-neg' : 'dif-zero');
+}
+
+function updateControls() {
+  const n = S.adjList.length;
+  const changed = S.adjList.filter(a => (S.adjValues[a.id] ?? (a.existencia ?? 0)) !== (a.existencia ?? 0)).length;
+  document.getElementById('confirm-badge').textContent = changed;
+  document.getElementById('btn-confirm').disabled = changed === 0;
+  document.getElementById('btn-clear-all').style.display = n > 0 ? '' : 'none';
+  document.getElementById('summary').style.display = n > 0 ? 'flex' : 'none';
+}
+
+// ══════════════════════════════════════════════════════════════
+// SUBMIT
+// ══════════════════════════════════════════════════════════════
+document.getElementById('btn-confirm').addEventListener('click', async () => {
+  // Validate: no empty / invalid inputs
+  let hasErr = false;
+  document.querySelectorAll('.qty-input').forEach(inp => {
+    if (inp.value === '' || isNaN(parseFloat(inp.value))) { inp.classList.add('err'); hasErr = true; }
+  });
+  if (hasErr) { toast('Completa todos los campos de nueva cantidad', 'warning'); return; }
+
+  const ajustes = S.adjList
+    .map(a => ({ sku: a.clave, nueva_cantidad: S.adjValues[a.id] ?? (a.existencia ?? 0), id: a.id }))
+    .filter(aj => {
+      const orig = S.adjList.find(a => a.id === aj.id);
+      return aj.nueva_cantidad !== (orig?.existencia ?? 0);
+    });
+
+  if (ajustes.length === 0) { toast('No hay cambios que guardar', 'info'); return; }
+
+  const btn = document.getElementById('btn-confirm');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"><i class="bi bi-arrow-repeat"></i></span> Guardando…';
+
+  let toastMsg = null;
+  let toastType = 'success';
+
+  try {
+    const res = await apiAdjust(ajustes);
+    ajustes.forEach(aj => {
+      const art = S.adjList.find(a => a.id === aj.id);
+      if (art) art.existencia = aj.nueva_cantidad;
+    });
+    toastMsg  = `${res.actualizados ?? ajustes.length} ajuste${ajustes.length !== 1 ? 's' : ''} guardado${ajustes.length !== 1 ? 's' : ''}`;
+    toastType = 'success';
+    if (res.errores?.length) {
+      toastType = 'warning';
+      toastMsg += ` — ${res.errores[0]}` + (res.errores.length > 1 ? ` (+${res.errores.length - 1} más)` : '');
+    }
+    S.adjList   = [];
+    S.adjValues = {};
+  } catch(e) {
+    toastMsg  = `Error al guardar: ${e.message}`;
+    toastType = 'danger';
+  } finally {
+    // Restaurar el botón ANTES de renderAdjTable para que #confirm-badge exista en el DOM
+    btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Confirmar ajuste <span class="count-badge" id="confirm-badge">0</span>';
+    btn.disabled  = false;
+    renderAdjTable();
+    updateControls();
+    if (toastMsg) toast(toastMsg, toastType);
+  }
+});
+
+document.getElementById('btn-clear-all').addEventListener('click', () => {
+  S.adjList = [];
+  S.adjValues = {};
+  renderAdjTable();
+  updateControls();
+});
+
+// ══════════════════════════════════════════════════════════════
+// NEGATIVE STOCK CONFIRM
+// ══════════════════════════════════════════════════════════════
+function confirmNegative(qty, name) {
+  return new Promise(resolve => {
+    S._negResolve = resolve;
+    document.getElementById('neg-msg').innerHTML =
+      `El artículo <strong>${esc(name)}</strong> quedará con stock <strong style="color:var(--danger)">${qty}</strong>. ¿Confirmar?`;
+    negModal.show();
+  });
+}
+document.getElementById('btn-neg-ok').addEventListener('click',     () => { negModal.hide(); S._negResolve?.(true);  S._negResolve = null; });
+document.getElementById('btn-neg-cancel').addEventListener('click', () => { negModal.hide(); S._negResolve?.(false); S._negResolve = null; });
+
+// ══════════════════════════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════════════════════════
+function toast(msg, type = 'success') {
+  const colors = { success: 'var(--success)', danger: 'var(--danger)', warning: 'var(--warn)', info: '#2563eb' };
+  const icons  = { success: 'check-circle-fill', danger: 'x-circle-fill', warning: 'exclamation-triangle-fill', info: 'info-circle-fill' };
+  const el = document.createElement('div');
+  el.className = 'toast align-items-center border-0 show inv-toast';
+  el.setAttribute('role', 'alert');
+  el.innerHTML = `<div class="d-flex align-items-center gap-2 p-3">
+    <i class="bi bi-${icons[type]||icons.info}" style="color:${colors[type]||colors.info};font-size:15px;flex-shrink:0"></i>
+    <span style="flex:1;font-size:13px">${esc(msg)}</span>
+    <button type="button" class="btn-close btn-sm" style="opacity:.5" onclick="this.closest('.toast').remove()"></button>
+  </div>`;
+  document.getElementById('toast-wrap').appendChild(el);
+  setTimeout(() => el.remove(), 4500);
+}
+
+// ══════════════════════════════════════════════════════════════
+// HELPERS
+// ══════════════════════════════════════════════════════════════
+function esc(s) {
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function fmt(n) {
+  return '$' + (parseFloat(n) || 0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+// ══════════════════════════════════════════════════════════════
+// EVENT WIRING
+// ══════════════════════════════════════════════════════════════
+document.getElementById('search-input').addEventListener('input', onSearchInput);
+// Enter cuando el popup está cerrado → buscar directamente
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+  if (document.getElementById('search-popup').style.display === 'none' && e.key === 'Enter') {
+    e.preventDefault();
+    triggerSearch();
+  }
+});
+document.getElementById('btn-search').addEventListener('mousedown', (e) => e.preventDefault());
+document.getElementById('btn-search').addEventListener('click', () => {
+  const popup = document.getElementById('search-popup');
+  const popupClosed = popup.style.display === 'none';
+  if (popupClosed && S.popupResults.length > 0) {
+    // Reabrir con la última búsqueda en la misma página
+    showPopup();
+  } else {
+    // Popup ya abierto o sin resultados previos → nueva búsqueda
+    triggerSearch();
+  }
+});
+</script>
+</body>
+</html>

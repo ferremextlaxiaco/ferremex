@@ -16,38 +16,76 @@ export function Admin() {
     return null
   }
 
-  const tab = location.pathname.includes("/admin/usuarios") ? "usuarios" : "tickets"
+  const path = location.pathname
+  const tab = path.includes("/admin/clientes")
+    ? "clientes"
+    : path.includes("/admin/usuarios")
+    ? "usuarios"
+    : path.includes("/admin/articulos")
+    ? "articulos"
+    : path.includes("/admin/inventario")
+    ? "inventario"
+    : "tickets"
 
   return (
-    <div className="admin-page">
-      <header className="pos-header">
-        <span className="pos-marca">FERREMEX — Administración</span>
-        <div className="pos-header-derecha">
-          <span className="pos-cajero">👤 {state.cajero.nombre}</span>
-          <button className="btn-secondary btn-sm" onClick={() => navigate("/venta")}>
-            ← Volver al POS
-          </button>
+    <div className="admin-shell">
+      {/* Topbar (tema claro) */}
+      <div className="admin-topbar">
+        <div className="admin-topbar-brand">
+          <span className="admin-brand-mark">FERREMEX</span>
+          <span className="admin-brand-sep">—</span>
+          <span className="admin-brand-section">Administración</span>
         </div>
-      </header>
+        <div className="admin-topbar-right">
+          <span className="admin-user-chip">
+            <span className="admin-avatar">{state.cajero.nombre[0].toUpperCase()}</span>
+            {state.cajero.nombre}
+          </span>
+          <button className="admin-btn-back" onClick={() => navigate("/venta")}>← Volver al POS</button>
+        </div>
+      </div>
 
-      <div className="admin-layout">
-        <nav className="admin-sidebar">
+      <div className="admin-body">
+        {/* Sidebar */}
+        <aside className="admin-sidebar">
           <button
-            className={`admin-nav-item ${tab === "tickets" ? "admin-nav-activo" : ""}`}
+            className={`admin-side-item${tab === "tickets" ? " active" : ""}`}
             onClick={() => navigate("/admin/tickets")}
           >
-            <span className="admin-nav-icono">🖨</span>
-            <span>Formato de tickets</span>
+            <span className="admin-side-icon">📄</span>
+            Formato de tickets
           </button>
           <button
-            className={`admin-nav-item ${tab === "usuarios" ? "admin-nav-activo" : ""}`}
+            className={`admin-side-item${tab === "usuarios" ? " active" : ""}`}
             onClick={() => navigate("/admin/usuarios")}
           >
-            <span className="admin-nav-icono">👥</span>
-            <span>Usuarios y permisos</span>
+            <span className="admin-side-icon">👥</span>
+            Usuarios y permisos
           </button>
-        </nav>
+          <button
+            className={`admin-side-item${tab === "clientes" ? " active" : ""}`}
+            onClick={() => navigate("/admin/clientes")}
+          >
+            <span className="admin-side-icon">🧑‍💼</span>
+            Clientes
+          </button>
+          <button
+            className={`admin-side-item${tab === "articulos" ? " active" : ""}`}
+            onClick={() => navigate("/admin/articulos")}
+          >
+            <span className="admin-side-icon">📦</span>
+            Artículos
+          </button>
+          <button
+            className={`admin-side-item${tab === "inventario" ? " active" : ""}`}
+            onClick={() => navigate("/admin/inventario")}
+          >
+            <span className="admin-side-icon">🔢</span>
+            Ajuste de Inventario
+          </button>
+        </aside>
 
+        {/* Contenido */}
         <main className="admin-contenido">
           <Outlet />
         </main>

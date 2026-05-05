@@ -23,6 +23,7 @@
     "import:productos": "medusa exec ./src/scripts/import-productos.ts",
     "attach:imagenes": "medusa exec ./src/scripts/attach-imagenes.ts",
     "reparar:inventario": "medusa exec ./src/scripts/reparar-inventario.ts",
+    "actualizar:localizacion": "medusa exec ./src/scripts/actualizar-localizacion.ts",
     "asignar:precios": "medusa exec ./src/scripts/asignar-precios.ts",
     "start": "medusa start",
     "dev": "medusa develop",
