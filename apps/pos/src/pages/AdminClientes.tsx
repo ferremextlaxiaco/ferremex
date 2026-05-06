@@ -1,4 +1,11 @@
 import { useState, useEffect } from "react"
+
+function uuid(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
 import { useSearchParams } from "react-router-dom"
 import {
   type Cliente,
@@ -60,7 +67,7 @@ export function AdminClientes() {
       const c = todos.find((c) => c.id === editarId)
       if (c) { setEditando({ ...c }); setEsNuevo(false) }
     } else {
-      setEditando({ id: crypto.randomUUID(), ...CLIENTE_VACIO, num_cliente: siguienteNumCliente(todos) })
+      setEditando({ id: uuid(), ...CLIENTE_VACIO, num_cliente: siguienteNumCliente(todos) })
       setEsNuevo(true)
     }
     setSearchParams({}, { replace: true })
@@ -78,7 +85,7 @@ export function AdminClientes() {
 
   function abrirNuevo() {
     setEditando({
-      id: crypto.randomUUID(),
+      id: uuid(),
       ...CLIENTE_VACIO,
       num_cliente: siguienteNumCliente(clientes),
     })

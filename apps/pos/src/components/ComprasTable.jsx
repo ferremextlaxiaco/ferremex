@@ -1,0 +1,253 @@
+import { useState } from "react"
+import { loadProveedores } from "../lib/proveedores"
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtPeso(n) {
+  return "$" + Number(n || 0).toLocaleString("es-MX", {
+    minimumFractionDigits: 2, maximumFractionDigits: 2,
+  })
+}
+
+// Small inline number input for table cells
+function CellNum({ value, onChange, width = 68, min = 0, step = "0.01" }) {
+  return (
+    <input
+      className="cpx-cell-input"
+      type="number"
+      min={min}
+      step={step}
+      value={value}
+      style={{ width }}
+      onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+    />
+  )
+}
+
+// Small inline toggle checkbox
+function CellToggle({ checked, onChange, title }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      title={title}
+      className={`cpx-cell-toggle${checked ? " on" : ""}`}
+      onClick={() => onChange(!checked)}
+    >
+      {checked ? "Sí" : "No"}
+    </button>
+  )
+}
+
+// Status badge
+const STATUS_META = {
+  borrador:    { label: "Borrador",   cls: "cpx-status-borrador"  },
+  en_espera:   { label: "En espera",  cls: "cpx-status-espera"    },
+  confirmada:  { label: "Confirmada", cls: "cpx-status-confirmada" },
+}
+
+// ── Header: proveedor + fecha + status ────────────────────────────────────────
+
+function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, status }) {
+  const proveedores = loadProveedores()
+
+  return (
+    <div className="cpx-table-header">
+      {/* Proveedor */}
+      <div className="cpx-th-field">
+        <label className="cpx-th-label">Proveedor</label>
+        <select
+          className="cpx-th-select"
+          value={proveedor?.id ?? ""}
+          onChange={(e) => {
+            const found = proveedores.find((p) => p.id === e.target.value)
+            onProveedorChange(found ?? null)
+          }}
+        >
+          <option value="">— Seleccionar —</option>
+          {proveedores.map((p) => (
+            <option key={p.id} value={p.id}>{p.nombre}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Fecha */}
+      <div className="cpx-th-field">
+        <label className="cpx-th-label">Fecha de compra</label>
+        <input
+          type="date"
+          className="cpx-th-select"
+          value={fecha}
+          onChange={(e) => onFechaChange(e.target.value)}
+        />
+      </div>
+
+      {/* Status */}
+      <div className="cpx-th-status">
+        <span className={STATUS_META[status]?.cls ?? "cpx-status-borrador"}>
+          {STATUS_META[status]?.label ?? status}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Tabla de artículos ────────────────────────────────────────────────────────
+
+const COL_HEADS = [
+  { key: "clave",       label: "Clave",       w: 90  },
+  { key: "descripcion", label: "Descripción", w: 300 },
+  { key: "cantidad",    label: "Cant.",        w: 72  },
+  { key: "costoSinIva", label: "Costo s/IVA",  w: 110 },
+  { key: "costoConIva", label: "Costo c/IVA",  w: 110 },
+]
+
+function ArticleRow({ row, selected, onClick, onChange, onDelete, pendingDelete, onConfirmDelete, onCancelDelete }) {
+  const set = (field, val) => onChange(row._id, { [field]: val })
+
+  return (
+    <tr
+      className={`cpx-tr${selected ? " selected" : ""}`}
+      onClick={onClick}
+    >
+      {/* Clave */}
+      <td className="cpx-td cpx-td-mono">{row.clave}</td>
+
+      {/* Descripción */}
+      <td className="cpx-td cpx-td-desc">{row.descripcion}</td>
+
+      {/* Cantidad */}
+      <td className="cpx-td" onClick={(e) => e.stopPropagation()}>
+        <CellNum value={row.cantidad} min={1} step="1"
+          onChange={(v) => set("cantidad", Math.max(1, Math.round(v)))} />
+      </td>
+
+      {/* Costo s/IVA (calculado) */}
+      <td className="cpx-td cpx-td-num cpx-td-calc">{fmtPeso(row.costoSinIva)}</td>
+
+      {/* Costo c/IVA (calculado) */}
+      <td className="cpx-td cpx-td-num cpx-td-calc">{fmtPeso(row.costoConIva)}</td>
+
+      {/* Eliminar */}
+      <td className="cpx-td cpx-td-del" onClick={(e) => e.stopPropagation()}>
+        {pendingDelete ? (
+          <div className="cpx-del-confirm">
+            <button className="cpx-del-yes" onClick={onConfirmDelete} title="Confirmar">✓</button>
+            <button className="cpx-del-no"  onClick={onCancelDelete}  title="Cancelar">✕</button>
+          </div>
+        ) : (
+          <button className="cpx-del-btn" onClick={onDelete} title="Quitar artículo">
+            ✕
+          </button>
+        )}
+      </td>
+    </tr>
+  )
+}
+
+// ── Componente exportado ──────────────────────────────────────────────────────
+
+export default function ComprasTable({
+  rows, selectedId, onRowClick, onRowChange, onRowDelete,
+  proveedor, onProveedorChange,
+  fecha, onFechaChange,
+  status,
+  subtotal, ivaTotal, total,
+  onPonerEnEspera, onConfirmar,
+}) {
+  // Track which row has its delete pending (inline confirmation)
+  const [pendingDeleteId, setPendingDeleteId] = useState(null)
+
+  function handleDeleteClick(id) {
+    setPendingDeleteId(id)
+  }
+  function handleConfirmDelete(id) {
+    setPendingDeleteId(null)
+    onRowDelete(id)
+  }
+  function handleCancelDelete() {
+    setPendingDeleteId(null)
+  }
+
+  const isEmpty = rows.length === 0
+
+  return (
+    <div className="cpx-center">
+      {/* Header: proveedor + fecha + status */}
+      <TableHeader
+        proveedor={proveedor}
+        onProveedorChange={onProveedorChange}
+        fecha={fecha}
+        onFechaChange={onFechaChange}
+        status={status}
+      />
+
+      {/* Scrollable table */}
+      <div className="cpx-table-scroll">
+        {isEmpty ? (
+          <div className="cpx-table-empty">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none"
+              stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
+              <path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z" />
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <path d="M16 10a4 4 0 0 1-8 0" />
+            </svg>
+            <p>Busca un artículo en el panel izquierdo y haz clic para agregarlo</p>
+          </div>
+        ) : (
+          <table className="cpx-table">
+            <thead>
+              <tr>
+                {COL_HEADS.map((c) => (
+                  <th key={c.key} style={{ minWidth: c.w }}>{c.label}</th>
+                ))}
+                <th style={{ minWidth: 54 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <ArticleRow
+                  key={row._id}
+                  row={row}
+                  selected={row._id === selectedId}
+                  onClick={() => onRowClick(row._id)}
+                  onChange={onRowChange}
+                  onDelete={() => handleDeleteClick(row._id)}
+                  pendingDelete={pendingDeleteId === row._id}
+                  onConfirmDelete={() => handleConfirmDelete(row._id)}
+                  onCancelDelete={handleCancelDelete}
+                />
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Footer: totales + acciones */}
+      <div className="cpx-table-footer">
+        <div className="cpx-totals">
+          <span className="cpx-total-item">
+            Subtotal: <strong>{fmtPeso(subtotal)}</strong>
+          </span>
+          <span className="cpx-total-item">
+            IVA: <strong>{fmtPeso(ivaTotal)}</strong>
+          </span>
+          <span className="cpx-total-item cpx-total-main">
+            Total: <strong>{fmtPeso(total)}</strong>
+          </span>
+        </div>
+        <div className="cpx-footer-actions">
+          <button
+            className="cpx-btn-confirmar"
+            disabled={isEmpty || !proveedor}
+            onClick={onConfirmar}
+            title={!proveedor ? "Selecciona un proveedor primero" : undefined}
+          >
+            Confirmar compra
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}

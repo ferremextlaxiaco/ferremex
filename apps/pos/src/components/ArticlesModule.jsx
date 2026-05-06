@@ -286,6 +286,25 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
+              {/* Inventario y ubicación */}
+              <div className="ar-detail-section">
+                <p className="ar-detail-section-title">Inventario y Ubicaci&oacute;n</p>
+                <div className="ar-detail-rows">
+                  {[
+                    ["Mínimo",      selected.inventarioMin ?? "—"],
+                    ["Máximo",      selected.inventarioMax ?? "—"],
+                    ["Localización", selected.localizacion || "—"],
+                    ["Peso",            selected.peso ? `${selected.peso} kg` : "—"],
+                    ["Venta a Granel",  selected.ventaGranel ? "Sí" : "No"],
+                  ].map(([label, value]) => (
+                    <div key={label} className="ar-detail-row">
+                      <span className="ar-detail-label">{label}</span>
+                      <span className="ar-detail-value">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               {/* Identificación */}
               <div className="ar-detail-section">
                 <p className="ar-detail-section-title">Identificaci&oacute;n</p>
@@ -347,25 +366,6 @@ export default function ArticlesModule() {
                     <div key={n} className="ar-detail-price-item">
                       <p className="ar-detail-price-label">Precio {n}</p>
                       <p className="ar-detail-price-value">${(selected[`precio${n}`] ?? 0).toFixed(2)}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Inventario y ubicación */}
-              <div className="ar-detail-section">
-                <p className="ar-detail-section-title">Inventario y Ubicaci&oacute;n</p>
-                <div className="ar-detail-rows">
-                  {[
-                    ["Mínimo",      selected.inventarioMin ?? "—"],
-                    ["Máximo",      selected.inventarioMax ?? "—"],
-                    ["Localización", selected.localizacion || "—"],
-                    ["Peso",            selected.peso ? `${selected.peso} kg` : "—"],
-                    ["Venta a Granel",  selected.ventaGranel ? "Sí" : "No"],
-                  ].map(([label, value]) => (
-                    <div key={label} className="ar-detail-row">
-                      <span className="ar-detail-label">{label}</span>
-                      <span className="ar-detail-value">{value}</span>
                     </div>
                   ))}
                 </div>

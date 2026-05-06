@@ -25,6 +25,10 @@ export function Admin() {
     ? "articulos"
     : path.includes("/admin/inventario")
     ? "inventario"
+    : path.includes("/admin/proveedores")
+    ? "proveedores"
+    : path.includes("/admin/compras")
+    ? "compras"
     : "tickets"
 
   return (
@@ -82,6 +86,20 @@ export function Admin() {
           >
             <span className="admin-side-icon">🔢</span>
             Ajuste de Inventario
+          </button>
+          <button
+            className={`admin-side-item${tab === "proveedores" ? " active" : ""}`}
+            onClick={() => navigate("/admin/proveedores")}
+          >
+            <span className="admin-side-icon">🏭</span>
+            Proveedores
+          </button>
+          <button
+            className={`admin-side-item${tab === "compras" ? " active" : ""}`}
+            onClick={() => navigate("/admin/compras")}
+          >
+            <span className="admin-side-icon">🛒</span>
+            Compras
           </button>
         </aside>
 
