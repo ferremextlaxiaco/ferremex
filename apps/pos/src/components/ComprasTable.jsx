@@ -10,7 +10,7 @@ function fmtPeso(n) {
 }
 
 // Small inline number input for table cells
-function CellNum({ value, onChange, width = 68, min = 0, step = "0.01" }) {
+function CellNum({ value, onChange, min = 0, step = "0.01" }) {
   return (
     <input
       className="cpx-cell-input"
@@ -18,7 +18,6 @@ function CellNum({ value, onChange, width = 68, min = 0, step = "0.01" }) {
       min={min}
       step={step}
       value={value}
-      style={{ width }}
       onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
     />
   )
@@ -49,7 +48,7 @@ const STATUS_META = {
 
 // ── Header: proveedor + fecha + status ────────────────────────────────────────
 
-function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, status }) {
+function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, numFactura, onNumFacturaChange }) {
   const proveedores = loadProveedores()
 
   return (
@@ -83,11 +82,17 @@ function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, statu
         />
       </div>
 
-      {/* Status */}
-      <div className="cpx-th-status">
-        <span className={STATUS_META[status]?.cls ?? "cpx-status-borrador"}>
-          {STATUS_META[status]?.label ?? status}
-        </span>
+      {/* Núm. factura — alineado a la derecha */}
+      <div className="cpx-th-field" style={{ marginLeft: "auto" }}>
+        <label className="cpx-th-label">Núm. factura</label>
+        <input
+          type="text"
+          className="cpx-th-select"
+          placeholder="Ej. F-2024-001"
+          value={numFactura ?? ""}
+          onChange={(e) => onNumFacturaChange(e.target.value)}
+          style={{ minWidth: 130 }}
+        />
       </div>
     </div>
   )
@@ -96,12 +101,26 @@ function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, statu
 // ── Tabla de artículos ────────────────────────────────────────────────────────
 
 const COL_HEADS = [
-  { key: "clave",       label: "Clave",       w: 90  },
-  { key: "descripcion", label: "Descripción", w: 300 },
-  { key: "cantidad",    label: "Cant.",        w: 72  },
-  { key: "costoSinIva", label: "Costo s/IVA",  w: 110 },
-  { key: "costoConIva", label: "Costo c/IVA",  w: 110 },
+  { key: "clave",       label: "Clave",       w: 90,  num: false },
+  { key: "descripcion", label: "Descripción", w: 300, num: false },
+  { key: "cantidad",    label: "Cant.",        w: 72,  num: true  },
+  { key: "costoSinIva", label: "Costo s/IVA",  w: 110, num: true  },
+  { key: "costoConIva", label: "Costo c/IVA",  w: 110, num: true  },
+  { key: "variacion",   label: "Var.",         w: 72,  num: true  },
+  { key: "importe",     label: "Importe",      w: 110, num: true  },
 ]
+
+function PriceIndicator({ costo, ultimoPrecio }) {
+  if (!ultimoPrecio || ultimoPrecio === 0 || costo === ultimoPrecio) return null
+  const diff    = costo - ultimoPrecio
+  const pct     = Math.abs((diff / ultimoPrecio) * 100).toFixed(1)
+  const subio   = diff > 0
+  return (
+    <span className={`cpx-price-ind ${subio ? "up" : "down"}`} title={`Último: ${fmtPeso(ultimoPrecio)}`}>
+      {subio ? "▲" : "▼"} {pct}%
+    </span>
+  )
+}
 
 function ArticleRow({ row, selected, onClick, onChange, onDelete, pendingDelete, onConfirmDelete, onCancelDelete }) {
   const set = (field, val) => onChange(row._id, { [field]: val })
@@ -118,16 +137,26 @@ function ArticleRow({ row, selected, onClick, onChange, onDelete, pendingDelete,
       <td className="cpx-td cpx-td-desc">{row.descripcion}</td>
 
       {/* Cantidad */}
-      <td className="cpx-td" onClick={(e) => e.stopPropagation()}>
+      <td className="cpx-td cpx-td-num" onClick={(e) => e.stopPropagation()}>
         <CellNum value={row.cantidad} min={1} step="1"
           onChange={(v) => set("cantidad", Math.max(1, Math.round(v)))} />
       </td>
 
-      {/* Costo s/IVA (calculado) */}
+      {/* Costo s/IVA */}
       <td className="cpx-td cpx-td-num cpx-td-calc">{fmtPeso(row.costoSinIva)}</td>
 
-      {/* Costo c/IVA (calculado) */}
-      <td className="cpx-td cpx-td-num cpx-td-calc">{fmtPeso(row.costoConIva)}</td>
+      {/* Costo c/IVA — solo si aplica IVA */}
+      <td className="cpx-td cpx-td-num cpx-td-calc">
+        {row.aplicarIva ? fmtPeso(row.costoConIva) : <span style={{ color: "var(--at-text-muted)" }}>—</span>}
+      </td>
+
+      {/* Variación vs último precio de compra */}
+      <td className="cpx-td cpx-td-num">
+        <PriceIndicator costo={row.costo} ultimoPrecio={row.ultimoPrecioCompra} />
+      </td>
+
+      {/* Importe = cantidad × costo c/IVA */}
+      <td className="cpx-td cpx-td-num cpx-td-importe">{fmtPeso(row.costoConIva * row.cantidad)}</td>
 
       {/* Eliminar */}
       <td className="cpx-td cpx-td-del" onClick={(e) => e.stopPropagation()}>
@@ -152,6 +181,7 @@ export default function ComprasTable({
   rows, selectedId, onRowClick, onRowChange, onRowDelete,
   proveedor, onProveedorChange,
   fecha, onFechaChange,
+  numFactura, onNumFacturaChange,
   status,
   subtotal, ivaTotal, total,
   onPonerEnEspera, onConfirmar,
@@ -180,7 +210,8 @@ export default function ComprasTable({
         onProveedorChange={onProveedorChange}
         fecha={fecha}
         onFechaChange={onFechaChange}
-        status={status}
+        numFactura={numFactura}
+        onNumFacturaChange={onNumFacturaChange}
       />
 
       {/* Scrollable table */}
@@ -200,7 +231,7 @@ export default function ComprasTable({
             <thead>
               <tr>
                 {COL_HEADS.map((c) => (
-                  <th key={c.key} style={{ minWidth: c.w }}>{c.label}</th>
+                  <th key={c.key} style={{ minWidth: c.w, textAlign: c.num ? "right" : "left" }}>{c.label}</th>
                 ))}
                 <th style={{ minWidth: 54 }}></th>
               </tr>

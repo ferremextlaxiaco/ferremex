@@ -385,6 +385,7 @@ export function AdminProveedores() {
   const [drawerMode, setDrawerMode] = useState<"add" | "edit">("add")
   const [defaultNum, setDefaultNum] = useState("")
   const [facturaModal, setFacturaModal] = useState<{ factura: FacturaCredito | null } | null>(null)
+  const [confirmModal, setConfirmModal] = useState<{ mensaje: string; onAceptar: () => void } | null>(null)
   const [search, setSearch] = useState("")
 
   const selected = proveedores.find((p) => p.id === selectedId) ?? null
@@ -433,9 +434,10 @@ export function AdminProveedores() {
 
   function handleEliminar() {
     if (!selected) return
-    if (!confirm(`¿Eliminar a ${selected.nombre}? Esta acción no se puede deshacer.`)) return
-    guardar(proveedores.filter((p) => p.id !== selectedId))
-    setSelectedId(null)
+    setConfirmModal({
+      mensaje: `¿Eliminar al proveedor "${selected.nombre}"? Esta acción no se puede deshacer.`,
+      onAceptar: () => { guardar(proveedores.filter((p) => p.id !== selectedId)); setSelectedId(null) },
+    })
   }
 
   // ── CRUD facturas ─────────────────────────────────────────────────────────
@@ -460,14 +462,16 @@ export function AdminProveedores() {
 
   function handleEliminarFactura(facturaId: string) {
     if (!selected) return
-    if (!confirm("¿Eliminar esta factura?")) return
-    guardar(
-      proveedores.map((p) =>
-        p.id === selected.id
-          ? { ...p, facturas: p.facturas.filter((f) => f.id !== facturaId) }
-          : p
-      )
-    )
+    setConfirmModal({
+      mensaje: "¿Eliminar esta factura a crédito? Esta acción no se puede deshacer.",
+      onAceptar: () => guardar(
+        proveedores.map((p) =>
+          p.id === selected.id
+            ? { ...p, facturas: p.facturas.filter((f) => f.id !== facturaId) }
+            : p
+        )
+      ),
+    })
   }
 
   function handleMarcarPagada(facturaId: string) {
@@ -519,6 +523,32 @@ export function AdminProveedores() {
         onSave={handleSaveFactura}
         onClose={() => setFacturaModal(null)}
       />
+
+      {/* Modal de confirmación con estilo POS */}
+      {confirmModal && (
+        <div className="cpx-modal-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="cpx-modal cpx-confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cpx-modal-header">
+              <span className="cpx-modal-titulo">Confirmar acción</span>
+              <button className="cpx-modal-close" onClick={() => setConfirmModal(null)}>✕</button>
+            </div>
+            <div className="cpx-confirm-body">
+              <p className="cpx-confirm-msg">{confirmModal.mensaje}</p>
+              <div className="cpx-confirm-btns">
+                <button className="ar-btn-action" onClick={() => setConfirmModal(null)}>
+                  Cancelar
+                </button>
+                <button className="ar-btn-action ar-btn-danger" onClick={() => {
+                  confirmModal.onAceptar()
+                  setConfirmModal(null)
+                }}>
+                  Aceptar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="apv-root">
         {/* Header */}

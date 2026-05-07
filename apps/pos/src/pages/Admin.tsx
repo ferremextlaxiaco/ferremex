@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useNavigate, useLocation, Outlet } from "react-router-dom"
 import { usePOS } from "../lib/pos-store"
 
@@ -5,6 +6,7 @@ export function Admin() {
   const { state } = usePOS()
   const navigate = useNavigate()
   const location = useLocation()
+  const [sidebarOculto, setSidebarOculto] = useState(false)
 
   // Solo administradores pueden entrar
   if (!state.cajero) {
@@ -36,6 +38,11 @@ export function Admin() {
       {/* Topbar (tema claro) */}
       <div className="admin-topbar">
         <div className="admin-topbar-brand">
+          <button
+            className={`admin-btn-sidebar-toggle${sidebarOculto ? " collapsed" : ""}`}
+            onClick={() => setSidebarOculto(v => !v)}
+            title={sidebarOculto ? "Mostrar panel lateral" : "Ocultar panel lateral"}
+          />
           <span className="admin-brand-mark">FERREMEX</span>
           <span className="admin-brand-sep">—</span>
           <span className="admin-brand-section">Administración</span>
@@ -51,7 +58,7 @@ export function Admin() {
 
       <div className="admin-body">
         {/* Sidebar */}
-        <aside className="admin-sidebar">
+        <aside className={`admin-sidebar${sidebarOculto ? " oculto" : ""}`}>
           <button
             className={`admin-side-item${tab === "tickets" ? " active" : ""}`}
             onClick={() => navigate("/admin/tickets")}

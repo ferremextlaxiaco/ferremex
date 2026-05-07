@@ -243,7 +243,7 @@ export default function ArticlesModule() {
                   </p>
                 </div>
                 <div className="ar-list-right">
-                  <p className="ar-list-price">${a.precio1.toFixed(2)}</p>
+                  <p className="ar-list-price">${(a.aplicarIva ? a.precio1 * 1.16 : a.precio1).toFixed(2)}</p>
                   <p className={`ar-list-stock${(a.existencia ?? 0) > 0 ? " ok" : (a.existencia ?? 0) < 0 ? " neg" : " zero"}`}>
                     {a.existencia ?? 0} en stock
                   </p>
@@ -360,14 +360,23 @@ export default function ArticlesModule() {
 
               {/* Precios de venta */}
               <div className="ar-detail-section">
-                <p className="ar-detail-section-title">Precios de Venta</p>
+                <p className="ar-detail-section-title">
+                  Precios de Venta
+                  <span style={{ fontWeight: 400, fontSize: 11, marginLeft: 6, color: "var(--at-text-muted)" }}>
+                    {selected.aplicarIva ? "(c/IVA 16%)" : "(sin IVA)"}
+                  </span>
+                </p>
                 <div className="ar-detail-price-grid">
-                  {[1, 2, 3, 4].map((n) => (
-                    <div key={n} className="ar-detail-price-item">
-                      <p className="ar-detail-price-label">Precio {n}</p>
-                      <p className="ar-detail-price-value">${(selected[`precio${n}`] ?? 0).toFixed(2)}</p>
-                    </div>
-                  ))}
+                  {[1, 2, 3, 4].map((n) => {
+                    const base = selected[`precio${n}`] ?? 0
+                    const con  = selected.aplicarIva ? base * 1.16 : base
+                    return (
+                      <div key={n} className="ar-detail-price-item">
+                        <p className="ar-detail-price-label">Precio {n}</p>
+                        <p className="ar-detail-price-value">${con.toFixed(2)}</p>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 

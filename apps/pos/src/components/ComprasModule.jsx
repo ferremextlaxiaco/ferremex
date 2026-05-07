@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { listarArticulos } from "../lib/client"
+import { loadProveedores, saveProveedores } from "../lib/proveedores"
 import ComprasTable from "./ComprasTable"
 import ComprasDetailPanel from "./ComprasDetailPanel"
 
@@ -17,12 +18,25 @@ function round2(n) {
 }
 
 function calcRow(row) {
-  const base = Number(row.costo) || 0
-  const desc = Number(row.descuento) || 0
-  const costoConDesc = base * (1 - desc / 100)
-  const costoSinIva = round2(costoConDesc)
-  const costoConIva = row.aplicarIva ? round2(costoSinIva * 1.16) : costoSinIva
-  return { ...row, costoSinIva, costoConIva }
+  const base   = Number(row.costo)   || 0
+  const factor = Number(row.factor)  || 1
+  const desc   = Number(row.descuento) || 0
+  // El factor divide el costo en unidades de venta; costoSinIva = precio de compra tal cual
+  const costoBase = round2(base * (1 - desc / 100))
+
+  let costoSinIva, costoConIva
+  if (row.precioNeto && row.aplicarIva) {
+    costoConIva = costoBase
+    costoSinIva = round2(costoBase / 1.16)
+  } else {
+    costoSinIva = costoBase
+    costoConIva = row.aplicarIva ? round2(costoSinIva * 1.16) : costoSinIva
+  }
+  // costoCalc = base para la calculadora de precios (por unidad de venta)
+  const costoCalc = round2(costoSinIva / factor)
+  // Precio 4 = costo c/IVA por unidad de venta
+  const precio4   = row.aplicarIva ? round2(costoCalc * 1.16) : costoCalc
+  return { ...row, costoSinIva, costoConIva, costoCalc, precio4 }
 }
 
 function articleToRow(art) {
@@ -44,6 +58,8 @@ function articleToRow(art) {
     costo: art.precioCompra ?? 0,
     descuento: 0,
     precioNeto: art.precioNeto ?? false,
+    unidadSat:      art.unidadSat      || "H87",
+    unidadSatVenta: art.unidadSatVenta || "H87",
     precio1: art.precio1 ?? 0,
     precio2: art.precio2 ?? 0,
     precio3: art.precio3 ?? 0,
@@ -74,6 +90,7 @@ const SEED_ROWS = [
     costo: 42.00,
     descuento: 5,
     precioNeto: false,
+    unidadSat: "H87", unidadSatVenta: "H87",
     precio1: 68.00,
     precio2: 62.00,
     precio3: 56.00,
@@ -97,6 +114,7 @@ const SEED_ROWS = [
     costo: 16.00,
     descuento: 0,
     precioNeto: false,
+    unidadSat: "H87", unidadSatVenta: "H87",
     precio1: 26.00,
     precio2: 24.00,
     precio3: 22.00,
@@ -120,6 +138,7 @@ const SEED_ROWS = [
     costo: 22.00,
     descuento: 10,
     precioNeto: false,
+    unidadSat: "H87", unidadSatVenta: "H87",
     precio1: 39.00,
     precio2: 36.00,
     precio3: 33.00,
@@ -152,23 +171,39 @@ function cargarPausadas() {
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ComprasModule() {
-  // Carga inicial desde localStorage (o seed si no hay nada guardado)
-  const _inicial = cargarActual()
+  // Carga inicial desde localStorage (o seed si nunca se ha guardado nada)
+  const _inicial    = cargarActual()
+  const _primerVez  = _inicial === null
+  const _initRows   = _primerVez ? SEED_ROWS : (_inicial.rows   ?? [])
 
-  const [rows,       setRows]       = useState(_inicial?.rows      ?? SEED_ROWS)
-  const [selectedId, setSelectedId] = useState((_inicial?.rows ?? SEED_ROWS)[0]?._id ?? null)
-  const [proveedor,  setProveedor]  = useState(_inicial?.proveedor ?? PROVEEDOR_SEED)
-  const [fecha,      setFecha]      = useState(_inicial?.fecha     ?? new Date().toISOString().slice(0, 10))
-  const [status,     setStatus]     = useState(_inicial?.status    ?? "borrador")
-  const [pausadas,   setPausadas]   = useState(cargarPausadas)
-  const [showPausadas, setShowPausadas] = useState(false)
+  const [rows,       setRows]       = useState(_initRows)
+  const [selectedId, setSelectedId] = useState(_initRows[0]?._id ?? null)
+  const [proveedor,  setProveedor]  = useState(_primerVez ? PROVEEDOR_SEED : _inicial.proveedor)
+  const [fecha,      setFecha]      = useState(_primerVez ? new Date().toISOString().slice(0, 10) : (_inicial.fecha ?? new Date().toISOString().slice(0, 10)))
+  const [status,     setStatus]     = useState(_primerVez ? "borrador" : (_inicial.status ?? "borrador"))
+  const [numFactura, setNumFactura] = useState(_primerVez ? "" : (_inicial.numFactura ?? ""))
+  const [pausadas,      setPausadas]      = useState(cargarPausadas)
+  const [showPausadas,  setShowPausadas]  = useState(false)
+  const [pagoModal,     setPagoModal]     = useState(null) // { formaPago, plazo }
+
+  // Modal de confirmación personalizado
+  const [confirmModal, setConfirmModal] = useState(null) // { mensaje, onAceptar }
+  function pedirConfirm(mensaje, onAceptar) {
+    setConfirmModal({ mensaje, onAceptar })
+  }
 
   // Search
-  const [search, setSearch] = useState("")
-  const [searchResults, setSearchResults] = useState([])
-  const [hasBuscado, setHasBuscado] = useState(false)
-  const [buscando, setBuscando] = useState(false)
-  const [searchError, setSearchError] = useState(null)
+  const [search,       setSearch]       = useState("")
+  const [results,      setResults]      = useState([])
+  const [popupOpen,    setPopupOpen]    = useState(false)
+  const [page,         setPage]         = useState(0)
+  const [hiIdx,        setHiIdx]        = useState(-1)
+  const [searching,    setSearching]    = useState(false)
+  const [searchError,  setSearchError]  = useState(null)
+  const [queryChanged, setQueryChanged] = useState(false)
+  const searchWrapRef  = useRef(null)
+  const searchInputRef = useRef(null)
+  const PAGE_SIZE = 12
 
   // Toast
   const [toast, setToast] = useState(null)
@@ -182,14 +217,10 @@ export default function ComprasModule() {
 
   // ── Auto-guardado en localStorage ────────────────────────────────────────────
 
-  // Guarda la compra actual en cada cambio (protege contra cortes de luz)
+  // Siempre guarda (incluso cuando está vacío) para que al recargar no vuelvan los datos de prueba
   useEffect(() => {
-    if (rows.length === 0 && !proveedor) {
-      localStorage.removeItem(KEY_ACTUAL)
-    } else {
-      localStorage.setItem(KEY_ACTUAL, JSON.stringify({ rows, proveedor, fecha, status }))
-    }
-  }, [rows, proveedor, fecha, status])
+    localStorage.setItem(KEY_ACTUAL, JSON.stringify({ rows, proveedor, fecha, status, numFactura }))
+  }, [rows, proveedor, fecha, status, numFactura])
 
   // Guarda lista de compras en espera en cada cambio
   useEffect(() => {
@@ -204,21 +235,37 @@ export default function ComprasModule() {
 
   // ── Búsqueda de artículos ────────────────────────────────────────────────────
 
-  const buscar = useCallback(async (q) => {
-    if (!q.trim()) return
-    setBuscando(true)
-    setHasBuscado(true)
+  const doSearch = useCallback(async (q) => {
+    if (!q.trim() || searching) return
+    setSearching(true)
     setSearchError(null)
+    setQueryChanged(false)
     try {
       const data = await listarArticulos(q)
-      setSearchResults(data)
+      // Auto-add por SKU exacto
+      const qLow  = q.trim().toLowerCase()
+      const exact = data.find((a) =>
+        a.clave?.toLowerCase() === qLow || a.claveAlterna?.toLowerCase() === qLow
+      )
+      if (exact) {
+        handleAddArticle(exact)
+        setSearch("")
+        setPopupOpen(false)
+        return
+      }
+      setResults(data)
+      setPage(0)
+      setHiIdx(data.length > 0 ? 0 : -1)
+      setPopupOpen(true)
     } catch (e) {
       setSearchError(e.message ?? "Error al buscar")
-      setSearchResults([])
+      setResults([])
+      setPopupOpen(true)
     } finally {
-      setBuscando(false)
+      setSearching(false)
     }
-  }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searching])
 
   // ── CRUD de filas ────────────────────────────────────────────────────────────
 
@@ -266,6 +313,7 @@ export default function ComprasModule() {
         rows,
         proveedor,
         fecha,
+        numFactura,
         fecha_pausa: new Date().toISOString(),
         status,
       },
@@ -275,17 +323,26 @@ export default function ComprasModule() {
     setProveedor(null)
     setFecha(new Date().toISOString().slice(0, 10))
     setStatus("borrador")
+    setNumFactura("")
     showToast("Compra puesta en espera")
   }
 
   function handleRetomarPausada(p) {
+    // Si hay compra en curso, la ponemos en espera automáticamente antes de retomar
     if (rows.length > 0) {
-      if (!confirm("¿Retomar esta compra? La compra actual se perderá.")) return
+      setPausadas((prev) => [
+        ...prev,
+        { id: uuid(), rows, proveedor, fecha, numFactura, fecha_pausa: new Date().toISOString(), status },
+      ])
     }
+    _retomarPausada(p)
+  }
+  function _retomarPausada(p) {
     setRows(p.rows)
     setProveedor(p.proveedor)
     setFecha(p.fecha)
     setStatus(p.status)
+    setNumFactura(p.numFactura ?? "")
     setSelectedId(p.rows[0]?._id ?? null)
     setPausadas((prev) => prev.filter((x) => x.id !== p.id))
     setShowPausadas(false)
@@ -293,78 +350,96 @@ export default function ComprasModule() {
   }
 
   function handleConfirmar() {
-    if (!proveedor) {
-      showToast("Selecciona un proveedor antes de confirmar", "error")
-      return
-    }
     if (rows.length === 0) {
       showToast("Agrega artículos antes de confirmar", "error")
       return
     }
-    setStatus("confirmada")
-    showToast("Compra confirmada")
+    const faltantes = []
+    if (!proveedor)           faltantes.push("Proveedor")
+    if (!numFactura.trim())   faltantes.push("Número de factura")
+    if (faltantes.length > 0) {
+      setPagoModal({ tipo: "error", faltantes })
+      return
+    }
+    setPagoModal({ tipo: "pago", formaPago: "efectivo", plazo: proveedor.dias_credito ?? 30 })
   }
 
-  function handleNuevaCompra() {
-    if (
-      rows.length > 0 &&
-      !confirm("¿Iniciar una nueva compra? Se perderá la compra actual si no la guardas.")
-    )
-      return
+  function ejecutarConfirmar() {
+    if (pagoModal.formaPago === "credito" && proveedor) {
+      const lista = loadProveedores()
+      const nuevaFactura = {
+        id: uuid(),
+        numero_factura: numFactura,
+        fecha_emision:  fecha,
+        dias_credito:   proveedor.dias_credito ?? 30,
+        monto:          round2(total),
+        descripcion:    `Compra de ${rows.length} artículo${rows.length !== 1 ? "s" : ""}`,
+        pagada:         false,
+      }
+      const actualizada = lista.map((p) =>
+        p.id === proveedor.id
+          ? { ...p, facturas: [...(p.facturas ?? []), nuevaFactura] }
+          : p
+      )
+      saveProveedores(actualizada)
+    }
     setRows([])
     setSelectedId(null)
     setProveedor(null)
     setFecha(new Date().toISOString().slice(0, 10))
     setStatus("borrador")
+    setNumFactura("")
+    showToast("Compra confirmada")
+    setPagoModal(null)
+  }
+
+  function handleNuevaCompra() {
+    if (rows.length > 0) {
+      pedirConfirm("¿Iniciar una nueva compra? Se perderá la compra actual si no la guardas.", () => {
+        setRows([]); setSelectedId(null); setProveedor(null)
+        setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
+      })
+      return
+    }
+    setRows([]); setSelectedId(null); setProveedor(null)
+    setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
   }
 
   function handleCancelar() {
-    if (!confirm("¿Cancelar esta compra? Esta acción no se puede deshacer.")) return
-    setRows([])
-    setSelectedId(null)
-    setStatus("borrador")
-    showToast("Compra cancelada")
+    pedirConfirm("¿Cancelar esta compra? Esta acción no se puede deshacer.", () => {
+      setRows([]); setSelectedId(null); setStatus("borrador"); setNumFactura("")
+      showToast("Compra cancelada")
+    })
   }
 
   const selectedRow = rows.find((r) => r._id === selectedId) ?? null
 
-  // ── Popup de búsqueda ─────────────────────────────────────────────────────────
-
-  const [popupOpen, setPopupOpen] = useState(false)
-  const searchWrapRef = useRef(null)
-
-  // Cierra el popup al hacer clic fuera
+  // Cierra popup al hacer clic fuera
   useEffect(() => {
-    function onClickOutside(e) {
-      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target)) {
+    function onOut(e) {
+      if (searchWrapRef.current && !searchWrapRef.current.contains(e.target))
         setPopupOpen(false)
-      }
     }
-    document.addEventListener("mousedown", onClickOutside)
-    return () => document.removeEventListener("mousedown", onClickOutside)
+    document.addEventListener("mousedown", onOut)
+    return () => document.removeEventListener("mousedown", onOut)
   }, [])
 
-  function handleSearchInput(val) {
-    setSearch(val)
-    if (!val.trim()) {
-      setPopupOpen(false)
-      setHasBuscado(false)
-      setSearchResults([])
-    }
-  }
-
-  async function handleBuscar() {
-    if (!search.trim()) return
-    setPopupOpen(true)
-    await buscar(search)
-  }
-
-  function handleSelectArticle(art) {
+  function selectArticle(art) {
     handleAddArticle(art)
-    setPopupOpen(false)
     setSearch("")
-    setSearchResults([])
-    setHasBuscado(false)
+    setPopupOpen(false)
+    // No limpiamos results para que el botón "Última búsqueda" siga activo
+  }
+
+  // Paginación
+  const totalPages  = Math.ceil(results.length / PAGE_SIZE)
+  const pageResults = results.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
+  const globalOffset = page * PAGE_SIZE
+
+  function goPage(delta) {
+    const np = Math.min(Math.max(page + delta, 0), totalPages - 1)
+    setPage(np)
+    setHiIdx(np * PAGE_SIZE)
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -377,72 +452,153 @@ export default function ComprasModule() {
         {/* Título */}
         <p className="admin-seccion-titulo" style={{ marginBottom: 0, flexShrink: 0 }}>Compras</p>
 
-        {/* Búsqueda popup — centro del topbar */}
+        {/* Buscador — centro del topbar */}
         <div className="cpx-search-wrap" ref={searchWrapRef}>
-          <div className="cpx-search-bar">
-            <svg className="cpx-search-icon" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input
-              className="cpx-search-input"
-              placeholder="Buscar artículo para agregar…"
-              value={search}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleBuscar()}
-              onFocus={() => { if (hasBuscado && searchResults.length > 0) setPopupOpen(true) }}
-            />
-            {buscando && <span className="cpx-search-spinner">⟳</span>}
-            {search && (
-              <button className="cpx-search-clear" onClick={() => handleSearchInput("")}>✕</button>
-            )}
+          <div className="cpx-search-row">
+            <div className="cpx-search-bar">
+              <svg className="cpx-search-icon" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                ref={searchInputRef}
+                className="cpx-search-input"
+                placeholder="Buscar por nombre, clave o código de barras…"
+                value={search}
+                autoComplete="off"
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                  setQueryChanged(true)
+                  if (!e.target.value.trim()) { setPopupOpen(false); setResults([]) }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault()
+                    if (queryChanged) { doSearch(search) }
+                    else if (hiIdx >= 0 && results[hiIdx]) { selectArticle(results[hiIdx]) }
+                    else { doSearch(search) }
+                  } else if (e.key === "ArrowDown") {
+                    e.preventDefault()
+                    if (hiIdx < results.length - 1) {
+                      const ni = hiIdx + 1
+                      setHiIdx(ni)
+                      const np = Math.floor(ni / PAGE_SIZE)
+                      if (np !== page) setPage(np)
+                    }
+                  } else if (e.key === "ArrowUp") {
+                    e.preventDefault()
+                    if (hiIdx > 0) {
+                      const ni = hiIdx - 1
+                      setHiIdx(ni)
+                      const np = Math.floor(ni / PAGE_SIZE)
+                      if (np !== page) setPage(np)
+                    }
+                  } else if (e.key === "Escape") {
+                    setPopupOpen(false)
+                  }
+                }}
+              />
+              {searching && <span className="cpx-search-spinner" />}
+              {search && !searching && (
+                <button className="cpx-search-clear" onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setSearch(""); setResults([]); setPopupOpen(false) }}>✕</button>
+              )}
+            </div>
             <button
               className="cpx-search-btn"
-              onClick={handleBuscar}
-              disabled={!search.trim() || buscando}
+              onMouseDown={(e) => e.preventDefault()}
+              disabled={(!search.trim() && results.length === 0) || searching}
+              onClick={() => {
+                if (search.trim()) doSearch(search)
+                else setPopupOpen(true)
+              }}
             >
-              Buscar
+              Última búsqueda
             </button>
           </div>
 
           {/* Popup de resultados */}
           {popupOpen && (
             <div className="cpx-search-popup">
-              {buscando ? (
-                <p className="cpx-popup-hint">Buscando…</p>
-              ) : searchError ? (
-                <p className="cpx-popup-hint cpx-popup-error">{searchError}</p>
-              ) : searchResults.length === 0 ? (
-                <p className="cpx-popup-hint">Sin resultados para &ldquo;{search}&rdquo;</p>
-              ) : (
-                <>
-                  <p className="cpx-popup-count">{searchResults.length} resultado{searchResults.length !== 1 ? "s" : ""} — haz clic para agregar</p>
-                  {searchResults.map((art) => (
+              {/* Header */}
+              <div className="cpx-popup-header">
+                <span className="cpx-popup-count">
+                  {searching ? "Buscando…"
+                    : searchError ? "Error"
+                    : `${results.length} resultado${results.length !== 1 ? "s" : ""}`}
+                </span>
+                {!searching && !searchError && results.length > 0 && (
+                  <span className="cpx-popup-hint-txt">
+                    Clic = seleccionar · Doble clic o Enter = agregar
+                  </span>
+                )}
+                <button className="cpx-popup-close" onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => { setPopupOpen(false); setSearch("") }}>✕ Cerrar</button>
+              </div>
+
+              {/* Lista */}
+              <div className="cpx-popup-list">
+                {searchError ? (
+                  <div className="cpx-popup-empty">{searchError}</div>
+                ) : results.length === 0 && !searching ? (
+                  <div className="cpx-popup-empty">
+                    No se encontraron artículos para «{search}»
+                  </div>
+                ) : pageResults.map((art, i) => {
+                  const globalIdx = globalOffset + i
+                  const isAdded   = rows.some((r) => r.articuloId === art.id)
+                  const stock     = art.existencia ?? 0
+                  return (
                     <div
                       key={art.id}
-                      className="cpx-popup-item"
+                      className={`cpx-popup-item${globalIdx === hiIdx ? " hi" : ""}${isAdded ? " added" : ""}`}
                       onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => handleSelectArticle(art)}
+                      onClick={() => {
+                        if (isAdded) return
+                        setHiIdx(globalIdx)
+                        searchInputRef.current?.focus()
+                      }}
+                      onDoubleClick={() => { if (!isAdded) selectArticle(art) }}
                     >
-                      <div className="cpx-art-thumb">
+                      <div className="cpx-pi-thumb">
                         {art.thumbnail
-                          ? <img src={art.thumbnail} alt="" />
-                          : <span className="cpx-art-noimg">{(art.clave || "?")[0]}</span>
+                          ? <img src={art.thumbnail} alt="" loading="lazy" />
+                          : <span className="cpx-pi-noimg">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" width="16" height="16"><rect x="2" y="3" width="20" height="14" rx="2"/><circle cx="8.5" cy="10.5" r="2"/><polyline points="21,15 16,10 5,21"/></svg>
+                            </span>
                         }
                       </div>
-                      <div className="cpx-art-info">
-                        <div className="cpx-art-code">{art.clave}</div>
-                        <div className="cpx-art-name">{art.descripcion}</div>
-                        <div className="cpx-art-cat">
-                          {[art.categoria, art.departamento].filter(Boolean).join(" › ")}
-                        </div>
-                      </div>
-                      <div className="cpx-popup-price">
-                        ${(art.precioCompra ?? 0).toFixed(2)}
-                      </div>
+                      <span className="cpx-pi-sku">{art.clave}</span>
+                      <span className="cpx-pi-desc" title={art.descripcion}>{art.descripcion}</span>
+                      <span className={`cpx-pi-stock ${stock > 0 ? "ok" : "zero"}`}>{stock}</span>
+                      <span className="cpx-pi-price">${(art.aplicarIva ? (art.precio1 ?? 0) * 1.16 : (art.precio1 ?? 0)).toFixed(2)}</span>
+                      {isAdded
+                        ? <span className="cpx-pi-check">✓</span>
+                        : <button className="cpx-pi-add"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={(e) => { e.stopPropagation(); selectArticle(art) }}
+                            title="Agregar">+</button>
+                      }
                     </div>
-                  ))}
-                </>
+                  )
+                })}
+              </div>
+
+              {/* Footer paginación */}
+              {totalPages > 1 && (
+                <div className="cpx-popup-footer">
+                  <button className="cpx-pag-nav" disabled={page === 0}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { e.stopPropagation(); goPage(-1) }}>
+                    ‹ Anterior
+                  </button>
+                  <span className="cpx-pag-info">Página {page + 1} de {totalPages}</span>
+                  <button className="cpx-pag-nav" disabled={page >= totalPages - 1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { e.stopPropagation(); goPage(1) }}>
+                    Siguiente ›
+                  </button>
+                </div>
               )}
             </div>
           )}
@@ -474,9 +630,6 @@ export default function ComprasModule() {
           <button className="ar-btn-add" onClick={handleNuevaCompra}>
             + Nueva compra
           </button>
-          <button className="ar-btn-action" disabled={rows.length === 0}>
-            Imprimir
-          </button>
           <div className="ar-toolbar-divider" />
           <button
             className="ar-btn-action ar-btn-danger"
@@ -495,29 +648,178 @@ export default function ComprasModule() {
         </div>
       )}
 
-      {/* Panel compras en espera */}
-      {showPausadas && pausadas.length > 0 && (
-        <div className="cpx-pausadas-panel">
-          <p className="cpx-pausadas-title">Compras en espera</p>
-          {pausadas.map((p) => {
-            const fechaP = new Date(p.fecha_pausa).toLocaleString("es-MX", {
-              day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
-            })
-            const tot = p.rows.reduce((s, r) => s + r.costoConIva * r.cantidad, 0)
-            return (
-              <div key={p.id} className="cpx-pausada-item">
-                <div className="cpx-pausada-info">
-                  <span className="cpx-pausada-prov">{p.proveedor?.nombre ?? "Sin proveedor"}</span>
-                  <span className="cpx-pausada-meta">
-                    {p.rows.length} artículos · ${tot.toLocaleString("es-MX", { minimumFractionDigits: 2 })} · {fechaP}
-                  </span>
-                </div>
-                <button className="ar-btn-action" onClick={() => handleRetomarPausada(p)}>
-                  Retomar
+      {/* Modal compras en espera */}
+      {showPausadas && (
+        <div className="cpx-modal-overlay" onClick={() => setShowPausadas(false)}>
+          <div className="cpx-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cpx-modal-header">
+              <span className="cpx-modal-titulo">Compras en espera</span>
+              <button className="cpx-modal-close" onClick={() => setShowPausadas(false)}>✕</button>
+            </div>
+            <div className="cpx-modal-body">
+              {pausadas.length === 0 ? (
+                <p className="cpx-modal-empty">No hay compras en espera.</p>
+              ) : pausadas.map((p) => {
+                const fechaP = new Date(p.fecha_pausa).toLocaleString("es-MX", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                })
+                const tot = p.rows.reduce((s, r) => s + r.costoConIva * r.cantidad, 0)
+                return (
+                  <div key={p.id} className="cpx-pausada-item">
+                    <div className="cpx-pausada-info">
+                      <span className="cpx-pausada-prov">
+                        {p.proveedor?.nombre ?? "Sin proveedor"}
+                        {p.numFactura ? ` — Factura ${p.numFactura}` : ""}
+                      </span>
+                      <span className="cpx-pausada-meta">
+                        {p.rows.length} artículos · ${tot.toLocaleString("es-MX", { minimumFractionDigits: 2 })} · {fechaP}
+                      </span>
+                    </div>
+                    <div className="cpx-pausada-btns">
+                      <button
+                        className="ar-btn-action ar-btn-danger"
+                        onClick={() => pedirConfirm(
+                          `¿Eliminar la compra en espera de "${p.proveedor?.nombre ?? "Sin proveedor"}"? Esta acción no se puede deshacer.`,
+                          () => setPausadas((prev) => prev.filter((x) => x.id !== p.id))
+                        )}
+                      >
+                        Eliminar
+                      </button>
+                      <button className="ar-btn-action" onClick={() => handleRetomarPausada(p)}>
+                        Retomar
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmación personalizado */}
+      {confirmModal && (
+        <div className="cpx-modal-overlay" onClick={() => setConfirmModal(null)}>
+          <div className="cpx-modal cpx-confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cpx-modal-header">
+              <span className="cpx-modal-titulo">Confirmar acción</span>
+            </div>
+            <div className="cpx-confirm-body">
+              <p className="cpx-confirm-msg">{confirmModal.mensaje}</p>
+              <div className="cpx-confirm-btns">
+                <button className="ar-btn-action" onClick={() => setConfirmModal(null)}>
+                  Cancelar
+                </button>
+                <button className="ar-btn-action ar-btn-danger" onClick={() => {
+                  confirmModal.onAceptar()
+                  setConfirmModal(null)
+                }}>
+                  Aceptar
                 </button>
               </div>
-            )
-          })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de forma de pago */}
+      {pagoModal && (
+        <div className="cpx-modal-overlay" onClick={() => setPagoModal(null)}>
+          <div className="cpx-modal cpx-pago-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="cpx-modal-header">
+              <span className="cpx-modal-titulo">
+                {pagoModal.tipo === "error" ? "Campos requeridos" : "Confirmar compra"}
+              </span>
+              <button className="cpx-modal-close" onClick={() => setPagoModal(null)}>✕</button>
+            </div>
+
+            {pagoModal.tipo === "error" ? (
+              /* ── Pantalla de error: campos faltantes ── */
+              <div className="cpx-pago-body">
+                <p className="cpx-pago-error-msg">
+                  Para confirmar la compra debes completar los siguientes campos:
+                </p>
+                <ul className="cpx-pago-faltantes">
+                  {pagoModal.faltantes.map((f) => (
+                    <li key={f}>
+                      <span className="cpx-pago-faltante-dot" />
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <div className="cpx-pago-footer">
+                  <button className="ar-btn-add" onClick={() => setPagoModal(null)}>
+                    Entendido
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── Pantalla de forma de pago ── */
+              <div className="cpx-pago-body">
+                <div className="cpx-pago-resumen">
+                  <div className="cpx-pago-resumen-item">
+                    <span>Proveedor</span><strong>{proveedor?.nombre}</strong>
+                  </div>
+                  <div className="cpx-pago-resumen-item">
+                    <span>Factura</span><strong>{numFactura}</strong>
+                  </div>
+                  <div className="cpx-pago-resumen-item">
+                    <span>Total</span>
+                    <strong style={{ color: "var(--at-orange)", fontSize: 17 }}>
+                      ${total.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                    </strong>
+                  </div>
+                </div>
+
+                <p className="cpx-pago-label">Forma de pago</p>
+                <div className="cpx-pago-opciones">
+                  {[
+                    { id: "efectivo",      label: "Efectivo",      icon: "💵" },
+                    { id: "transferencia", label: "Transferencia",  icon: "🏦" },
+                    { id: "credito",       label: "Crédito",        icon: "📋" },
+                  ].map(({ id, label, icon }) => (
+                    <button
+                      key={id}
+                      className={`cpx-pago-opcion${pagoModal.formaPago === id ? " active" : ""}`}
+                      onClick={() => setPagoModal((p) => ({ ...p, formaPago: id }))}
+                    >
+                      <span className="cpx-pago-icon">{icon}</span>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {pagoModal.formaPago === "credito" && (
+                  <div className="cpx-pago-credito-info">
+                    <div className="cpx-pago-credito-row">
+                      <span>Plazo de pago</span>
+                      <strong>{proveedor?.dias_credito ?? 30} días</strong>
+                    </div>
+                    <div className="cpx-pago-credito-row">
+                      <span>Fecha de vencimiento</span>
+                      <strong>{(() => {
+                        const d = new Date(fecha + "T12:00:00")
+                        d.setDate(d.getDate() + (proveedor?.dias_credito ?? 30))
+                        return d.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" })
+                      })()}</strong>
+                    </div>
+                    <p className="cpx-pago-credito-nota">
+                      El plazo se configura en el módulo de Proveedores.
+                    </p>
+                  </div>
+                )}
+
+                <div className="cpx-pago-footer">
+                  <button className="ar-btn-action" onClick={() => setPagoModal(null)}>
+                    Cancelar
+                  </button>
+                  <button className="ar-btn-add" onClick={ejecutarConfirmar}>
+                    Confirmar compra
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -535,6 +837,8 @@ export default function ComprasModule() {
           onProveedorChange={setProveedor}
           fecha={fecha}
           onFechaChange={setFecha}
+          numFactura={numFactura}
+          onNumFacturaChange={setNumFactura}
           status={status}
           subtotal={subtotal}
           ivaTotal={ivaTotal}

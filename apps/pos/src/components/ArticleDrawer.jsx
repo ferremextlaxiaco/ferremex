@@ -1,11 +1,26 @@
 import { useState, useEffect, useRef } from "react"
+import { UNIDADES_SAT } from "../lib/unidades-sat"
 
-const UNIDADES = ["Pieza", "Kilogramo", "Rollo", "Tonelada", "Litro"]
+function UnidadSatSelect({ value, onChange }) {
+  return (
+    <select
+      className="ar-input"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {UNIDADES_SAT.map((u) => (
+        <option key={u.clave} value={u.clave}>
+          {u.clave} — {u.nombre}
+        </option>
+      ))}
+    </select>
+  )
+}
 
 const EMPTY_FORM = {
   clave: "", claveAlterna: "", descripcion: "",
   categoria: "", departamento: "",
-  unidadCompra: "Pieza", unidadVenta: "Pieza", factor: 1,
+  unidadCompra: "H87", unidadVenta: "H87", factor: 1,
   aplicarIva: true,
   precioCompra: "", precioNeto: false,
   precio1: "", precio2: "", precio3: "", precio4: "",
@@ -57,6 +72,7 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   const [form, setForm] = useState(EMPTY_FORM)
   const [errors, setErrors] = useState({})
   const firstInputRef = useRef(null)
+  const fileInputRef  = useRef(null)
 
   useEffect(() => {
     if (!open) return
@@ -186,16 +202,10 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
 
           <div className="ar-grid-3">
             <Field label="U. Compra">
-              <select className="ar-input" value={form.unidadCompra}
-                onChange={(e) => f("unidadCompra", e.target.value)}>
-                {UNIDADES.map((u) => <option key={u}>{u}</option>)}
-              </select>
+              <UnidadSatSelect value={form.unidadCompra} onChange={(v) => f("unidadCompra", v)} />
             </Field>
             <Field label="U. Venta">
-              <select className="ar-input" value={form.unidadVenta}
-                onChange={(e) => f("unidadVenta", e.target.value)}>
-                {UNIDADES.map((u) => <option key={u}>{u}</option>)}
-              </select>
+              <UnidadSatSelect value={form.unidadVenta} onChange={(v) => f("unidadVenta", v)} />
             </Field>
             <Field
               label="Factor"
@@ -281,9 +291,40 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
             {form.imagenes.map((src, i) => (
               <div key={i} className="ar-img-thumb">
                 <img src={src} alt="" />
+                <button
+                  type="button"
+                  className="ar-img-remove"
+                  title="Quitar imagen"
+                  onClick={() => f("imagenes", form.imagenes.filter((_, j) => j !== i))}
+                >✕</button>
               </div>
             ))}
-            <button type="button" className="ar-btn-add-img">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const files = Array.from(e.target.files || [])
+                files.forEach((file) => {
+                  const reader = new FileReader()
+                  reader.onload = (ev) => {
+                    setForm((prev) => ({
+                      ...prev,
+                      imagenes: [...(prev.imagenes || []), ev.target.result],
+                    }))
+                  }
+                  reader.readAsDataURL(file)
+                })
+                e.target.value = ""
+              }}
+            />
+            <button
+              type="button"
+              className="ar-btn-add-img"
+              onClick={() => fileInputRef.current?.click()}
+            >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
