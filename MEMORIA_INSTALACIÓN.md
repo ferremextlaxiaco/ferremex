@@ -45,11 +45,9 @@
 
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
-| ferremex-admin | 15880 | 6h | 0 | 14.8 MB |
-| ferremex-api | 20360 | 37m | 3 | 48.7 MB |
-| ferremex-pos | 18824 | 57m | 1 | 47.9 MB |
-
-> ⚠️ ferremex-api tiene 3 reinicios — normal durante sesión de desarrollo activa.
+| ferremex-admin | 13872 | 7h | 0 | 49.5 MB |
+| ferremex-api | 16820 | 7h | 0 | 49.5 MB |
+| ferremex-pos | 8792 | 7h | 0 | 49.6 MB |
 
 ### Acceso al sistema
 
@@ -166,6 +164,8 @@ Productos reales de Ferremex cargados en el sistema.
 - `bun run import:productos` — importa/actualiza catálogo desde articulosExportados.xlsx
 - `bun run attach:imagenes` — asigna thumbnails a productos desde carpeta de imágenes
 - `bun run reparar:inventario` — crea inventory items + links + levels (solo necesario una vez)
+- `bun run importar:claves-sat` — actualiza metadata.claveSat en productos desde ArticulosClaveSat.xlsx
+- `bun run generar:catalogo-sat` — descarga catálogo SAT del sitio oficial → static/claves-sat.json
 - Las imágenes se copian a `packages/api/static/` y se sirven en `http://localhost:9000/static/`
 
 ---
@@ -191,10 +191,11 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Cajón de dinero: Web Serial API envia ESC/POS [0x1B, 0x70, 0x00, 0x19, 0x19] a la impresora
 - PM2: proceso `ferremex-pos` agregado a `ecosystem.config.js`
 
-### Estado actual
+### Estado actual (2026-05-07)
 - ✅ Interfaz POS visible en http://localhost:7002/pos/
-- 🔧 Búsqueda de productos en prueba — rutas `/caja/*` activas, API reiniciado sin errores
-- ⏳ Pendiente: verificar búsqueda funcional, prueba de venta completa, prueba de ticket
+- ✅ Módulo de Compras funcional con todas las mejoras de esta sesión
+- ✅ 10,255 productos actualizados con clave SAT en la DB
+- ✅ Catálogo SAT completo (52,516 claves) generado en `packages/api/static/claves-sat.json`
 
 ### Nota técnica importante
 Las rutas del POS NO van bajo `/store/` porque Medusa requiere `x-publishable-api-key`
@@ -273,3 +274,27 @@ en `packages/api/src/api/middlewares.ts`.
   → Modal cobro: overlay oscuro con borde naranja
   → ConectorImpresora: pill button con estado visual
 - Commit `152ef0c`: Fase 2 POS completa guardada en git
+
+### Sesión 2026-05-07 — Módulo de Compras (mejoras completas)
+- **Buscador de compras** rediseñado igual al ajuste de inventario: popup con paginación (12/pág),
+  navegación con teclado (↑↓ Enter Escape), auto-add por SKU exacto, botón "Última búsqueda"
+- **Catálogo SAT completo**: script `generar:catalogo-sat` descarga automáticamente del SAT
+  (52,516 claves) → `packages/api/static/claves-sat.json`; POS lo carga dinámicamente
+- **Importación claves SAT**: script `importar:claves-sat` actualiza `metadata.claveSat` en
+  10,255 productos de la DB desde `ArticulosClaveSat.xlsx`
+- **Panel derecho de compras**: info artículo en 2 columnas inline, Clave SAT editable con
+  descripción del catálogo SAT, Unidad SAT (con doble selector compra/venta cuando factor > 1),
+  precios c/IVA en calculadora, indicador de variación ▲▼% entre compras
+- **Calculadora de precios**: precios 1-3 muestran y editan c/IVA, márgenes se mantienen al
+  cambiar factor, leyenda "Precio por {unidad SAT de venta}", Precio 4 = costo piso (0% margen)
+- **Factor**: divide el costo en unidades de venta; al cambiar preserva márgenes de precios 1-3
+- **Confirmación de compra**: modal de forma de pago (efectivo/transferencia/crédito); si es
+  crédito registra factura automáticamente en módulo Proveedores con el plazo del proveedor
+- **Compras en espera**: ahora como modal emergente; retomar guarda compra actual automáticamente
+- **Tabla**: columna Importe (cant × costo c/IVA), columna Var. (▲▼%), encabezados alineados,
+  costo c/IVA oculto con "—" si producto no lleva IVA
+- **Módulo Artículos**: unidades SAT del catálogo oficial (lib compartida `unidades-sat.ts`),
+  precios mostrados c/IVA, selección de imagen desde explorador de archivos del sistema
+- **Módulo Proveedores**: confirmaciones con modal estilo POS (sin `confirm()` nativo del browser)
+- **Lib compartida**: `apps/pos/src/lib/unidades-sat.ts` usada por Compras y Artículos
+- Commit `b94e79b`: todos los cambios guardados
