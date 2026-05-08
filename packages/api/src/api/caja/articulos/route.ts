@@ -98,6 +98,8 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     clave: variant?.sku ?? "",
     claveAlterna: variant?.barcode ?? metaStr(meta, "claveAlterna"),
     descripcion: product.title ?? "",
+    marca: metaStr(meta, "marca"),
+    especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
     categoria: product.categories?.[0]?.name ?? metaStr(meta, "categoria"),
     departamento: metaStr(meta, "departamento"),
     unidadCompra: metaStr(meta, "unidadCompra") || "Pieza",
@@ -345,6 +347,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         inventarioMax: body.inventarioMax ?? 0,
         localizacion: body.localizacion ?? "",
         claveAlterna: body.claveAlterna ?? "",
+        marca: body.marca ?? "",
+        especificaciones: body.especificaciones ?? [],
       },
       variants: [
         {
@@ -428,6 +432,8 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       inventarioMax: body.inventarioMax ?? 0,
       localizacion: body.localizacion ?? "",
       claveAlterna: body.claveAlterna ?? "",
+      marca: body.marca ?? "",
+      especificaciones: body.especificaciones ?? [],
     },
   })
 

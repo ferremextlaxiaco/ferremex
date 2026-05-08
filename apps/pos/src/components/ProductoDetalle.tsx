@@ -51,7 +51,10 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
         {/* Info */}
         <div className="detalle-info">
           <h2 className="detalle-nombre">{producto.descripcion}</h2>
-          <p className="detalle-sku">SKU: {producto.sku}</p>
+          <div className="detalle-sku-row">
+            <p className="detalle-sku">SKU: {producto.sku}</p>
+            {producto.marca && <span className="detalle-marca">{producto.marca}</span>}
+          </div>
 
           <div className="detalle-precio">${producto.precio.toFixed(2)}</div>
 
@@ -96,10 +99,23 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
         </div>
       </div>
 
-      {/* Especificaciones — placeholder */}
+      {/* Especificaciones */}
       <div className="detalle-specs">
         <h3 className="detalle-specs-titulo">Especificaciones</h3>
-        <p className="detalle-specs-vacio">Las especificaciones se agregarán próximamente.</p>
+        {producto.especificaciones && producto.especificaciones.length > 0 ? (
+          <table className="detalle-specs-tabla">
+            <tbody>
+              {producto.especificaciones.map((esp, i) => (
+                <tr key={i}>
+                  <td className="detalle-specs-key">{esp.clave}</td>
+                  <td className="detalle-specs-val">{esp.valor}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="detalle-specs-vacio">Sin especificaciones registradas.</p>
+        )}
       </div>
     </div>
   )

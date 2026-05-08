@@ -310,11 +310,13 @@ export default function ArticlesModule() {
                 <p className="ar-detail-section-title">Identificaci&oacute;n</p>
                 <div className="ar-detail-rows">
                   {[
-                    ["Clave",        <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
+                    ["Descripción",   selected.descripcion || "—"],
+                    ["Marca",         selected.marca || "—"],
+                    ["Categoría",     selected.categoria || "—"],
+                    ["Departamento",  selected.departamento || "—"],
+                    ["Clave",         <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
                     ["Clave Alterna", selected.claveAlterna || "—"],
-                    ["Clave SAT",    selected.claveSat || "—"],
-                    ["Categoría", selected.categoria || "—"],
-                    ["Departamento", selected.departamento || "—"],
+                    ["Clave SAT",     selected.claveSat || "—"],
                   ].map(([label, value]) => (
                     <div key={label} className="ar-detail-row">
                       <span className="ar-detail-label">{label}</span>
@@ -379,6 +381,21 @@ export default function ArticlesModule() {
                   })}
                 </div>
               </div>
+
+              {/* Especificaciones */}
+              {selected.especificaciones?.length > 0 && (
+                <div className="ar-detail-section">
+                  <p className="ar-detail-section-title">Especificaciones</p>
+                  <div className="ar-detail-rows">
+                    {selected.especificaciones.map((esp, i) => (
+                      <div key={i} className="ar-detail-row">
+                        <span className="ar-detail-label">{esp.clave}</span>
+                        <span className="ar-detail-value">{esp.valor}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
             </div>
           )}

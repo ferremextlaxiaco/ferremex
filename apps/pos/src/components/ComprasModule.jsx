@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { listarArticulos } from "../lib/client"
+import { listarArticulos, actualizarArticulo } from "../lib/client"
 import { loadProveedores, saveProveedores } from "../lib/proveedores"
 import ComprasTable from "./ComprasTable"
 import ComprasDetailPanel from "./ComprasDetailPanel"
@@ -51,8 +51,16 @@ function articleToRow(art) {
     existencia: art.existencia ?? 0,
     ultimoPrecioCompra: art.precioCompra ?? 0,
     thumbnail: art.thumbnail || null,
+    imagenes: art.imagenes ?? [],
     categoria: art.categoria || "",
     departamento: art.departamento || "",
+    marca: art.marca || "",
+    especificaciones: art.especificaciones ?? [],
+    inventarioMin: art.inventarioMin ?? 0,
+    inventarioMax: art.inventarioMax ?? 0,
+    peso: art.peso ?? 0,
+    ventaGranel: art.ventaGranel ?? false,
+    claveAlterna: art.claveAlterna || "",
     cantidad: 1,
     aplicarIva: art.aplicarIva ?? true,
     costo: art.precioCompra ?? 0,
@@ -182,9 +190,12 @@ export default function ComprasModule() {
   const [fecha,      setFecha]      = useState(_primerVez ? new Date().toISOString().slice(0, 10) : (_inicial.fecha ?? new Date().toISOString().slice(0, 10)))
   const [status,     setStatus]     = useState(_primerVez ? "borrador" : (_inicial.status ?? "borrador"))
   const [numFactura, setNumFactura] = useState(_primerVez ? "" : (_inicial.numFactura ?? ""))
-  const [pausadas,      setPausadas]      = useState(cargarPausadas)
-  const [showPausadas,  setShowPausadas]  = useState(false)
-  const [pagoModal,     setPagoModal]     = useState(null) // { formaPago, plazo }
+  const [pausadas,         setPausadas]         = useState(cargarPausadas)
+  const [showPausadas,     setShowPausadas]     = useState(false)
+  const [pagoModal,        setPagoModal]        = useState(null)
+  const [editandoArticulo, setEditandoArticulo] = useState(false)
+  const [guardandoArticulo,setGuardandoArticulo]= useState(false)
+  const [showCompraModal,  setShowCompraModal]  = useState(false)
 
   // Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState(null) // { mensaje, onAceptar }
@@ -289,7 +300,24 @@ export default function ComprasModule() {
 
   function handleRowChange(id, updates) {
     setRows((prev) =>
-      prev.map((r) => (r._id === id ? calcRow({ ...r, ...updates }) : r))
+      prev.map((r) => {
+        if (r._id !== id) return r
+        const merged = { ...r, ...updates }
+        // Si cambia aplicarIva o precioNeto, costoCalc puede cambiar.
+        // Escalar precios 1-3 proporcionalmente para conservar márgenes (s/IVA vs s/IVA).
+        if ("aplicarIva" in updates || "precioNeto" in updates) {
+          const oldCalc = calcRow(r).costoCalc
+          const newCalc = calcRow(merged).costoCalc
+          if (oldCalc > 0 && newCalc !== oldCalc) {
+            const ratio = newCalc / oldCalc
+            ;[1, 2, 3].forEach((n) => {
+              const p = merged[`precio${n}`] ?? 0
+              if (p > 0) merged[`precio${n}`] = round2(p * ratio)
+            })
+          }
+        }
+        return calcRow(merged)
+      })
     )
   }
 
@@ -364,7 +392,10 @@ export default function ComprasModule() {
     setPagoModal({ tipo: "pago", formaPago: "efectivo", plazo: proveedor.dias_credito ?? 30 })
   }
 
-  function ejecutarConfirmar() {
+  async function ejecutarConfirmar() {
+    // Guardar precios actualizados de todos los artículos antes de confirmar
+    await Promise.allSettled(rows.map((r) => guardarArticuloDesdeRow(r)))
+
     if (pagoModal.formaPago === "credito" && proveedor) {
       const lista = loadProveedores()
       const nuevaFactura = {
@@ -413,6 +444,54 @@ export default function ComprasModule() {
   }
 
   const selectedRow = rows.find((r) => r._id === selectedId) ?? null
+
+  // Al cambiar de fila mientras se edita, el panel permanece abierto y actualiza los datos
+
+  async function guardarArticuloDesdeRow(row) {
+    if (!row?.articuloId || row.articuloId.startsWith("art-seed")) return
+    await actualizarArticulo({
+      id: row.articuloId,
+      clave: row.clave,
+      claveAlterna: row.claveAlterna || "",
+      descripcion: row.descripcion,
+      marca: row.marca || "",
+      categoria: row.categoria || "",
+      departamento: row.departamento || "",
+      unidadCompra: row.unidadSat || "H87",
+      unidadVenta: row.unidadSatVenta || "H87",
+      factor: row.factor ?? 1,
+      aplicarIva: row.aplicarIva ?? true,
+      precioCompra: row.ultimoPrecioCompra ?? 0,
+      precioNeto: row.precioNeto ?? false,
+      precio1: row.precio1 ?? 0,
+      precio2: row.precio2 ?? 0,
+      precio3: row.precio3 ?? 0,
+      precio4: row.precio4 ?? 0,
+      claveSat: row.claveSat || "",
+      inventarioMin: row.inventarioMin ?? 0,
+      inventarioMax: row.inventarioMax ?? 0,
+      localizacion: row.localizacion || "",
+      peso: row.peso ?? 0,
+      ventaGranel: row.ventaGranel ?? false,
+      thumbnail: row.thumbnail,
+      imagenes: row.imagenes ?? [],
+      especificaciones: row.especificaciones ?? [],
+    })
+  }
+
+  async function handleGuardarArticulo() {
+    if (!selectedRow) { setEditandoArticulo(false); return }
+    setGuardandoArticulo(true)
+    try {
+      await guardarArticuloDesdeRow(selectedRow)
+      showToast("Artículo actualizado")
+    } catch (e) {
+      showToast("Error al guardar artículo", "error")
+    } finally {
+      setGuardandoArticulo(false)
+      setEditandoArticulo(false)
+    }
+  }
 
   // Cierra popup al hacer clic fuera
   useEffect(() => {
@@ -606,6 +685,25 @@ export default function ComprasModule() {
 
         {/* Acciones — derecha del topbar */}
         <div className="cpx-topbar-actions">
+          {/* Botón editar / guardar artículo seleccionado */}
+          {!editandoArticulo ? (
+            <button className="ar-btn-action" disabled={!selectedRow}
+              onClick={() => setEditandoArticulo(true)}>
+              Editar artículo
+            </button>
+          ) : (
+            <>
+              <button className="ar-btn-action" onClick={() => setEditandoArticulo(false)}>
+                Cancelar
+              </button>
+              <button className="ar-btn-add" onClick={handleGuardarArticulo} disabled={guardandoArticulo}>
+                {guardandoArticulo ? "Guardando…" : "✓ Guardar cambios"}
+              </button>
+            </>
+          )}
+
+          <div className="ar-toolbar-divider" />
+
           <button
             className="ar-btn-action"
             disabled={rows.length === 0}
@@ -823,10 +921,9 @@ export default function ComprasModule() {
         </div>
       )}
 
-      {/* Two-column layout */}
-      <div className="cpx-layout">
+      {/* Layout: tabla (siempre) + panel derecho (solo al editar) */}
+      <div className={`cpx-layout${editandoArticulo ? " editing" : ""}`}>
 
-        {/* CENTER — tabla de compra */}
         <ComprasTable
           rows={rows}
           selectedId={selectedId}
@@ -847,11 +944,12 @@ export default function ComprasModule() {
           onConfirmar={handleConfirmar}
         />
 
-        {/* RIGHT — detalle + calculadora */}
-        <ComprasDetailPanel
-          row={selectedRow}
-          onRowChange={handleRowChange}
-        />
+        {editandoArticulo && (
+          <ComprasDetailPanel
+            row={selectedRow}
+            onRowChange={handleRowChange}
+          />
+        )}
       </div>
     </div>
   )

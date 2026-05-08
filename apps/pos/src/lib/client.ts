@@ -9,6 +9,8 @@ export interface ProductoPOS {
   precio: number
   existencia: number
   thumbnail: string | null
+  marca?: string
+  especificaciones?: { clave: string; valor: string }[]
 }
 
 export interface FiltrosBusqueda {
@@ -64,6 +66,7 @@ export interface ArticuloPOS {
   clave: string
   claveAlterna: string
   descripcion: string
+  marca: string
   categoria: string
   departamento: string
   unidadCompra: string
@@ -84,6 +87,7 @@ export interface ArticuloPOS {
   ventaGranel: boolean
   thumbnail: string | null
   imagenes: string[]
+  especificaciones: { clave: string; valor: string }[]
 }
 
 export async function listarArticulos(q?: string): Promise<ArticuloPOS[]> {

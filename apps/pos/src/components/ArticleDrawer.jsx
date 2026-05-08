@@ -20,25 +20,34 @@ function calcCostos(form) {
   return { costoSinIva, costoConIva, costoCalc, precio4 }
 }
 
-function PrecioRow({ label, required, value, onChange, readOnly, costoCalc, error }) {
-  const precio = Number(value) || 0
-  const margen = precio > 0 && costoCalc > 0
-    ? round2(((precio - costoCalc) / precio) * 100) : null
+// value = precio s/IVA (siempre, igual que como se guarda en DB)
+// El input muestra c/IVA cuando aplicarIva=true; onChange convierte de vuelta a s/IVA
+function PrecioRow({ label, required, value, onChange, readOnly, costoCalc, aplicarIva, error }) {
+  const precioSinIva = Number(value) || 0
+  const precioDisplay = aplicarIva ? round2(precioSinIva * 1.16) : precioSinIva
+  // Margen sobre precio s/IVA vs costo s/IVA — sin conversiones, sin error de redondeo
+  const margen = readOnly ? 0
+    : precioSinIva > 0 && costoCalc > 0
+      ? round2(((precioSinIva - costoCalc) / precioSinIva) * 100) : null
   return (
-    <div className="ar-pr-row">
+    <>
       <span className="ar-pr-label">{label}{required ? " *" : ""}</span>
       <input
         type="number" min="0" step="0.01" placeholder="0.00"
-        className={`ar-input ar-pr-input${readOnly ? " ar-input-ro" : ""}${error ? " error" : ""}`}
-        value={value} readOnly={readOnly} tabIndex={readOnly ? -1 : 0}
-        onChange={readOnly ? undefined : (e) => onChange(e.target.value)}
+        className={`ar-input${readOnly ? " ar-input-ro" : ""}${error ? " error" : ""}`}
+        value={precioDisplay || ""} readOnly={readOnly} tabIndex={readOnly ? -1 : 0}
+        onChange={readOnly ? undefined : (e) => {
+          // Usuario ingresa c/IVA → almacenamos s/IVA
+          const v = Number(e.target.value) || 0
+          onChange(aplicarIva ? round2(v / 1.16) : v)
+        }}
       />
       <span className={`ar-pr-pct${margen !== null && margen < 0 ? " neg" : ""}`}>
         {margen !== null ? `${margen.toFixed(1)}%` : "—"}
         {readOnly && <span className="ar-pr-eq">equilibrio</span>}
       </span>
-      {error && <p className="ar-error" style={{ gridColumn: "1/-1", margin: "0" }}>{error}</p>}
-    </div>
+      {error && <p className="ar-error" style={{ gridColumn: "1/-1", margin: 0 }}>{error}</p>}
+    </>
   )
 }
 
@@ -59,7 +68,7 @@ function UnidadSatSelect({ value, onChange }) {
 }
 
 const EMPTY_FORM = {
-  clave: "", claveAlterna: "", descripcion: "",
+  clave: "", claveAlterna: "", descripcion: "", marca: "",
   categoria: "", departamento: "",
   unidadCompra: "H87", unidadVenta: "H87", factor: 1,
   aplicarIva: true,
@@ -69,6 +78,7 @@ const EMPTY_FORM = {
   inventarioMin: "", inventarioMax: "",
   localizacion: "", peso: "",
   ventaGranel: false, imagenes: [],
+  especificaciones: [],
 }
 
 function Toggle({ id, checked, onChange, label }) {
@@ -119,13 +129,12 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   useEffect(() => {
     if (!open) return
     if (mode === "edit" && article) {
-      const iva = (article.aplicarIva ?? true) ? 1.16 : 1
       setForm({
         ...EMPTY_FORM, ...article,
-        // Convertir a c/IVA para que el usuario vea el precio de venta real
-        precio1: article.precio1 ? round2(article.precio1 * iva) : "",
-        precio2: article.precio2 ? round2(article.precio2 * iva) : "",
-        precio3: article.precio3 ? round2(article.precio3 * iva) : "",
+        // precios se guardan s/IVA en DB — se cargan tal cual, PrecioRow convierte al mostrar
+        imagenes: article.imagenes?.length > 0
+          ? article.imagenes
+          : article.thumbnail ? [article.thumbnail] : [],
       })
     } else {
       setForm(EMPTY_FORM)
@@ -147,7 +156,12 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   }, [open, onClose])
 
   function f(name, value) {
-    setForm((prev) => ({ ...prev, [name]: value }))
+    setForm((prev) => {
+      const next = { ...prev, [name]: value }
+      // Los precios se guardan s/IVA — no necesitan ajustarse al cambiar toggles.
+      // PrecioRow convierte a c/IVA solo para mostrar.
+      return next
+    })
     setErrors((prev) => ({ ...prev, [name]: undefined }))
   }
 
@@ -172,8 +186,7 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   function handleSave() {
     const errs = validate()
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    // Los precios en form están en c/IVA → guardamos s/IVA (consistente con el resto del sistema)
-    const iva = form.aplicarIva ? 1.16 : 1
+    // precios ya están en s/IVA — se guardan directamente
     const { costoCalc } = calcCostos(form)
     onSave({
       ...form,
@@ -181,10 +194,10 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
       descripcion: form.descripcion.trim(),
       factor: Number(form.factor),
       precioCompra: Number(form.precioCompra) || 0,
-      precio1: round2((Number(form.precio1) || 0) / iva),
-      precio2: round2((Number(form.precio2) || 0) / iva),
-      precio3: round2((Number(form.precio3) || 0) / iva),
-      precio4: costoCalc,   // break-even s/IVA (= costoSinIva / factor)
+      precio1: Number(form.precio1) || 0,
+      precio2: Number(form.precio2) || 0,
+      precio3: Number(form.precio3) || 0,
+      precio4: costoCalc,   // break-even s/IVA
       inventarioMin: Number(form.inventarioMin) || 0,
       inventarioMax: Number(form.inventarioMax) || 0,
       peso: Number(form.peso) || 0,
@@ -214,10 +227,33 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
           {/* Identificación */}
           <p className="ar-section-title">Identificación</p>
 
+          <Field label="Descripción" error={errors.descripcion}>
+            <input
+              ref={firstInputRef}
+              type="text" className={`ar-input${errors.descripcion ? " error" : ""}`}
+              value={form.descripcion} onChange={(e) => f("descripcion", e.target.value)}
+              placeholder="Nombre completo del artículo" />
+          </Field>
+
+          <Field label="Marca">
+            <input type="text" className="ar-input" value={form.marca}
+              onChange={(e) => f("marca", e.target.value)} placeholder="Ej: Truper, Urrea, Pretul" />
+          </Field>
+
+          <div className="ar-grid-2">
+            <Field label="Categoría">
+              <input type="text" className="ar-input" value={form.categoria}
+                onChange={(e) => f("categoria", e.target.value)} placeholder="Ej: Ferretería" />
+            </Field>
+            <Field label="Departamento">
+              <input type="text" className="ar-input" value={form.departamento}
+                onChange={(e) => f("departamento", e.target.value)} placeholder="Ej: Tornillos" />
+            </Field>
+          </div>
+
           <Field label="Clave" error={errors.clave}>
             <div className="ar-clave-row">
               <input
-                ref={firstInputRef}
                 type="text"
                 className={`ar-input${errors.clave ? " error" : ""}`}
                 value={form.clave}
@@ -235,23 +271,6 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
               onChange={(e) => f("claveAlterna", e.target.value)}
               placeholder="Código de proveedor u otro" />
           </Field>
-
-          <Field label="Descripción" error={errors.descripcion}>
-            <input type="text" className={`ar-input${errors.descripcion ? " error" : ""}`}
-              value={form.descripcion} onChange={(e) => f("descripcion", e.target.value)}
-              placeholder="Nombre completo del artículo" />
-          </Field>
-
-          <div className="ar-grid-2">
-            <Field label="Categoría">
-              <input type="text" className="ar-input" value={form.categoria}
-                onChange={(e) => f("categoria", e.target.value)} placeholder="Ej: Ferretería" />
-            </Field>
-            <Field label="Departamento">
-              <input type="text" className="ar-input" value={form.departamento}
-                onChange={(e) => f("departamento", e.target.value)} placeholder="Ej: Tornillos" />
-            </Field>
-          </div>
 
           {/* Unidades */}
           <p className="ar-section-title">Unidades</p>
@@ -277,20 +296,17 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
           {/* Precios */}
           <p className="ar-section-title">Precios</p>
 
-          <Toggle id="ar-iva" checked={form.aplicarIva} onChange={(v) => f("aplicarIva", v)} label="Aplicar IVA" />
-
-          {/* Precio de compra + neto */}
+          {/* Precio de compra + toggles */}
           <div style={{ display: "flex", alignItems: "flex-end", gap: "12px" }}>
             <div style={{ flex: "0 0 160px" }}>
-              <Field label={
-                form.precioNeto && form.aplicarIva ? "Precio de Compra (c/IVA)" : "Precio de Compra (s/IVA)"
-              }>
+              <Field label="Precio de Compra">
                 <input type="number" min="0" step="0.01" className="ar-input"
                   value={form.precioCompra} onChange={(e) => f("precioCompra", e.target.value)}
                   placeholder="0.00" />
               </Field>
             </div>
-            <div style={{ paddingBottom: "2px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "8px", paddingBottom: "2px" }}>
+              <Toggle id="ar-iva" checked={form.aplicarIva} onChange={(v) => f("aplicarIva", v)} label="Aplicar IVA" />
               <Toggle id="ar-neto" checked={form.precioNeto} onChange={(v) => f("precioNeto", v)}
                 label="Precio neto (incluye IVA)" />
             </div>
@@ -315,29 +331,30 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
           {(() => {
             const c = calcCostos(form)
             return (
-              <div>
-                <div className="ar-precios-v2-header">
-                  <span className="ar-label">Precios de Venta</span>
-                  <span className={`ar-iva-badge${form.aplicarIva ? "" : " sin"}`}>
-                    {form.aplicarIva ? "c/IVA 16%" : "sin IVA"}
-                  </span>
-                  <span className="ar-margen-col-header">Margen</span>
+              // Un solo grid para header + filas — garantiza alineación perfecta de columnas
+              <div className="ar-pr-rows">
+                {/* Fila de cabecera dentro del mismo grid */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="ar-label" style={{ margin: 0 }}>Precios de Venta</span>
+                  {form.aplicarIva && <span className="ar-iva-badge">c/IVA 16%</span>}
                 </div>
-                <div className="ar-pr-rows">
-                  {[1, 2, 3].map((n) => (
-                    <PrecioRow key={n}
-                      label={`Precio ${n}`} required={n === 1}
-                      value={form[`precio${n}`]}
-                      onChange={(v) => f(`precio${n}`, v)}
-                      costoCalc={c.costoCalc}
-                      error={n === 1 ? errors.precio1 : undefined}
-                    />
-                  ))}
-                  <PrecioRow key={4}
-                    label="Precio 4" value={c.precio4.toFixed(2)}
-                    readOnly costoCalc={c.costoCalc}
+                <span />
+                <span className="ar-margen-col-header">Margen</span>
+
+                {[1, 2, 3].map((n) => (
+                  <PrecioRow key={n}
+                    label={`Precio ${n}`} required={n === 1}
+                    value={form[`precio${n}`]}
+                    onChange={(v) => f(`precio${n}`, v)}
+                    costoCalc={c.costoCalc}
+                    aplicarIva={form.aplicarIva}
+                    error={n === 1 ? errors.precio1 : undefined}
                   />
-                </div>
+                ))}
+                <PrecioRow key={4}
+                  label="Precio 4" value={c.costoCalc}
+                  readOnly costoCalc={c.costoCalc} aplicarIva={form.aplicarIva}
+                />
               </div>
             )
           })()}
@@ -373,6 +390,45 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
 
           <Toggle id="ar-granel" checked={form.ventaGranel} onChange={(v) => f("ventaGranel", v)}
             label="Permite cantidades fraccionadas" />
+
+          {/* Especificaciones */}
+          <p className="ar-section-title">Especificaciones</p>
+
+          <div className="ar-specs-list">
+            {(form.especificaciones || []).map((esp, i) => (
+              <div key={i} className="ar-spec-row">
+                <input
+                  type="text" className="ar-input ar-spec-key"
+                  placeholder="Ej: Material"
+                  value={esp.clave}
+                  onChange={(e) => {
+                    const next = [...form.especificaciones]
+                    next[i] = { ...next[i], clave: e.target.value }
+                    f("especificaciones", next)
+                  }}
+                />
+                <input
+                  type="text" className="ar-input ar-spec-val"
+                  placeholder="Ej: Acero inoxidable"
+                  value={esp.valor}
+                  onChange={(e) => {
+                    const next = [...form.especificaciones]
+                    next[i] = { ...next[i], valor: e.target.value }
+                    f("especificaciones", next)
+                  }}
+                />
+                <button
+                  type="button" className="ar-spec-remove"
+                  onClick={() => f("especificaciones", form.especificaciones.filter((_, j) => j !== i))}
+                  title="Quitar">✕</button>
+              </div>
+            ))}
+            <button
+              type="button" className="ar-spec-add"
+              onClick={() => f("especificaciones", [...(form.especificaciones || []), { clave: "", valor: "" }])}>
+              + Agregar especificación
+            </button>
+          </div>
 
           {/* Imágenes */}
           <p className="ar-section-title">Imágenes</p>

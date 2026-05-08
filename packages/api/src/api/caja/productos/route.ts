@@ -60,7 +60,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[] }
   const variantesBase: VarianteBase[] = []
 
   // ── Intento de match exacto por SKU o código de barras ──────────────────
@@ -81,15 +81,20 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     if (varEncontrada) {
       let thumbnail: string | null = null
       let impuesto = false
+      let marca = ""
+      let especificaciones: { clave: string; valor: string }[] = []
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
-          thumbnail = thumbnailPath(prod.thumbnail)
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          impuesto = !!(prod.metadata as any)?.impuesto
-        } catch { /* sin thumbnail */ }
+          const meta = (prod.metadata ?? {}) as any
+          thumbnail = thumbnailPath(prod.thumbnail)
+          impuesto = !!meta.impuesto
+          marca = meta.marca ?? ""
+          especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
+        } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones })
     }
   }
 
@@ -138,14 +143,18 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     const idsMatch = productosFiltrados.map((p) => p.id)
     const productos = await productModule.listProducts(
       { id: idsMatch },
-      { select: ["id", "thumbnail"], relations: ["variants"], take: idsMatch.length + 10 }
+      { select: ["id", "thumbnail", "metadata"], relations: ["variants"], take: idsMatch.length + 10 }
     )
 
     for (const p of productos) {
       const thumb = thumbnailPath(p.thumbnail)
       const impuesto = impuestoPorProductoId.get(p.id) ?? false
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const meta = (p.metadata ?? {}) as any
+      const marca = meta.marca ?? ""
+      const especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
       for (const v of p.variants ?? []) {
-        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto })
+        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, especificaciones })
       }
     }
   }
@@ -205,6 +214,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         precio,
         existencia: existenciaPorSku.get(v.sku ?? "") ?? 0,
         thumbnail: v.thumbnail,
+        marca: v.marca,
+        especificaciones: v.especificaciones,
       }
     })
     .filter((r) => r.sku && r.descripcion)

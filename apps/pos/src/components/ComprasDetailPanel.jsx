@@ -215,25 +215,27 @@ function FieldRow({ label, children }) {
 // ── Fila de precio + margen en la calculadora ─────────────────────────────────
 
 // precio y costoSinIva siempre se reciben SIN IVA.
-// aplicarIva=true → muestra y edita c/IVA; guarda dividiendo entre 1.16.
+// aplicarIva=true → muestra c/IVA; guarda s/IVA. Margen en s/IVA vs s/IVA.
 function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = false, aplicarIva = false }) {
   const [margenLocal, setMargenLocal] = useState("")
   const [margenFocused, setMargenFocused] = useState(false)
 
-  const factor       = aplicarIva ? 1.16 : 1
-  const precioDisplay = round2(precio * factor)       // lo que ve el usuario
+  const factor        = aplicarIva ? 1.16 : 1
+  const precioDisplay = round2(precio * factor)   // lo que ve el usuario (c/IVA)
 
+  // Margen s/IVA vs s/IVA — no cambia al activar/desactivar IVA
   const margenCalculado =
-    precioDisplay > 0 && costoSinIva > 0
-      ? round2(((precioDisplay - costoSinIva) / precioDisplay) * 100)
+    precio > 0 && costoSinIva > 0
+      ? round2(((precio - costoSinIva) / precio) * 100)
       : 0
 
   function commitMargen() {
     setMargenFocused(false)
     const m = parseFloat(margenLocal)
     if (isNaN(m) || m >= 100) return
-    const pConIva = m <= 0 ? costoSinIva : round2(costoSinIva / (1 - m / 100))
-    onPrecioChange(round2(pConIva / factor))  // guarda s/IVA
+    // Calcula s/IVA directamente — sin factor IVA en la fórmula
+    const p = m <= 0 ? costoSinIva : round2(costoSinIva / (1 - m / 100))
+    onPrecioChange(p)
   }
 
   if (readOnly) {
@@ -310,7 +312,7 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
   return (
     <div className="cpx-right">
 
-      {/* Hero: imagen + nombre */}
+      {/* Hero: imagen + nombre + existencia */}
       <div className="cpx-detail-hero">
         <div className="cpx-detail-thumb">
           {row.thumbnail
@@ -318,10 +320,15 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
             : <span className="cpx-detail-noimg">?</span>
           }
         </div>
-        <div>
-          <div className="cpx-detail-nombre">{row.descripcion}</div>
-          <div style={{ fontSize: 11, color: "var(--at-text-muted)", marginTop: 2 }}>
-            {row.clave}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
+            <div className="cpx-detail-nombre" style={{ flex: 1, minWidth: 0 }}>{row.descripcion}</div>
+            <span className={`cpx-exist-badge${(row.existencia ?? 0) > 0 ? " ok" : ""}`}>
+              {row.existencia ?? 0} stock
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--at-text-muted)", marginTop: 3 }}>
+            {row.clave}{row.claveAlterna ? ` · ${row.claveAlterna}` : ""}
           </div>
         </div>
       </div>
@@ -334,7 +341,7 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
             ["Categoría",    row.categoria    || "—"],
             ["Departamento", row.departamento || "—"],
             ["Localización", row.localizacion || "—"],
-            ["Existencia",   row.existencia ?? 0],
+            ["Marca",        row.marca        || "—"],
           ].map(([label, val]) => (
             <div key={label} className="cpx-art-info-cell">
               <span className="cpx-detail-label">{label}</span>
@@ -479,6 +486,7 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
       {/* Calculadora de precios */}
       <div className="cpx-detail-section cpx-calc-section">
         <p className="cpx-detail-section-title">Calculadora de precios</p>
+
         {(() => {
           const factor      = row.factor ?? 1
           const costoCalc   = row.costoCalc ?? row.costoSinIva
@@ -522,6 +530,56 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
           )
         })()}
       </div>
+
+      {/* Catálogo / inventario */}
+      <div className="cpx-detail-section">
+        <p className="cpx-detail-section-title">Catálogo</p>
+        <div className="cpx-art-info-grid">
+          {[
+            ["Inv. Mínimo",  row.inventarioMin ?? "—"],
+            ["Inv. Máximo",  row.inventarioMax ?? "—"],
+            ["Peso",         row.peso ? `${row.peso} kg` : "—"],
+            ["Venta granel", row.ventaGranel ? "Sí" : "No"],
+          ].map(([label, val]) => (
+            <div key={label} className="cpx-art-info-cell">
+              <span className="cpx-detail-label">{label}</span>
+              <span className="cpx-detail-val">{val}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Especificaciones */}
+      {(row.especificaciones?.length > 0) && (
+        <div className="cpx-detail-section">
+          <p className="cpx-detail-section-title">Especificaciones</p>
+          <div className="cpx-specs-tabla">
+            {row.especificaciones.map((esp, i) => (
+              <div key={i} className="cpx-detail-row">
+                <span className="cpx-detail-label">{esp.clave}</span>
+                <span className="cpx-detail-val">{esp.valor}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Imágenes */}
+      {((row.imagenes?.length > 0) || row.thumbnail) && (
+        <div className="cpx-detail-section">
+          <p className="cpx-detail-section-title">Imágenes</p>
+          <div className="cpx-imagenes-row">
+            {(row.imagenes?.length > 0
+              ? row.imagenes
+              : row.thumbnail ? [row.thumbnail] : []
+            ).map((src, i) => (
+              <div key={i} className="cpx-imagen-thumb">
+                <img src={src} alt="" />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
     </div>
   )
