@@ -83,12 +83,21 @@ export interface ArticuloPOS {
   peso: number
   ventaGranel: boolean
   thumbnail: string | null
+  imagenes: string[]
 }
 
 export async function listarArticulos(q?: string): Promise<ArticuloPOS[]> {
   const params = new URLSearchParams()
   if (q) params.set("q", q)
   return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
+}
+
+export async function subirImagenArticulo(dataUrl: string): Promise<string> {
+  const result = await apiFetch<{ url: string }>("/caja/imagen", {
+    method: "POST",
+    body: JSON.stringify({ dataUrl }),
+  })
+  return result.url
 }
 
 export async function crearArticulo(

@@ -82,6 +82,17 @@ function thumbnailPath(url: string | null | undefined): string | null {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function toArticuloPOS(product: any, variant: any, precio1: number, existencia: number = 0): object {
   const meta = (product.metadata ?? {}) as Record<string, unknown>
+
+  // Imágenes desde product.images[] (campo nativo de Medusa — portable a S3/CDN)
+  // Convertimos a rutas relativas con thumbnailPath() para que funcionen en LAN y producción
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const imagenes: string[] = ((product.images ?? []) as any[])
+    .map((img: any) => thumbnailPath(img.url) ?? img.url)
+    .filter(Boolean)
+
+  // thumbnail: campo nativo de Medusa (catálogo importado) o primera imagen POS
+  const thumb = thumbnailPath(product.thumbnail) ?? imagenes[0] ?? null
+
   return {
     id: product.id,
     clave: variant?.sku ?? "",
@@ -105,7 +116,8 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     localizacion: metaStr(meta, "localizacion"),
     peso: product.weight ? product.weight / 1000 : metaNum(meta, "peso"),
     ventaGranel: metaBool(meta, "granel", "ventaGranel"),
-    thumbnail: thumbnailPath(product.thumbnail),
+    thumbnail: thumb,
+    imagenes,
     existencia,
   }
 }
@@ -229,7 +241,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     { id: ids },
     {
       select: ["id", "title", "thumbnail", "weight", "metadata"],
-      relations: ["variants", "categories"],
+      relations: ["variants", "categories", "images"],
       take: ids.length + 10,
     }
   )
@@ -304,6 +316,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   const handle = `${slugify(body.clave ?? "art")}-${Date.now()}`
+  // imagenes son URLs absolutas devueltas por /caja/imagen (ya subidas al file module)
+  const imagenes: string[] = Array.isArray(body.imagenes) ? body.imagenes : []
 
   const [product] = await productModule.createProducts([
     {
@@ -312,6 +326,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       status: ProductStatus.PUBLISHED,
       category_ids: categoryId ? [categoryId] : [],
       weight: body.peso > 0 ? Math.round(body.peso * 1000) : undefined,
+      thumbnail: imagenes[0] ?? undefined,
+      images: imagenes.map((url) => ({ url })),   // campo nativo de Medusa
       metadata: {
         departamento: body.departamento ?? "",
         unidadCompra: body.unidadCompra ?? "Pieza",
@@ -348,7 +364,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   const full = await productModule.retrieveProduct(product.id, {
     select: ["id", "title", "thumbnail", "weight", "metadata"],
-    relations: ["variants", "categories"],
+    relations: ["variants", "categories", "images"],
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const variant = (full.variants as any[])?.[0]
@@ -387,10 +403,14 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
           )[0].id
   }
 
+  const imagenesUpd: string[] = Array.isArray(body.imagenes) ? body.imagenes : []
+
   await productModule.updateProducts(body.id, {
     title: body.descripcion,
     weight: body.peso > 0 ? Math.round(body.peso * 1000) : 0,
     category_ids: categoryId ? [categoryId] : [],
+    thumbnail: imagenesUpd[0] ?? null,
+    images: imagenesUpd.map((url) => ({ url })),   // reemplaza el array completo
     metadata: {
       departamento: body.departamento ?? "",
       unidadCompra: body.unidadCompra ?? "Pieza",
@@ -466,7 +486,7 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
 
   const updated = await productModule.retrieveProduct(body.id, {
     select: ["id", "title", "thumbnail", "weight", "metadata"],
-    relations: ["variants", "categories"],
+    relations: ["variants", "categories", "images"],
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updatedVariant = (updated.variants as any[])?.[0]

@@ -12,6 +12,21 @@ Ferremex is a hardware store (ferretería) in Tlaxiaco, Oaxaca, México, buildin
 
 ---
 
+## Principio de Desarrollo — Arquitectura Robusta
+
+**Toda implementación debe usar la arquitectura nativa de Medusa 2.x**, no soluciones ad-hoc que luego haya que migrar.
+
+Antes de escribir código personalizado, verifica si Medusa ya resuelve el problema:
+- **Archivos / imágenes** → `Modules.FILE` + `@medusajs/medusa/file-local` (hoy) / `file-s3` (mañana). Nunca `fs.writeFileSync` directo.
+- **Imágenes de productos** → `product.images[]` (campo nativo). Nunca `metadata.imagenes`.
+- **Precios** → price sets via `query.graph`. Nunca precios en metadata.
+- **Inventario** → módulo `Modules.INVENTORY`. Nunca contadores manuales.
+- **Clientes / pedidos** → módulos de Medusa cuando se migre de localStorage.
+
+La regla de oro: si algo puede resolverse con un módulo de Medusa, úsalo — aunque parezca más trabajo ahora. Cambiar el provider (local → S3, local → Stripe, etc.) debe ser solo un cambio de config, no de código.
+
+---
+
 ## Architecture Overview
 
 This is a **Turborepo monorepo** managed with **bun** (`bun@1.3.11`):

@@ -151,7 +151,7 @@ export default function ArticlesModule() {
         <div>
           <p className="admin-seccion-titulo" style={{ marginBottom: 0 }}>Artículos</p>
           <p className="ar-header-meta">
-            {loading ? "Buscando…" : hasBuscado ? `${articles.length} artículo${articles.length !== 1 ? "s" : ""}` : " "}
+            {loading ? "Buscando…" : hasBuscado ? `${articles.length} artículo${articles.length !== 1 ? "s" : ""}` : " "}
           </p>
         </div>
 

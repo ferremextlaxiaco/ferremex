@@ -29,6 +29,22 @@ module.exports = defineConfig({
       resolve: "@medusajs/medusa/rbac",
     },
     {
+      resolve: "@medusajs/medusa/file",
+      options: {
+        providers: [
+          {
+            resolve: "@medusajs/medusa/file-local",
+            id: "local",
+            options: {
+              // upload_dir: default = path.join(cwd, "static") — correcto
+              // backend_url debe incluir /static porque el proveedor hace path.join(pathname, fileKey)
+              backend_url: `${process.env.BACKEND_URL || "http://localhost:9000"}/static`,
+            },
+          },
+        ],
+      },
+    },
+    {
       resolve: '@mercurjs/core-plugin/modules/admin-ui',
       options: {
         appDir: path.join(__dirname, '../../apps/admin/dist'),
