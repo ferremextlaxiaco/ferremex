@@ -78,8 +78,26 @@ The POS lives at `apps/pos/` (Vite, port 7002, `base: "/pos"`). It is a standalo
   /usuarios     → POS user management
   /clientes     → Customer CRUD
   /articulos    → Article/product CRUD (ArticlesModule)
+  /inventario   → Bulk inventory adjustment by SKU
+  /proveedores  → Supplier management
+  /compras      → Purchase orders (ComprasModule — frontend-only, phase 2)
+  /pedidos      → Supplier order creation (PedidosModule — frontend-only, mock data, no backend route yet)
   /generador    → Ticket generator / peripheral config tester
 ```
+
+### POS component composition pattern
+
+All admin modules follow the same structure — copy it when building new features:
+
+```
+AdminXxx.tsx (page)         → thin wrapper, just mounts <XxxModule />
+XxxModule.jsx (module)      → owns state + business logic, renders the three sub-components
+XxxTabla.jsx (table)        → pure presentational table, receives rows + callbacks as props
+XxxFiltros.jsx (filters)    → filter/search panel, emits onChange
+XxxPreview.jsx (modal/panel)→ read-only detail view or edit overlay
+```
+
+Side panels that create/edit items are `XxxDrawer.jsx`; delete confirmations are `XxxDeleteModal.jsx`. Only the Module component has state; sub-components are presentational.
 
 ### State management (`apps/pos/src/lib/pos-store.ts`)
 
@@ -93,6 +111,15 @@ React Context + useReducer. Key state: `cajero`, `items` (cart), `ticketConfig`,
 ### Client library
 
 All backend calls go through `apps/pos/src/lib/client.ts` which hits `/caja/*` endpoints. The Vite dev server proxies `/caja` and `/static` to `localhost:9000`.
+
+### POS helper libraries (`apps/pos/src/lib/`)
+
+- `client.ts` — all `/caja/*` fetch calls. Key functions: `buscarProductos`, `registrarVenta`, `obtenerCorte/cerrarCorte`, `listarArticulos`, `listarFaltantes` (articles below min stock, hits `/caja/articulos?faltantes=1`), `crearArticulo/actualizarArticulo/eliminarArticulo`, `subirImagenArticulo`.
+- `pos-store.ts` — global state (Context + useReducer)
+- `clientes.ts` — localStorage client list (`pos_clientes`, `pos_grupos`)
+- `proveedores.ts` — supplier data (in-memory, phase 2)
+- `serial.ts` — ESC/POS printer + cash drawer (Chrome/Web Serial)
+- `unidades-sat.ts` — SAT unit-of-measure definitions for product catalog
 
 ### ESC/POS and cash drawer
 
@@ -112,8 +139,10 @@ POS routes live at `packages/api/src/api/caja/` and do NOT go under `/store/` (w
 | GET | `/caja/corte` | Sales summary for a shift (cajero + turno_id). |
 | POST | `/caja/corte` | Close shift. |
 | GET/POST/PUT/DELETE | `/caja/usuarios` | POS user CRUD. Enforces at least one active admin. |
-| GET/POST/PUT/DELETE | `/caja/articulos` | Product CRUD for admin (ArticlesModule). Full ArticuloPOS mapping. |
+| GET/POST/PUT/DELETE | `/caja/articulos` | Product CRUD for admin (ArticlesModule). Full ArticuloPOS mapping. `?faltantes=1` returns items below `inventarioMin` (used by PedidosModule). |
 | GET/PUT | `/caja/ticket-config` | Ticket header/footer/print options. Handles legacy field migration. |
+| POST | `/caja/imagen` | Upload base64 product thumbnail via Medusa File Module. Returns `{ url }`. |
+| POST | `/caja/ajuste-inventario` | Bulk stock correction by SKU. Body: `{ ajustes: [{ sku, nueva_cantidad }] }`. Returns `{ ok, actualizados, errores }`. |
 
 ### Product pricing model
 
@@ -158,12 +187,47 @@ bun run actualizar:localizacion # sync metadata.localizacion from RepExistencias
 Images are copied to `packages/api/static/` and served at `http://localhost:9000/static/`.
 Source files (`articulosExportados.xlsx`, `RepExistencias.xlsx`, image folder) live at the repo root and are git-ignored.
 
+### From `packages/api` — SAT catalog scripts (Fase 2)
+
+```bash
+bun run importar:claves-sat     # import SAT product codes from ArticulosClaveSat.xlsx (root)
+bun run generar:catalogo-sat    # download full SAT catalog → packages/api/static/claves-sat.json
+bun run asignar:precios         # bulk price assignment across product catalog
+```
+
+`claves-sat.json` (~52 k entries) is served at `/static/claves-sat.json` and consumed by the POS articulos admin for SAT compliance.
+
 ### Mercur CLI (run from project root, where `blocks.json` lives)
 
 ```bash
 npx @mercurjs/cli@latest search --query <keyword>   # search the block registry
 npx @mercurjs/cli add <block-name>                   # install a block
 ```
+
+---
+
+## Environment Variables (`packages/api/.env`)
+
+**Required (no defaults — the app will not start without these):**
+
+| Variable | Example |
+|---|---|
+| `DATABASE_URL` | `postgresql://postgres:pass@localhost:5432/ferremex` |
+| `REDIS_URL` | `redis://localhost:6379` |
+| `STORE_CORS` | `http://localhost:8000,http://localhost:7002` |
+| `ADMIN_CORS` | `http://localhost:7000,http://localhost:9000` |
+| `AUTH_CORS` | `http://localhost:7000,http://localhost:7001,http://localhost:7002,http://localhost:9000` |
+| `VENDOR_CORS` | `http://localhost:7001` |
+
+**Optional (safe defaults exist):**
+
+| Variable | Default |
+|---|---|
+| `JWT_SECRET` | `"supersecret"` |
+| `COOKIE_SECRET` | `"supersecret"` |
+| `BACKEND_URL` | `http://localhost:9000` |
+
+The PM2 launcher `launch-api.js` appends `C:\Program Files\PostgreSQL\16\bin` to `PATH` so Medusa migrations can find `pg_dump`/`psql`. PostgreSQL 16 must be installed in that standard location.
 
 ---
 
@@ -233,6 +297,10 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 - **Medusa 2.x prices are not a direct relation**: `ProductVariant` does not have a `prices` property. Fetch prices via `query.graph` with `entity: "product_variant"` and variant IDs as a separate query.
 - **Web Serial API = Chrome only**: The cash drawer and direct ESC/POS printing in `serial.ts` require Chrome (or Chromium). POS terminals must use Chrome.
 - **Clientes are in localStorage, not Medusa DB**: `clientes.ts` reads/writes `localStorage` (`pos_clientes`, `pos_grupos`). Data lives in the browser — each POS terminal has its own client list until Fase 4 migrates this to the database.
+- **POS is mounted as a `vendor-ui` module** in `medusa-config.ts` with `viteDevServerPort: 7002` (`@ts-expect-error` suppresses the non-standard option). The port must stay in sync with the `--port 7002` flag in `apps/pos/package.json`'s `dev` script.
+- **PM2 start order matters**: `ferremex-admin` and `ferremex-pos` (Vite) must be running before `ferremex-api`. The API proxies both — if Vite is down at startup, `/dashboard` and `/pos` return errors.
+- **blocks.json aliases** control where Mercur CLI places installed block files: `api` → `packages/api/src`, `vendor` → `apps/vendor/src`, `admin` → `apps/admin/src`. Update these if the directory structure changes.
+- **PedidosModule uses hardcoded mock data**: `PROVEEDORES`, `ARTICULOS`, and `HISTORIAL_MOCK` arrays are defined inline in `PedidosModule.jsx`. There is no `/caja/pedidos` backend route yet. When wiring the backend, replace the mocks with `client.ts` calls and create the route under `packages/api/src/api/caja/pedidos/`.
 
 ---
 

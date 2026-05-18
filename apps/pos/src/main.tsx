@@ -13,6 +13,8 @@ import { AdminArticulos } from "./pages/AdminArticulos"
 import { AdminInventario } from "./pages/AdminInventario"
 import { AdminProveedores } from "./pages/AdminProveedores"
 import { AdminCompras } from "./pages/AdminCompras"
+import { AdminPedidos } from "./pages/AdminPedidos"
+import { AdminCatalogos } from "./pages/AdminCatalogos"
 import { GeneradorTickets } from "./pages/GeneradorTickets"
 import "./pos.css"
 
@@ -33,6 +35,8 @@ createRoot(document.getElementById("root")!).render(
             <Route path="inventario" element={<AdminInventario />} />
             <Route path="proveedores" element={<AdminProveedores />} />
             <Route path="compras" element={<AdminCompras />} />
+            <Route path="pedidos" element={<AdminPedidos />} />
+          <Route path="catalogos" element={<AdminCatalogos />} />
           </Route>
           <Route path="/admin/generador" element={<GeneradorTickets />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -480,7 +480,7 @@ export default function ComprasModule() {
   }
 
   async function handleGuardarArticulo() {
-    if (!selectedRow) { setEditandoArticulo(false); return }
+    if (!selectedRow) return
     setGuardandoArticulo(true)
     try {
       await guardarArticuloDesdeRow(selectedRow)
@@ -489,7 +489,6 @@ export default function ComprasModule() {
       showToast("Error al guardar artículo", "error")
     } finally {
       setGuardandoArticulo(false)
-      setEditandoArticulo(false)
     }
   }
 
@@ -685,22 +684,14 @@ export default function ComprasModule() {
 
         {/* Acciones — derecha del topbar */}
         <div className="cpx-topbar-actions">
-          {/* Botón editar / guardar artículo seleccionado */}
-          {!editandoArticulo ? (
-            <button className="ar-btn-action" disabled={!selectedRow}
-              onClick={() => setEditandoArticulo(true)}>
-              Editar artículo
-            </button>
-          ) : (
-            <>
-              <button className="ar-btn-action" onClick={() => setEditandoArticulo(false)}>
-                Cancelar
-              </button>
-              <button className="ar-btn-add" onClick={handleGuardarArticulo} disabled={guardandoArticulo}>
-                {guardandoArticulo ? "Guardando…" : "✓ Guardar cambios"}
-              </button>
-            </>
-          )}
+          {/* Botón editar artículo — muestra/oculta el panel */}
+          <button
+            className={`ar-btn-action${editandoArticulo ? " active" : ""}`}
+            disabled={!selectedRow}
+            onClick={() => setEditandoArticulo((v) => !v)}
+          >
+            Editar artículo
+          </button>
 
           <div className="ar-toolbar-divider" />
 
@@ -948,6 +939,8 @@ export default function ComprasModule() {
           <ComprasDetailPanel
             row={selectedRow}
             onRowChange={handleRowChange}
+            onGuardar={handleGuardarArticulo}
+            guardando={guardandoArticulo}
           />
         )}
       </div>

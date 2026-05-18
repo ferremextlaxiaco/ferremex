@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { UNIDADES_SAT } from "../lib/unidades-sat"
+import { subirImagenArticulo } from "../lib/client"
 
 // ── Catálogo de claves SAT de productos (principales para ferretería) ────────
 
@@ -182,6 +183,62 @@ function UnidadDropdown({ value, onChange }) {
   )
 }
 
+// ── Campo numérico con 2 decimales (punto) y paso por unidad ─────────────────
+
+function NumField({ value, onChange, min = 0, max, step = 1, className = "cpx-dp-input", disabled }) {
+  const [local,   setLocal]   = useState("")
+  const [focused, setFocused] = useState(false)
+
+  const numVal  = Number(value) || 0
+  const display = focused ? local : numVal.toFixed(2)
+
+  function clamp(n) {
+    if (min !== undefined) n = Math.max(min, n)
+    if (max !== undefined) n = Math.min(max, n)
+    return round2(n)
+  }
+
+  function commit(str) {
+    const n = parseFloat(String(str).replace(",", "."))
+    onChange(clamp(isNaN(n) ? numVal : n))
+    setFocused(false)
+  }
+
+  function nudge(dir) {
+    const cur  = parseFloat(String(focused ? local : numVal).replace(",", ".")) || numVal
+    const next = clamp(cur + dir * step)
+    setLocal(next.toFixed(2))
+    setFocused(true)
+    onChange(next)
+  }
+
+  return (
+    <div className="cpx-numfield-wrap">
+      <input
+        className={className}
+        type="text"
+        inputMode="decimal"
+        disabled={disabled}
+        value={display}
+        onFocus={(e) => { setLocal(numVal.toFixed(2)); setFocused(true); e.target.select() }}
+        onChange={(e) => setLocal(e.target.value)}
+        onBlur={(e)  => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowUp"   || e.key === "+") { e.preventDefault(); nudge(+1) }
+          if (e.key === "ArrowDown" || e.key === "-") { e.preventDefault(); nudge(-1) }
+          if (e.key === "Enter") commit(focused ? local : String(numVal))
+        }}
+      />
+      <div className="cpx-numfield-spinners">
+        <button type="button" tabIndex={-1} disabled={disabled}
+          onMouseDown={(e) => { e.preventDefault(); nudge(+1) }}>▴</button>
+        <button type="button" tabIndex={-1} disabled={disabled}
+          onMouseDown={(e) => { e.preventDefault(); nudge(-1) }}>▾</button>
+      </div>
+    </div>
+  )
+}
+
 // ── Toggle estilo switch ──────────────────────────────────────────────────────
 
 function Toggle({ checked, onChange, label }) {
@@ -259,16 +316,12 @@ function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = f
       <span className="cpx-calc-label">{label}</span>
       <div className="cpx-calc-field">
         <span className="cpx-calc-prefix">$</span>
-        <input
+        <NumField
           className="cpx-calc-input"
-          type="number"
-          min="0"
-          step="0.01"
           value={precioDisplay}
-          onChange={(e) => {
-            const cIva = parseFloat(e.target.value) || 0
-            onPrecioChange(round2(cIva / factor))  // guarda s/IVA
-          }}
+          min={0}
+          step={1}
+          onChange={(cIva) => onPrecioChange(round2(cIva / factor))}
         />
       </div>
       <div className="cpx-calc-field">
@@ -290,7 +343,14 @@ function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = f
 
 // ── Panel derecho ─────────────────────────────────────────────────────────────
 
-export default function ComprasDetailPanel({ row, onRowChange }) {
+export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guardando }) {
+  const [uploading, setUploading]     = useState(0)
+  const [newEsp, setNewEsp]           = useState({ clave: "", valor: "" })
+  const fileInputRef                  = useRef(null)
+  const rowRef                        = useRef(row)
+
+  useEffect(() => { rowRef.current = row }, [row])
+
   if (!row) {
     return (
       <div className="cpx-right cpx-right-empty">
@@ -309,17 +369,53 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
     onRowChange(row._id, { [field]: val })
   }
 
+  function handleAddImagen(files) {
+    Array.from(files).forEach((file) => {
+      setUploading((n) => n + 1)
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const img = new Image()
+        img.onload = () => {
+          const MAX = 1200
+          const canvas = document.createElement("canvas")
+          let w = img.width, h = img.height
+          if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX } }
+          else       { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX } }
+          canvas.width = w; canvas.height = h
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h)
+          const dataUrl = canvas.toDataURL("image/jpeg", 0.85)
+
+          const cur = rowRef.current
+          const nextImagenes = [...(cur.imagenes || []), dataUrl]
+          const nextThumb    = cur.thumbnail ?? dataUrl
+          onRowChange(cur._id, { imagenes: nextImagenes, thumbnail: nextThumb })
+
+          subirImagenArticulo(dataUrl)
+            .then((url) => {
+              const r = rowRef.current
+              const idx = (r.imagenes || []).indexOf(dataUrl)
+              if (idx === -1) return
+              const next = [...r.imagenes]
+              next[idx] = url
+              onRowChange(r._id, {
+                imagenes:  next,
+                thumbnail: r.thumbnail === dataUrl ? url : r.thumbnail,
+              })
+            })
+            .catch(() => {})
+            .finally(() => setUploading((n) => n - 1))
+        }
+        img.src = ev.target.result
+      }
+      reader.readAsDataURL(file)
+    })
+  }
+
   return (
     <div className="cpx-right">
 
-      {/* Hero: imagen + nombre + existencia */}
+      {/* Hero: nombre + clave + existencia */}
       <div className="cpx-detail-hero">
-        <div className="cpx-detail-thumb">
-          {row.thumbnail
-            ? <img src={row.thumbnail} alt="" />
-            : <span className="cpx-detail-noimg">?</span>
-          }
-        </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
             <div className="cpx-detail-nombre" style={{ flex: 1, minWidth: 0 }}>{row.descripcion}</div>
@@ -327,7 +423,7 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
               {row.existencia ?? 0} stock
             </span>
           </div>
-          <div style={{ fontSize: 12, color: "var(--at-text-muted)", marginTop: 3 }}>
+          <div style={{ fontSize: 15, color: "var(--at-text-muted)", marginTop: 4, fontWeight: 500 }}>
             {row.clave}{row.claveAlterna ? ` · ${row.claveAlterna}` : ""}
           </div>
         </div>
@@ -380,30 +476,21 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
 
         {/* Costo — editable */}
         <FieldRow label="Costo unitario">
-          <input
-            className="cpx-dp-input"
-            type="number"
-            min="0"
-            step="0.01"
-            value={row.costo}
-            onChange={(e) => set("costo", parseFloat(e.target.value) || 0)}
-          />
+          <NumField value={row.costo} min={0} step={1} onChange={(v) => set("costo", v)} />
         </FieldRow>
 
         {/* Factor — editable */}
         <FieldRow label="Factor">
-          <input
-            className="cpx-dp-input"
-            type="number"
-            min="0.001"
-            step="any"
+          <NumField
             value={row.factor}
-            onChange={(e) => {
-              const newFactor     = parseFloat(e.target.value) || 1
-              const oldCostoCalc  = row.costoCalc ?? row.costoSinIva
-              const newCostoCalc  = round2(row.costoSinIva / newFactor)
-              const ivaMult       = row.aplicarIva ? 1.16 : 1
-              const updates       = { factor: newFactor }
+            min={0.001}
+            step={1}
+            onChange={(newFactor) => {
+              const fct          = Math.max(0.001, newFactor || 1)
+              const oldCostoCalc = row.costoCalc ?? row.costoSinIva
+              const newCostoCalc = round2(row.costoSinIva / fct)
+              const ivaMult      = row.aplicarIva ? 1.16 : 1
+              const updates      = { factor: fct }
               ;[1, 2, 3].forEach((n) => {
                 const base = row[`precio${n}`] ?? 0
                 if (base > 0 && oldCostoCalc > 0) {
@@ -447,14 +534,12 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
 
         {/* Descuento — editable */}
         <FieldRow label="Descuento %">
-          <input
-            className="cpx-dp-input"
-            type="number"
-            min="0"
-            max="100"
-            step="0.5"
+          <NumField
             value={row.descuento}
-            onChange={(e) => set("descuento", Math.min(100, Math.max(0, parseFloat(e.target.value) || 0)))}
+            min={0}
+            max={100}
+            step={1}
+            onChange={(v) => set("descuento", v)}
           />
         </FieldRow>
 
@@ -534,52 +619,163 @@ export default function ComprasDetailPanel({ row, onRowChange }) {
       {/* Catálogo / inventario */}
       <div className="cpx-detail-section">
         <p className="cpx-detail-section-title">Catálogo</p>
-        <div className="cpx-art-info-grid">
-          {[
-            ["Inv. Mínimo",  row.inventarioMin ?? "—"],
-            ["Inv. Máximo",  row.inventarioMax ?? "—"],
-            ["Peso",         row.peso ? `${row.peso} kg` : "—"],
-            ["Venta granel", row.ventaGranel ? "Sí" : "No"],
-          ].map(([label, val]) => (
-            <div key={label} className="cpx-art-info-cell">
-              <span className="cpx-detail-label">{label}</span>
-              <span className="cpx-detail-val">{val}</span>
-            </div>
-          ))}
+        <FieldRow label="Inv. Mínimo">
+          <input
+            className="cpx-dp-input"
+            type="number"
+            min="0"
+            step="1"
+            value={row.inventarioMin ?? ""}
+            placeholder="—"
+            onChange={(e) => set("inventarioMin", e.target.value === "" ? null : parseInt(e.target.value, 10))}
+          />
+        </FieldRow>
+        <FieldRow label="Inv. Máximo">
+          <input
+            className="cpx-dp-input"
+            type="number"
+            min="0"
+            step="1"
+            value={row.inventarioMax ?? ""}
+            placeholder="—"
+            onChange={(e) => set("inventarioMax", e.target.value === "" ? null : parseInt(e.target.value, 10))}
+          />
+        </FieldRow>
+        <FieldRow label="Peso (kg)">
+          <input
+            className="cpx-dp-input"
+            type="number"
+            min="0"
+            step="0.001"
+            value={row.peso ?? ""}
+            placeholder="—"
+            onChange={(e) => set("peso", e.target.value === "" ? null : parseFloat(e.target.value))}
+          />
+        </FieldRow>
+        <div className="cpx-detail-row" style={{ marginTop: 4 }}>
+          <span className="cpx-detail-label">Venta granel</span>
+          <Toggle checked={row.ventaGranel ?? false} onChange={(v) => set("ventaGranel", v)} />
         </div>
       </div>
 
       {/* Especificaciones */}
-      {(row.especificaciones?.length > 0) && (
-        <div className="cpx-detail-section">
-          <p className="cpx-detail-section-title">Especificaciones</p>
-          <div className="cpx-specs-tabla">
-            {row.especificaciones.map((esp, i) => (
-              <div key={i} className="cpx-detail-row">
-                <span className="cpx-detail-label">{esp.clave}</span>
-                <span className="cpx-detail-val">{esp.valor}</span>
-              </div>
-            ))}
-          </div>
+      <div className="cpx-detail-section">
+        <p className="cpx-detail-section-title">Especificaciones</p>
+        <div className="cpx-specs-tabla">
+          {(row.especificaciones || []).map((esp, i) => (
+            <div key={i} className="cpx-detail-row cpx-spec-row">
+              <span className="cpx-detail-label">{esp.clave}</span>
+              <span className="cpx-detail-val" style={{ flex: 1 }}>{esp.valor}</span>
+              <button
+                type="button"
+                className="cpx-spec-remove"
+                title="Eliminar"
+                onClick={() => set("especificaciones", (row.especificaciones || []).filter((_, j) => j !== i))}
+              >✕</button>
+            </div>
+          ))}
         </div>
-      )}
+        <div className="cpx-spec-add-row">
+          <input
+            className="cpx-dp-input"
+            style={{ flex: 1, width: "auto" }}
+            placeholder="Nombre"
+            value={newEsp.clave}
+            onChange={(e) => setNewEsp((p) => ({ ...p, clave: e.target.value }))}
+          />
+          <input
+            className="cpx-dp-input"
+            style={{ flex: 1, width: "auto" }}
+            placeholder="Valor"
+            value={newEsp.valor}
+            onChange={(e) => setNewEsp((p) => ({ ...p, valor: e.target.value }))}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newEsp.clave.trim()) {
+                set("especificaciones", [...(row.especificaciones || []), { clave: newEsp.clave.trim(), valor: newEsp.valor.trim() }])
+                setNewEsp({ clave: "", valor: "" })
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="cpx-spec-add-btn"
+            disabled={!newEsp.clave.trim()}
+            onClick={() => {
+              set("especificaciones", [...(row.especificaciones || []), { clave: newEsp.clave.trim(), valor: newEsp.valor.trim() }])
+              setNewEsp({ clave: "", valor: "" })
+            }}
+          >+</button>
+        </div>
+      </div>
 
       {/* Imágenes */}
-      {((row.imagenes?.length > 0) || row.thumbnail) && (
-        <div className="cpx-detail-section">
-          <p className="cpx-detail-section-title">Imágenes</p>
-          <div className="cpx-imagenes-row">
-            {(row.imagenes?.length > 0
-              ? row.imagenes
-              : row.thumbnail ? [row.thumbnail] : []
-            ).map((src, i) => (
-              <div key={i} className="cpx-imagen-thumb">
-                <img src={src} alt="" />
+      <div className="cpx-detail-section">
+        <p className="cpx-detail-section-title">Imágenes</p>
+        <div className="cpx-imagenes-row">
+          {(row.imagenes?.length > 0
+            ? row.imagenes
+            : row.thumbnail ? [row.thumbnail] : []
+          ).map((src, i) => (
+            <div key={i} className={`cpx-imagen-thumb${src === row.thumbnail ? " cpx-thumb-active" : ""}`}>
+              <img src={src} alt="" />
+              <div className="cpx-imagen-actions">
+                {src !== row.thumbnail && (
+                  <button
+                    type="button"
+                    className="cpx-img-btn"
+                    title="Usar como miniatura"
+                    onClick={() => set("thumbnail", src)}
+                  >
+                    <svg viewBox="0 0 16 16" fill="currentColor" width="11" height="11">
+                      <path d="M8 1l1.9 3.8 4.2.6-3 2.9.7 4.2L8 10.5l-3.8 2 .7-4.2-3-2.9 4.2-.6z"/>
+                    </svg>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="cpx-img-btn cpx-img-remove"
+                  title="Quitar"
+                  onClick={() => {
+                    const nextImagenes = (row.imagenes || []).filter((_, j) => j !== i)
+                    const nextThumb    = src === row.thumbnail ? (nextImagenes[0] ?? null) : row.thumbnail
+                    onRowChange(row._id, { imagenes: nextImagenes, thumbnail: nextThumb })
+                  }}
+                >✕</button>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => { handleAddImagen(e.target.files); e.target.value = "" }}
+          />
+          <button
+            type="button"
+            className="cpx-btn-add-img"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading > 0}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" width="14" height="14">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+            {uploading > 0 ? "Subiendo…" : "Agregar"}
+          </button>
         </div>
-      )}
+      </div>
+
+      {/* Footer — guardar */}
+      <div className="cpx-dp-footer">
+        <button
+          className="ar-btn-add cpx-dp-save-btn"
+          onClick={onGuardar}
+          disabled={guardando}
+        >
+          {guardando ? "Guardando…" : "✓ Guardar cambios"}
+        </button>
+      </div>
 
     </div>
   )

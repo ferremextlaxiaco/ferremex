@@ -1,5 +1,12 @@
-import { useState, useRef, useCallback } from "react"
-import { listarArticulos, crearArticulo, actualizarArticulo, eliminarArticulo } from "../lib/client"
+import { useState, useRef, useCallback, useEffect } from "react"
+import {
+  listarArticulos,
+  listarArticulosDeCatalogo,
+  listarCatalogos,
+  crearArticulo,
+  actualizarArticulo,
+  eliminarArticulo,
+} from "../lib/client"
 import ArticleDrawer from "./ArticleDrawer"
 import ArticleDeleteModal from "./ArticleDeleteModal"
 
@@ -46,38 +53,92 @@ function IconSearch() {
     </svg>
   )
 }
+function IconFilter() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/>
+    </svg>
+  )
+}
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ArticlesModule() {
-  const [articles, setArticles] = useState([])
+  // ── Artículos ────────────────────────────────────────────────────────────────
+  const [articles,   setArticles]   = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerMode, setDrawerMode] = useState("add")
   const [deleteOpen, setDeleteOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [loading,    setLoading]    = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState(null)
-  const [search, setSearch] = useState("")
+  const [error,      setError]      = useState(null)
+  const [search,     setSearch]     = useState("")
   const [hasBuscado, setHasBuscado] = useState(false)
-  const [saving, setSaving] = useState(false)
+  const [saving,     setSaving]     = useState(false)
+
+  // ── Taxonomía ────────────────────────────────────────────────────────────────
+  const [taxonomy,     setTaxonomy]     = useState({ depts: [], cats: [], marcas: [] })
+  const [taxLoading,   setTaxLoading]   = useState(true)
+  const [filterDept,   setFilterDept]   = useState("")  // dep-id
+  const [filterCat,    setFilterCat]    = useState("")  // cat-id
+  const [filterMarca,  setFilterMarca]  = useState("")  // mar-id
 
   const claveCounter = useRef(1)
-
   const selected = articles.find((a) => a.id === selectedId) ?? null
 
-  // ── Carga ─────────────────────────────────────────────────────────────────────
+  // Cargar taxonomía al montar (para los selects en cascada)
+  useEffect(() => {
+    listarCatalogos()
+      .then(data => setTaxonomy(data))
+      .catch(() => {})
+      .finally(() => setTaxLoading(false))
+  }, [])
 
-  const cargar = useCallback(async (q, indicadorRefresh = false) => {
-    if (!q) return
+  // Opciones en cascada derivadas de la taxonomía
+  const catOptions   = taxonomy.cats.filter(c => !filterDept || c.depId === filterDept)
+  const marcaOptions = taxonomy.marcas.filter(m => !filterCat || m.catId === filterCat)
+
+  // Nombres resueltos para los filtros activos
+  const depNombre = taxonomy.depts.find(d => d.id === filterDept)?.nombre ?? ""
+  const catNombre = taxonomy.cats.find(c => c.id === filterCat)?.nombre   ?? ""
+  const marNombre = taxonomy.marcas.find(m => m.id === filterMarca)?.nombre ?? ""
+
+  const hayFiltros = filterDept || filterCat || filterMarca
+
+  // ── Motor de búsqueda ────────────────────────────────────────────────────────
+
+  const buscar = useCallback(async (q, dept, cat, mar, indicadorRefresh = false) => {
+    const hayTaxo = dept || cat || mar
+    const hayText = q?.trim()
+    if (!hayTaxo && !hayText) return
+
     if (indicadorRefresh) setRefreshing(true)
     else setLoading(true)
     setHasBuscado(true)
     setError(null)
+    setSelectedId(null)
+
     try {
-      const data = await listarArticulos(q)
+      let data
+      if (hayText) {
+        // Búsqueda de texto → API, luego post-filtro por taxonomía en JS
+        data = await listarArticulos(q)
+        if (hayTaxo) {
+          data = data.filter(a => {
+            if (dept && a.departamento !== dept) return false
+            if (cat  && a.categoria    !== cat)  return false
+            if (mar  && a.marca        !== mar)   return false
+            return true
+          })
+        }
+      } else {
+        // Solo filtros de taxonomía → endpoint dedicado
+        data = await listarArticulosDeCatalogo(dept, cat)
+        // Post-filtro por marca en JS (metadata.marca puede estar vacío)
+        if (mar) data = data.filter(a => a.marca === mar)
+      }
       setArticles(data)
-      setSelectedId(null)
     } catch (e) {
       setError(e.message ?? "Error al cargar artículos")
     } finally {
@@ -86,9 +147,20 @@ export default function ArticlesModule() {
     }
   }, [])
 
+  // Auto-disparo cuando cambian los filtros de taxonomía
+  useEffect(() => {
+    if (filterDept || filterCat || filterMarca) {
+      buscar(search, depNombre, catNombre, marNombre)
+    }
+    // Solo cuando cambian los selects, no el texto
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterDept, filterCat, filterMarca])
+
+  // ── Handlers de UI ───────────────────────────────────────────────────────────
+
   function handleSearch(value) {
     setSearch(value)
-    if (!value) {
+    if (!value && !hayFiltros) {
       setArticles([])
       setHasBuscado(false)
       setError(null)
@@ -97,11 +169,38 @@ export default function ArticlesModule() {
   }
 
   function handleSearchKeyDown(e) {
-    if (e.key === "Enter") cargar(search)
+    if (e.key === "Enter") buscar(search, depNombre, catNombre, marNombre)
+  }
+
+  function handleBuscar() {
+    buscar(search, depNombre, catNombre, marNombre)
   }
 
   function handleRefresh() {
-    if (search) cargar(search, true)
+    buscar(search, depNombre, catNombre, marNombre, true)
+  }
+
+  function handleDeptChange(e) {
+    setFilterDept(e.target.value)
+    setFilterCat("")
+    setFilterMarca("")
+  }
+
+  function handleCatChange(e) {
+    setFilterCat(e.target.value)
+    setFilterMarca("")
+  }
+
+  function limpiarFiltros() {
+    setFilterDept("")
+    setFilterCat("")
+    setFilterMarca("")
+    if (!search.trim()) {
+      setArticles([])
+      setHasBuscado(false)
+      setError(null)
+      setSelectedId(null)
+    }
   }
 
   // ── CRUD ──────────────────────────────────────────────────────────────────────
@@ -141,20 +240,29 @@ export default function ArticlesModule() {
     return prefix + (claveCounter.current++).toString().padStart(4, "0")
   }
 
+  // Descripción del estado actual para el subtítulo
+  function subtitulo() {
+    if (loading) return "Buscando…"
+    if (!hasBuscado) return " "
+    const n = articles.length
+    const parts = [`${n} artículo${n !== 1 ? "s" : ""}`]
+    if (depNombre) parts.push(depNombre)
+    if (catNombre) parts.push(catNombre)
+    if (marNombre) parts.push(marNombre)
+    return parts.join(" · ")
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
     <div className="ar-root">
 
-      {/* Header: título + 4 botones */}
+      {/* Encabezado */}
       <div className="ar-header">
         <div>
           <p className="admin-seccion-titulo" style={{ marginBottom: 0 }}>Artículos</p>
-          <p className="ar-header-meta">
-            {loading ? "Buscando…" : hasBuscado ? `${articles.length} artículo${articles.length !== 1 ? "s" : ""}` : " "}
-          </p>
+          <p className="ar-header-meta">{subtitulo()}</p>
         </div>
-
         <div className="ar-header-actions">
           <button className="ar-btn-add" onClick={() => { setDrawerMode("add"); setDrawerOpen(true) }}>
             <IconPlus /> Agregar
@@ -163,7 +271,8 @@ export default function ArticlesModule() {
             onClick={() => { setDrawerMode("edit"); setDrawerOpen(true) }}>
             <IconPencil /> Editar
           </button>
-          <button className="ar-btn-action" onClick={handleRefresh}>
+          <button className="ar-btn-action" onClick={handleRefresh}
+            disabled={!hasBuscado || loading}>
             <IconRefresh spinning={refreshing} /> Refrescar
           </button>
           <div className="ar-toolbar-divider" />
@@ -174,57 +283,100 @@ export default function ArticlesModule() {
         </div>
       </div>
 
-      {/* Buscador + botón Buscar */}
-      <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-        <div style={{ position: "relative", flex: 1, maxWidth: "400px" }}>
-          <span style={{
-            position: "absolute", left: "10px", top: "50%", transform: "translateY(-50%)",
-            color: "var(--at-text-muted)", pointerEvents: "none", display: "flex",
-          }}>
-            <IconSearch />
-          </span>
+      {/* Fila de búsqueda */}
+      <div className="ar-search-row">
+        <div className="ar-search-input-wrap">
+          <span className="ar-search-icon"><IconSearch /></span>
           <input
             type="text"
             className="ar-input"
-            placeholder="Buscar por clave, descripción, categoría…"
+            placeholder="Buscar por clave, descripción…"
             value={search}
             onChange={(e) => handleSearch(e.target.value)}
             onKeyDown={handleSearchKeyDown}
             style={{ paddingLeft: "32px" }}
           />
         </div>
-        <button className="ar-btn-action" onClick={() => cargar(search)}
-          disabled={!search || loading}>
+        <button className="ar-btn-action" onClick={handleBuscar}
+          disabled={(!search.trim() && !hayFiltros) || loading}>
           <IconSearch /> Buscar
         </button>
       </div>
 
+      {/* Filtros en cascada */}
+      <div className="ar-filter-row">
+        <IconFilter />
+        <select
+          className="ar-filter-select"
+          value={filterDept}
+          onChange={handleDeptChange}
+          disabled={taxLoading}
+        >
+          <option value="">Todos los departamentos</option>
+          {taxonomy.depts.map(d => (
+            <option key={d.id} value={d.id}>{d.nombre} ({d.articulos})</option>
+          ))}
+        </select>
+
+        <select
+          className="ar-filter-select"
+          value={filterCat}
+          onChange={handleCatChange}
+          disabled={taxLoading || catOptions.length === 0}
+        >
+          <option value="">Todas las categorías</option>
+          {catOptions.map(c => (
+            <option key={c.id} value={c.id}>{c.nombre} ({c.articulos})</option>
+          ))}
+        </select>
+
+        <select
+          className="ar-filter-select"
+          value={filterMarca}
+          onChange={e => setFilterMarca(e.target.value)}
+          disabled={taxLoading || marcaOptions.length === 0}
+        >
+          <option value="">Todas las marcas</option>
+          {marcaOptions.map(m => (
+            <option key={m.id} value={m.id}>{m.nombre} ({m.articulos})</option>
+          ))}
+        </select>
+
+        {hayFiltros && (
+          <button className="ar-filter-clear" onClick={limpiarFiltros} title="Limpiar filtros">
+            ✕ Limpiar
+          </button>
+        )}
+
+        {taxLoading && (
+          <span className="ar-filter-loading">Cargando catálogos…</span>
+        )}
+      </div>
+
       {/* Error */}
       {error && (
-        <div style={{
-          background: "rgba(220,38,38,0.06)", border: "1px solid var(--at-red)",
-          borderRadius: "var(--at-radius)", padding: "10px 14px",
-          color: "var(--at-red)", fontSize: "13px", flexShrink: 0,
-        }}>
+        <div className="ar-error-bar">
           {error} —{" "}
-          <button onClick={() => cargar(search)} style={{
-            background: "none", border: "none", color: "var(--at-red)",
-            textDecoration: "underline", cursor: "pointer", padding: 0, fontSize: "13px",
-          }}>Reintentar</button>
+          <button onClick={handleBuscar} className="ar-error-retry">Reintentar</button>
         </div>
       )}
 
-      {/* Contenido: lista izquierda + detalle derecha */}
+      {/* Contenido: lista + detalle */}
       <div className="ar-content">
 
-        {/* Panel izquierdo */}
+        {/* Panel izquierdo — lista */}
         <div className="ar-list-panel">
           {loading ? (
             <p className="ar-empty">Buscando artículos…</p>
           ) : !hasBuscado ? (
-            <p className="ar-empty">Presiona Buscar o Enter para encontrar artículos</p>
+            <p className="ar-empty">Selecciona un filtro o escribe para buscar</p>
           ) : articles.length === 0 ? (
-            <p className="ar-empty">No se encontraron artículos para &ldquo;{search}&rdquo;</p>
+            <p className="ar-empty">
+              No se encontraron artículos
+              {search ? ` para «${search}»` : ""}
+              {depNombre ? ` en ${depNombre}` : ""}
+              {catNombre ? ` › ${catNombre}` : ""}
+            </p>
           ) : articles.map((a) => {
             const sel = a.id === selectedId
             return (
@@ -239,7 +391,7 @@ export default function ArticlesModule() {
                   <p className="ar-list-code">{a.clave}</p>
                   <p className="ar-list-name">{a.descripcion}</p>
                   <p className="ar-list-cat">
-                    {[a.categoria, a.departamento].filter(Boolean).join(" › ")}
+                    {[a.departamento, a.categoria, a.marca].filter(Boolean).join(" › ")}
                   </p>
                 </div>
                 <div className="ar-list-right">
@@ -253,7 +405,7 @@ export default function ArticlesModule() {
           })}
         </div>
 
-        {/* Panel derecho: detalle */}
+        {/* Panel derecho — detalle */}
         <div className="ar-detail-panel">
           {!selected ? (
             <div className="ar-detail-empty">
@@ -262,12 +414,11 @@ export default function ArticlesModule() {
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
-              <p>Selecciona un art&iacute;culo para ver sus detalles</p>
+              <p>Selecciona un artículo para ver sus detalles</p>
             </div>
           ) : (
             <div className="ar-detail-view">
 
-              {/* Imagen + existencia */}
               <div className="ar-detail-hero">
                 <div className="ar-detail-hero-img">
                   {selected.thumbnail
@@ -286,16 +437,15 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Inventario y ubicación */}
               <div className="ar-detail-section">
-                <p className="ar-detail-section-title">Inventario y Ubicaci&oacute;n</p>
+                <p className="ar-detail-section-title">Inventario y Ubicación</p>
                 <div className="ar-detail-rows">
                   {[
-                    ["Mínimo",      selected.inventarioMin ?? "—"],
-                    ["Máximo",      selected.inventarioMax ?? "—"],
-                    ["Localización", selected.localizacion || "—"],
-                    ["Peso",            selected.peso ? `${selected.peso} kg` : "—"],
-                    ["Venta a Granel",  selected.ventaGranel ? "Sí" : "No"],
+                    ["Mínimo",        selected.inventarioMin ?? "—"],
+                    ["Máximo",        selected.inventarioMax ?? "—"],
+                    ["Localización",  selected.localizacion || "—"],
+                    ["Peso",          selected.peso ? `${selected.peso} kg` : "—"],
+                    ["Venta a Granel", selected.ventaGranel ? "Sí" : "No"],
                   ].map(([label, value]) => (
                     <div key={label} className="ar-detail-row">
                       <span className="ar-detail-label">{label}</span>
@@ -305,18 +455,17 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Identificación */}
               <div className="ar-detail-section">
-                <p className="ar-detail-section-title">Identificaci&oacute;n</p>
+                <p className="ar-detail-section-title">Identificación</p>
                 <div className="ar-detail-rows">
                   {[
-                    ["Descripción",   selected.descripcion || "—"],
-                    ["Marca",         selected.marca || "—"],
-                    ["Categoría",     selected.categoria || "—"],
-                    ["Departamento",  selected.departamento || "—"],
-                    ["Clave",         <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
+                    ["Descripción",  selected.descripcion || "—"],
+                    ["Marca",        selected.marca || "—"],
+                    ["Categoría",    selected.categoria || "—"],
+                    ["Departamento", selected.departamento || "—"],
+                    ["Clave",        <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
                     ["Clave Alterna", selected.claveAlterna || "—"],
-                    ["Clave SAT",     selected.claveSat || "—"],
+                    ["Clave SAT",    selected.claveSat || "—"],
                   ].map(([label, value]) => (
                     <div key={label} className="ar-detail-row">
                       <span className="ar-detail-label">{label}</span>
@@ -326,7 +475,6 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Unidades */}
               <div className="ar-detail-section">
                 <p className="ar-detail-section-title">Unidades</p>
                 <div className="ar-detail-rows">
@@ -343,7 +491,6 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Fiscal */}
               <div className="ar-detail-section">
                 <p className="ar-detail-section-title">Fiscal</p>
                 <div className="ar-detail-rows">
@@ -360,7 +507,6 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Precios de venta */}
               <div className="ar-detail-section">
                 <p className="ar-detail-section-title">
                   Precios de Venta
@@ -382,7 +528,6 @@ export default function ArticlesModule() {
                 </div>
               </div>
 
-              {/* Especificaciones */}
               {selected.especificaciones?.length > 0 && (
                 <div className="ar-detail-section">
                   <p className="ar-detail-section-title">Especificaciones</p>
@@ -402,7 +547,6 @@ export default function ArticlesModule() {
         </div>
       </div>
 
-      {/* Spinner flotante (no bloqueante) */}
       {refreshing && (
         <div className="ar-spinner">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--at-orange)" strokeWidth="2.5" strokeLinecap="round">

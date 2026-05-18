@@ -88,11 +88,26 @@ export interface ArticuloPOS {
   thumbnail: string | null
   imagenes: string[]
   especificaciones: { clave: string; valor: string }[]
+  existencia: number
 }
 
 export async function listarArticulos(q?: string): Promise<ArticuloPOS[]> {
   const params = new URLSearchParams()
   if (q) params.set("q", q)
+  return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
+}
+
+export async function listarFaltantes(): Promise<ArticuloPOS[]> {
+  return apiFetch<ArticuloPOS[]>("/caja/articulos?faltantes=1")
+}
+
+export async function listarArticulosDeCatalogo(
+  departamento: string,
+  categoria: string
+): Promise<ArticuloPOS[]> {
+  const params = new URLSearchParams()
+  if (departamento) params.set("departamento", departamento)
+  if (categoria)    params.set("categoria", categoria)
   return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
 }
 
@@ -267,5 +282,39 @@ export async function guardarTicketConfig(config: TicketConfig): Promise<TicketC
   return apiFetch<TicketConfig>("/caja/ticket-config", {
     method: "PUT",
     body: JSON.stringify(config),
+  })
+}
+
+// ── Catálogos ─────────────────────────────────────────────────────────────────
+
+export interface CatalogosDept  { id: string; nombre: string; articulos: number }
+export interface CatalogosCat   { id: string; nombre: string; depId: string; articulos: number }
+export interface CatalogosMarca { id: string; nombre: string; catId: string; articulos: number }
+
+export interface CatalogosData {
+  depts:  CatalogosDept[]
+  cats:   CatalogosCat[]
+  marcas: CatalogosMarca[]
+}
+
+export async function listarCatalogos(): Promise<CatalogosData> {
+  return apiFetch<CatalogosData>("/caja/catalogos")
+}
+
+export type CatalogosOp =
+  | { op: "create_marca"; nombre: string; cat_nombre: string; dep_nombre: string }
+  | { op: "rename_dept";  nombre_actual: string; nombre_nuevo: string }
+  | { op: "rename_cat";   nombre_actual: string; nombre_nuevo: string }
+  | { op: "rename_marca"; nombre_actual: string; nombre_nuevo: string }
+  | { op: "move_cat"; cat_nombre: string; dept_nombre_actual: string; dept_nombre_nuevo: string }
+  | { op: "assign_marca"; marca: string; product_ids: string[] }
+  | { op: "reasignar"; product_ids: string[]; departamento?: string; marca?: string }
+
+export async function actualizarCatalogo(
+  payload: CatalogosOp
+): Promise<{ ok: boolean; actualizados: number }> {
+  return apiFetch("/caja/catalogos", {
+    method: "PATCH",
+    body: JSON.stringify(payload),
   })
 }

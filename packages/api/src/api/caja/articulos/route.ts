@@ -159,6 +159,174 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const inventoryModule = req.scope.resolve(Modules.INVENTORY)
   const query = req.scope.resolve(ContainerRegistrationKeys.QUERY)
   const q = String(req.query["q"] ?? "").trim()
+  const faltantes = req.query["faltantes"] === "1"
+
+  // ── Modo faltantes: artículos con existencia < inventarioMin ─────────────────
+  if (faltantes && !q) {
+    const [allProds, allVars] = await Promise.all([
+      productModule.listProducts(
+        { status: ProductStatus.PUBLISHED },
+        { select: ["id", "title", "thumbnail", "weight", "metadata"], take: 99999 }
+      ),
+      productModule.listProductVariants(
+        {},
+        { select: ["id", "sku", "product_id"], take: 99999 }
+      ),
+    ])
+
+    // Primer variant por producto
+    const variantByProduct = new Map<string, any>()
+    for (const v of allVars as any[]) {
+      if (v.product_id && !variantByProduct.has(v.product_id)) {
+        variantByProduct.set(v.product_id, v)
+      }
+    }
+
+    // Inventario de todos los SKUs
+    const allSkus = (allVars as any[]).map((v) => v.sku).filter(Boolean) as string[]
+    const stockPorSku = await existenciasPorSku(inventoryModule, allSkus)
+
+    // Filtrar productos bajo mínimo
+    const faltanteIds: string[] = []
+    for (const p of allProds as any[]) {
+      const meta = (p.metadata ?? {}) as Record<string, unknown>
+      const invMin = metaNum(meta, "inventarioMin", "invMin")
+      if (invMin <= 0) continue
+      const variant = variantByProduct.get(p.id)
+      const existencia = variant?.sku ? (stockPorSku.get(variant.sku) ?? 0) : 0
+      if (existencia < invMin) faltanteIds.push(p.id)
+    }
+
+    if (faltanteIds.length === 0) { res.json([]); return }
+
+    const faltantesProds = await productModule.listProducts(
+      { id: faltanteIds },
+      { select: ["id", "title", "thumbnail", "weight", "metadata"], relations: ["variants", "categories", "images"], take: faltanteIds.length + 10 }
+    )
+
+    const fVarIds = (faltantesProds as any[]).flatMap((p) => (p.variants as any[])?.map((v) => v.id) ?? [])
+    const { data: fVarsPrecio } = await query.graph({
+      entity: "product_variant",
+      filters: { id: fVarIds },
+      fields: ["id", "price_set.prices.amount", "price_set.prices.currency_code"],
+      pagination: { take: fVarIds.length + 10 },
+    })
+
+    const precioPorVarId = new Map<string, number>()
+    for (const v of fVarsPrecio) {
+      const precios: any[] = (v as any).price_set?.prices ?? []
+      const mxn = precios.find((p) => p.currency_code === "mxn")?.amount
+      if (mxn !== undefined) precioPorVarId.set(v.id, mxn / 100)
+    }
+
+    const result = (faltantesProds as any[]).map((p) => {
+      const variant = (p.variants as any[])?.[0]
+      const precio1 = variant ? (precioPorVarId.get(variant.id) ?? 0) : 0
+      const existencia = variant?.sku ? (stockPorSku.get(variant.sku) ?? 0) : 0
+      return toArticuloPOS(p, variant, precio1, existencia)
+    })
+
+    result.sort((a: any, b: any) => a.descripcion.localeCompare(b.descripcion, "es"))
+    res.json(result)
+    return
+  }
+
+  // ── Filtro por departamento y/o categoría (sin búsqueda de texto) ────────────
+  // Usado por el módulo Catálogos → panel de Reasignación masiva.
+  const departamentoFilter = String(req.query["departamento"] ?? "").trim()
+  const categoriaFilter    = String(req.query["categoria"]    ?? "").trim()
+
+  if (!q && !faltantes && (departamentoFilter || categoriaFilter)) {
+    // Paso 1: obtener IDs de productos de esa categoría cargando la categoría
+    // con sus productos (1 fila de categoría → rápido aunque tenga muchos productos)
+    let productIdsDeCat: string[] | null = null
+    if (categoriaFilter) {
+      const foundCats = await productModule.listProductCategories(
+        { name: categoriaFilter },
+        { select: ["id", "name"], relations: ["products"], take: 10 }
+      )
+      if (!(foundCats as any[]).length) { res.json([]); return }
+      productIdsDeCat = (foundCats as any[]).flatMap((c) =>
+        ((c.products ?? []) as any[]).map((p: any) => p.id)
+      )
+      if (!productIdsDeCat.length) { res.json([]); return }
+    }
+
+    // Paso 2: si solo hay filtro de dept (sin cat), cargar todos los productos
+    // con metadata y filtrar en JS. Si hay catIds, cargar solo esos IDs.
+    let allMeta: any[]
+    if (productIdsDeCat) {
+      // Productos de la categoría: conjunto pequeño, podemos cargar con relaciones
+      allMeta = await productModule.listProducts(
+        { id: productIdsDeCat },
+        {
+          select: ["id", "title", "thumbnail", "weight", "metadata"],
+          relations: ["variants", "categories", "images"],
+          take: productIdsDeCat.length + 10,
+        }
+      ) as any[]
+    } else {
+      // Solo filtro de departamento: cargar todos con metadata, filtrar en JS
+      allMeta = await productModule.listProducts(
+        { status: ProductStatus.PUBLISHED },
+        { select: ["id", "title", "thumbnail", "weight", "metadata"], take: 99999 }
+      ) as any[]
+    }
+
+    // Paso 3: filtrar por departamento en memoria
+    const filtered = departamentoFilter
+      ? allMeta.filter((p) => {
+          const meta = (p.metadata ?? {}) as Record<string, unknown>
+          return (meta.departamento as string | undefined)?.trim() === departamentoFilter
+        })
+      : allMeta
+
+    if (!filtered.length) { res.json([]); return }
+
+    // Paso 4: si vinieron sin relaciones (solo-dept), cargar con relaciones los matching
+    let withRelations: any[]
+    if (!productIdsDeCat) {
+      const matchIds = filtered.map((p: any) => p.id)
+      withRelations = await productModule.listProducts(
+        { id: matchIds },
+        {
+          select: ["id", "title", "thumbnail", "weight", "metadata"],
+          relations: ["variants", "categories", "images"],
+          take: matchIds.length + 10,
+        }
+      ) as any[]
+    } else {
+      withRelations = filtered
+    }
+
+    if (!withRelations.length) { res.json([]); return }
+
+    // Paso 5: precios y existencias
+    const fVarIds = withRelations.flatMap((p: any) => (p.variants as any[])?.map((v: any) => v.id) ?? [])
+    const { data: fVarsPrecios } = await query.graph({
+      entity: "product_variant",
+      filters: { id: fVarIds },
+      fields: ["id", "price_set.prices.amount", "price_set.prices.currency_code"],
+      pagination: { take: fVarIds.length + 10 },
+    })
+    const fPrecioMap = new Map<string, number>()
+    for (const v of fVarsPrecios) {
+      const mxn = ((v as any).price_set?.prices ?? []).find((p: any) => p.currency_code === "mxn")?.amount
+      if (mxn !== undefined) fPrecioMap.set(v.id, mxn / 100)
+    }
+    const fSkus = withRelations.flatMap((p: any) => (p.variants as any[])?.map((v: any) => v.sku).filter(Boolean) ?? []) as string[]
+    const fStock = await existenciasPorSku(inventoryModule, fSkus)
+
+    const fResult = withRelations.map((p: any) => {
+      const variant = (p.variants as any[])?.[0]
+      const precio1 = variant ? (fPrecioMap.get(variant.id) ?? 0) : 0
+      const existencia = variant?.sku ? (fStock.get(variant.sku) ?? 0) : 0
+      return toArticuloPOS(p, variant, precio1, existencia)
+    })
+    fResult.sort((a: any, b: any) => a.descripcion.localeCompare(b.descripcion, "es"))
+    res.json(fResult)
+    return
+  }
 
   if (!q) {
     res.json([])
