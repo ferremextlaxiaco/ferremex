@@ -71,22 +71,25 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   ])
 
   const productToCategory = new Map<string, string>()
+  const catNameToMedusaId = new Map<string, string>()
   for (const cat of categories as any[]) {
     const catName = (cat.name as string)?.trim() ?? ""
     if (!catName) continue
+    if (!catNameToMedusaId.has(catName)) catNameToMedusaId.set(catName, cat.id)
     for (const p of (cat.products ?? []) as any[]) {
       if (p.id && !productToCategory.has(p.id)) productToCategory.set(p.id, catName)
     }
   }
 
-  const deptsCount = new Map<string, number>()
-  const depNames   = new Map<string, string>()
-  const catsCount  = new Map<string, number>()
-  const catNames   = new Map<string, string>()
-  const catParent  = new Map<string, string>()
-  const marCount   = new Map<string, number>()
-  const marNames   = new Map<string, string>()
-  const marParent  = new Map<string, string>()
+  const deptsCount  = new Map<string, number>()
+  const depNames    = new Map<string, string>()
+  const catsCount   = new Map<string, number>()
+  const catNames    = new Map<string, string>()
+  const catParent   = new Map<string, string>()
+  const catMedusaId = new Map<string, string>()
+  const marCount    = new Map<string, number>()
+  const marNames    = new Map<string, string>()
+  const marParent   = new Map<string, string>()
 
   for (const p of products as any[]) {
     const meta      = (p.metadata ?? {}) as Record<string, unknown>
@@ -104,6 +107,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     catsCount.set(catId, (catsCount.get(catId) ?? 0) + 1)
     catNames.set(catId, catNombre)
     catParent.set(catId, depId)
+    const medId = catNameToMedusaId.get(catNombre)
+    if (medId && !catMedusaId.has(catId)) catMedusaId.set(catId, medId)
 
     if (!marNombre) continue
     const marId = "mar-" + slugify(marNombre) + "--" + catId
@@ -126,7 +131,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   res.json({
     depts:  [...deptsCount.entries()].map(([id, articulos]) => ({ id, nombre: depNames.get(id)!,  articulos })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
-    cats:   [...catsCount.entries()].map(([id, articulos])  => ({ id, nombre: catNames.get(id)!,  depId: catParent.get(id)!, articulos })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
+    cats:   [...catsCount.entries()].map(([id, articulos])  => ({ id, nombre: catNames.get(id)!, depId: catParent.get(id)!, medusaId: catMedusaId.get(id), articulos })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
     marcas: [...marCount.entries()].map(([id, articulos])   => ({ id, nombre: marNames.get(id)!,  catId: marParent.get(id)!, articulos })).sort((a, b) => a.nombre.localeCompare(b.nombre, "es")),
   })
 }

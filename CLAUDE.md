@@ -99,6 +99,89 @@ XxxPreview.jsx (modal/panel)→ read-only detail view or edit overlay
 
 Side panels that create/edit items are `XxxDrawer.jsx`; delete confirmations are `XxxDeleteModal.jsx`. Only the Module component has state; sub-components are presentational.
 
+---
+
+### Taxonomía POS — Departamento → Categoría → Marca (patrón obligatorio)
+
+**Toda funcionalidad de filtro por taxonomía debe usar `listarCatalogos()`**, nunca `buscarCategorias()`, ni listas hardcodeadas, ni llamadas ad-hoc a `listarArticulos` para extraer marcas. Este es el único origen de verdad para la jerarquía Dept → Cat → Marca.
+
+#### Fuente de datos
+
+```ts
+// client.ts
+const datos: CatalogosData = await listarCatalogos()
+// datos.depts  → CatalogosDept[]  { id, nombre, articulos }
+// datos.cats   → CatalogosCat[]   { id, nombre, depId, medusaId?, articulos }
+// datos.marcas → CatalogosMarca[] { id, nombre, catId, articulos }
+```
+
+- `depts[].id` es slugificado (`dep-truper`). Úsalo solo para joins internos.
+- `cats[].depId` apunta al `depts[].id` de su padre.
+- `cats[].medusaId` es el UUID real de Medusa — úsalo en `?category_id=<uuid>` al llamar `/caja/productos`.
+- `marcas[].catId` apunta al `cats[].id` de su padre.
+
+#### Patrón de cascada (selects o chips)
+
+```js
+// Dado: filtros = { departamento, categoria, marca }
+
+const deptItem   = datos.depts.find(d => d.nombre === filtros.departamento) ?? null
+const catsOpts   = deptItem ? datos.cats.filter(c => c.depId === deptItem.id)   : []
+const catItem    = catsOpts.find(c => c.nombre === filtros.categoria) ?? null
+const marcasOpts = catItem  ? datos.marcas.filter(m => m.catId === catItem.id)  : []
+```
+
+- Cuando cambia el departamento → resetear `categoria` y `marca` a `""`.
+- Cuando cambia la categoría → resetear `marca` a `""`.
+- Los selects/chips de Cat y Marca se deshabilitan hasta que se seleccione su padre.
+
+#### Módulos que implementan este patrón (mapa de impacto)
+
+| Módulo | Archivo | Nivel de cascada |
+|--------|---------|-----------------|
+| Venta (pantalla principal) | `FiltroBar.tsx` | Dept → Cat → Marca (chips) |
+| Artículos (admin) | `ArticlesModule.jsx` | Dept → Cat → Marca (selects) |
+| Pedidos (admin) | `PedidosFiltros.jsx` | Dept → Cat → Marca (selects) |
+| Catálogos (admin) | `CatalogosModule.jsx` + `CatalogosColumnas.jsx` | Miller Columns |
+| Reasignación masiva | `CatalogosReasignacion.jsx` | Origen y destino con cascada |
+
+#### Anti-patrones prohibidos en módulos nuevos
+
+```js
+// ❌ No hagas esto:
+buscarCategorias()                        // solo devuelve cats planas, sin jerarquía
+listarArticulos("a").then(arts => marcas) // carga todo el catálogo para extraer marcas
+const DEPTS = ["Truper", "Acero", ...]    // lista hardcodeada
+
+// ✅ Haz esto:
+listarCatalogos().then(setTaxonomia)      // una llamada, todo el árbol
+```
+
+---
+
+### Análisis de impacto cruzado — regla obligatoria
+
+**Antes de cambiar cualquier sistema compartido, identificar todos los módulos afectados y preguntar al usuario si los actualiza también.**
+
+Sistemas compartidos y sus consumidores actuales:
+
+| Sistema / función | Consumidores POS |
+|---|---|
+| `listarCatalogos()` + taxonomía Dept→Cat→Marca | `FiltroBar`, `ArticlesModule`, `PedidosFiltros`, `CatalogosModule`, `CatalogosReasignacion` |
+| `listarFaltantes()` (`/caja/articulos?faltantes=1`) | `PedidosModule` (FaltantesModal) |
+| `buscarProductos()` (`/caja/productos`) | `Buscador` (pantalla de venta) |
+| `listarArticulos()` (`/caja/articulos`) | `ArticlesModule`, `PedidosFiltros` |
+| Shape `ArticuloPOS` (campos de artículo) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal` |
+| Búsqueda fonética (backend `/caja/productos`) | `Buscador` |
+| `CatalogosOp` PATCH (`/caja/catalogos`) | `CatalogosModule` |
+
+**Protocolo:** cuando un cambio toca uno de estos sistemas, Claude debe:
+1. Listar qué otros módulos consumen el mismo sistema.
+2. Preguntar explícitamente: *"Este cambio también afecta a [X, Y, Z]. ¿Actualizo esos módulos también?"*
+3. No continuar hasta recibir respuesta del usuario.
+
+Este protocolo aplica también al panel de admin Medusa (`apps/admin/`) y al vendor portal (`apps/vendor/`) si en el futuro consumen los mismos endpoints `/caja/*`.
+
 ### State management (`apps/pos/src/lib/pos-store.ts`)
 
 React Context + useReducer. Key state: `cajero`, `items` (cart), `ticketConfig`, `clienteActivo`. No Redux. `buildTurnoId()` generates shift IDs in the format `YYYY-MM-DD-m` or `-t`.
@@ -300,7 +383,8 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 - **POS is mounted as a `vendor-ui` module** in `medusa-config.ts` with `viteDevServerPort: 7002` (`@ts-expect-error` suppresses the non-standard option). The port must stay in sync with the `--port 7002` flag in `apps/pos/package.json`'s `dev` script.
 - **PM2 start order matters**: `ferremex-admin` and `ferremex-pos` (Vite) must be running before `ferremex-api`. The API proxies both — if Vite is down at startup, `/dashboard` and `/pos` return errors.
 - **blocks.json aliases** control where Mercur CLI places installed block files: `api` → `packages/api/src`, `vendor` → `apps/vendor/src`, `admin` → `apps/admin/src`. Update these if the directory structure changes.
-- **PedidosModule uses hardcoded mock data**: `PROVEEDORES`, `ARTICULOS`, and `HISTORIAL_MOCK` arrays are defined inline in `PedidosModule.jsx`. There is no `/caja/pedidos` backend route yet. When wiring the backend, replace the mocks with `client.ts` calls and create the route under `packages/api/src/api/caja/pedidos/`.
+- **PedidosModule still uses mock data for proveedores e historial**: `PROVEEDORES` and `HISTORIAL_MOCK` arrays are inline in `PedidosModule.jsx`. There is no `/caja/pedidos` backend route yet. When wiring the backend, replace them with `client.ts` calls and create the route under `packages/api/src/api/caja/pedidos/`. The `ARTICULOS` mock was already removed — `PedidosFiltros` now uses `listarCatalogos()` + `listarArticulos()`.
+- **`listProducts({ category_id })` no funciona en Medusa 2.x**: Pasar `{ category_id: [uuid] }` como filtro a `productModule.listProducts()` lanza un error ("Trying to query by not existing property"). La solución es el patrón de dos pasos: primero `listProductCategories({ id: [uuid] }, { relations: ["products"] })` para obtener los product IDs, luego `listProducts({ id: productIds })`. Esto ya está implementado en `/caja/productos` y `/caja/articulos`.
 
 ---
 

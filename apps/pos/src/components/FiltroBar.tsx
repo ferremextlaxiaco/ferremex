@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react"
-import { buscarCategorias, type CategoriasPOS, type FiltrosBusqueda } from "../lib/client"
+import {
+  listarCatalogos,
+  type CatalogosData,
+  type CatalogosCat,
+  type CatalogosDept,
+  type CatalogosMarca,
+  type FiltrosBusqueda,
+} from "../lib/client"
 
 export type FiltroStock = "todos" | "con-stock" | "sin-stock"
 
@@ -10,57 +17,105 @@ interface FiltroBarProps {
   onFiltroStockChange: (v: FiltroStock) => void
 }
 
-type ModoFiltro = "nombre" | "departamento" | "categoria" | "existencia"
+type ModoFiltro = "nombre" | "explorar" | "existencia"
 
 export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange }: FiltroBarProps) {
   const [modo, setModo] = useState<ModoFiltro>("nombre")
-  const [datos, setDatos] = useState<CategoriasPOS | null>(null)
+  const [datos, setDatos] = useState<CatalogosData | null>(null)
+  const [deptActivo, setDeptActivo] = useState<CatalogosDept | null>(null)
+  const [catActiva, setCatActiva] = useState<CatalogosCat | null>(null)
+  const [marcaActiva, setMarcaActiva] = useState<CatalogosMarca | null>(null)
 
   useEffect(() => {
-    buscarCategorias()
-      .then(setDatos)
-      .catch(() => {/* sin filtros disponibles */})
+    listarCatalogos().then(setDatos).catch(() => {})
   }, [])
 
-  function seleccionarDepartamento(dep: string) {
-    const nuevo = dep === filtros.departamento ? {} : { departamento: dep }
-    onChange(nuevo)
+  function resetCascada() {
+    setDeptActivo(null)
+    setCatActiva(null)
+    setMarcaActiva(null)
   }
 
-  function seleccionarCategoria(id: string) {
-    const nuevo = id === filtros.category_id ? {} : { category_id: id }
-    onChange(nuevo)
-  }
-
-  function cambiarModo(m: ModoFiltro) {
-    setModo(m)
-    // Limpiar filtros del modo anterior al cambiar
+  function handleNombreClick() {
+    setModo("nombre")
+    resetCascada()
     onChange({})
   }
 
-  const hayFiltroActivo = !!(filtros.departamento || filtros.category_id || filtroStock !== "todos")
+  function seleccionarDept(dept: CatalogosDept) {
+    setDeptActivo(dept)
+    setCatActiva(null)
+    setMarcaActiva(null)
+    onChange({ departamento: dept.nombre })
+  }
+
+  function seleccionarCat(cat: CatalogosCat) {
+    setCatActiva(cat)
+    setMarcaActiva(null)
+    const f: FiltrosBusqueda = cat.medusaId
+      ? { category_id: cat.medusaId }
+      : { departamento: deptActivo?.nombre }
+    onChange(f)
+  }
+
+  function seleccionarMarca(mar: CatalogosMarca) {
+    setMarcaActiva(mar)
+    const base: FiltrosBusqueda = catActiva?.medusaId
+      ? { category_id: catActiva.medusaId }
+      : { departamento: deptActivo?.nombre }
+    onChange({ ...base, marca: mar.nombre })
+  }
+
+  function irAtras() {
+    if (marcaActiva) {
+      setMarcaActiva(null)
+      const f: FiltrosBusqueda = catActiva?.medusaId
+        ? { category_id: catActiva.medusaId }
+        : { departamento: deptActivo?.nombre }
+      onChange(f)
+    } else if (catActiva) {
+      setCatActiva(null)
+      onChange({ departamento: deptActivo!.nombre })
+    } else if (deptActivo) {
+      resetCascada()
+      onChange({})
+    }
+  }
+
+  function irADept() {
+    setCatActiva(null)
+    setMarcaActiva(null)
+    onChange({ departamento: deptActivo!.nombre })
+  }
+
+  function irACat() {
+    setMarcaActiva(null)
+    const f: FiltrosBusqueda = catActiva?.medusaId
+      ? { category_id: catActiva.medusaId }
+      : { departamento: deptActivo?.nombre }
+    onChange(f)
+  }
+
+  const catsParaDept = datos?.cats.filter(c => c.depId === deptActivo?.id) ?? []
+  const marcasParaCat = datos?.marcas.filter(m => m.catId === catActiva?.id) ?? []
+
+  const explorarActivo = !!(filtros.departamento || filtros.category_id || filtros.marca)
+  const hayFiltroActivo = explorarActivo || filtroStock !== "todos"
 
   return (
     <div className="filtro-bar">
-      {/* Tabs de modo */}
       <div className="filtro-tabs">
         <button
           className={`filtro-tab ${modo === "nombre" ? "filtro-tab-activo" : ""}`}
-          onClick={() => cambiarModo("nombre")}
+          onClick={handleNombreClick}
         >
           🔤 Nombre
         </button>
         <button
-          className={`filtro-tab ${modo === "departamento" ? "filtro-tab-activo" : ""}`}
-          onClick={() => cambiarModo("departamento")}
+          className={`filtro-tab ${modo === "explorar" ? "filtro-tab-activo" : ""}`}
+          onClick={() => setModo("explorar")}
         >
-          🏪 Departamento
-        </button>
-        <button
-          className={`filtro-tab ${modo === "categoria" ? "filtro-tab-activo" : ""}`}
-          onClick={() => cambiarModo("categoria")}
-        >
-          📂 Categoría
+          🗂️ Explorar{explorarActivo ? " ●" : ""}
         </button>
         <button
           className={`filtro-tab ${modo === "existencia" ? "filtro-tab-activo" : ""} ${filtroStock !== "todos" ? "filtro-tab-con-dato" : ""}`}
@@ -69,46 +124,110 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
           📦 Existencia{filtroStock !== "todos" ? " ●" : ""}
         </button>
         {hayFiltroActivo && (
-          <button className="filtro-limpiar" onClick={() => { onChange({}); onFiltroStockChange("todos") }}>
+          <button
+            className="filtro-limpiar"
+            onClick={() => { resetCascada(); setModo("nombre"); onChange({}); onFiltroStockChange("todos") }}
+          >
             ✕ Limpiar
           </button>
         )}
       </div>
 
-      {/* Chips de departamentos */}
-      {modo === "departamento" && datos && datos.departamentos.length > 0 && (
-        <div className="filtro-chips">
-          {datos.departamentos.map((dep) => (
-            <button
-              key={dep}
-              className={`filtro-chip ${filtros.departamento === dep ? "filtro-chip-activo" : ""}`}
-              onClick={() => seleccionarDepartamento(dep)}
-            >
-              {dep}
-            </button>
-          ))}
-        </div>
+      {/* ── Explorar: cascada Dept → Cat → Marca ── */}
+      {modo === "explorar" && (
+        <>
+          {!datos && <p className="filtro-cargando">Cargando…</p>}
+
+          {datos && deptActivo && (
+            <div className="filtro-breadcrumb">
+              <button className="filtro-bc-back" onClick={irAtras}>←</button>
+              <button
+                className={`filtro-bc-item ${!catActiva ? "filtro-bc-activo" : ""}`}
+                onClick={irADept}
+              >
+                {deptActivo.nombre}
+              </button>
+              {catActiva && (
+                <>
+                  <span className="filtro-bc-sep">›</span>
+                  <button
+                    className={`filtro-bc-item ${!marcaActiva ? "filtro-bc-activo" : ""}`}
+                    onClick={irACat}
+                  >
+                    {catActiva.nombre}
+                  </button>
+                </>
+              )}
+              {marcaActiva && (
+                <>
+                  <span className="filtro-bc-sep">›</span>
+                  <span className="filtro-bc-item filtro-bc-activo">{marcaActiva.nombre}</span>
+                </>
+              )}
+            </div>
+          )}
+
+          {/* Level 0: todos los departamentos */}
+          {datos && !deptActivo && (
+            <div className="filtro-chips">
+              {datos.depts.map(dept => (
+                <button
+                  key={dept.id}
+                  className="filtro-chip"
+                  onClick={() => seleccionarDept(dept)}
+                >
+                  {dept.nombre}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Level 1: categorías del departamento */}
+          {datos && deptActivo && !catActiva && (
+            <div className="filtro-chips">
+              {catsParaDept.length > 0
+                ? catsParaDept.map(cat => (
+                    <button
+                      key={cat.id}
+                      className="filtro-chip"
+                      onClick={() => seleccionarCat(cat)}
+                    >
+                      {cat.nombre}
+                    </button>
+                  ))
+                : <span className="filtro-cargando">Sin categorías en este departamento</span>}
+            </div>
+          )}
+
+          {/* Level 2: marcas de la categoría */}
+          {datos && catActiva && (
+            <div className="filtro-chips">
+              {marcasParaCat.length > 0
+                ? marcasParaCat.map(mar => (
+                    <button
+                      key={mar.id}
+                      className={`filtro-chip ${marcaActiva?.id === mar.id ? "filtro-chip-activo" : ""}`}
+                      onClick={() => seleccionarMarca(mar)}
+                    >
+                      {mar.nombre}
+                    </button>
+                  ))
+                : <span className="filtro-cargando">Sin marcas en esta categoría</span>}
+            </div>
+          )}
+        </>
       )}
 
-      {/* Chips de categorías */}
-      {modo === "categoria" && datos && datos.categorias.length > 0 && (
-        <div className="filtro-chips">
-          {datos.categorias.map((cat) => (
-            <button
-              key={cat.id}
-              className={`filtro-chip ${filtros.category_id === cat.id ? "filtro-chip-activo" : ""}`}
-              onClick={() => seleccionarCategoria(cat.id)}
-            >
-              {cat.nombre}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Chips de existencia */}
+      {/* ── Existencia ── */}
       {modo === "existencia" && (
         <div className="filtro-chips">
-          {([["todos", "Todos los productos"], ["con-stock", "✓ Con existencia"], ["sin-stock", "✗ Sin existencia"]] as [FiltroStock, string][]).map(([val, label]) => (
+          {(
+            [
+              ["todos", "Todos los productos"],
+              ["con-stock", "✓ Con existencia"],
+              ["sin-stock", "✗ Sin existencia"],
+            ] as [FiltroStock, string][]
+          ).map(([val, label]) => (
             <button
               key={val}
               className={`filtro-chip ${filtroStock === val ? "filtro-chip-activo" : ""}`}
@@ -118,10 +237,6 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
             </button>
           ))}
         </div>
-      )}
-
-      {(modo === "departamento" || modo === "categoria") && !datos && (
-        <p className="filtro-cargando">Cargando filtros…</p>
       )}
     </div>
   )

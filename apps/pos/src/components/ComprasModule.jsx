@@ -394,7 +394,8 @@ export default function ComprasModule() {
 
   async function ejecutarConfirmar() {
     // Guardar precios actualizados de todos los artículos antes de confirmar
-    await Promise.allSettled(rows.map((r) => guardarArticuloDesdeRow(r)))
+    const provNombre = proveedor?.nombre ?? ""
+    await Promise.allSettled(rows.map((r) => guardarArticuloDesdeRow(r, provNombre)))
 
     if (pagoModal.formaPago === "credito" && proveedor) {
       const lista = loadProveedores()
@@ -447,7 +448,7 @@ export default function ComprasModule() {
 
   // Al cambiar de fila mientras se edita, el panel permanece abierto y actualiza los datos
 
-  async function guardarArticuloDesdeRow(row) {
+  async function guardarArticuloDesdeRow(row, proveedorNombre) {
     if (!row?.articuloId || row.articuloId.startsWith("art-seed")) return
     await actualizarArticulo({
       id: row.articuloId,
@@ -455,6 +456,7 @@ export default function ComprasModule() {
       claveAlterna: row.claveAlterna || "",
       descripcion: row.descripcion,
       marca: row.marca || "",
+      ...(proveedorNombre !== undefined && { proveedor: proveedorNombre }),
       categoria: row.categoria || "",
       departamento: row.departamento || "",
       unidadCompra: row.unidadSat || "H87",

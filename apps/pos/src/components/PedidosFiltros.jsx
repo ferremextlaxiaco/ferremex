@@ -1,8 +1,7 @@
 import { useState, useEffect } from "react"
 import { Search, Zap, Loader } from "lucide-react"
-import { buscarCategorias, listarArticulos } from "../lib/client"
+import { listarCatalogos, listarArticulos } from "../lib/client"
 
-// Normaliza ArticuloPOS de la API al shape que usa el módulo (minimo, unidad, etc.)
 function normalizar(art) {
   return {
     ...art,
@@ -21,25 +20,27 @@ export default function PedidosFiltros({
   const [searchResults, setSearchResults] = useState([])
   const [searched,      setSearched]      = useState(false)
   const [searching,     setSearching]     = useState(false)
-  const [deptos,        setDeptos]        = useState([])
-  const [cats,          setCats]          = useState([])
-  const [marcas,        setMarcas]        = useState([])
+  const [taxonomia,     setTaxonomia]     = useState(null)
 
   useEffect(() => {
-    buscarCategorias()
-      .then(data => {
-        setDeptos((data.departamentos ?? []).sort())
-        setCats((data.categorias ?? []).map(c => c.nombre).sort())
-      })
-      .catch(() => {})
-
-    listarArticulos("a")
-      .then(arts => {
-        const unicas = [...new Set(arts.map(a => a.marca).filter(Boolean))].sort()
-        setMarcas(unicas)
-      })
-      .catch(() => {})
+    listarCatalogos().then(setTaxonomia).catch(() => {})
   }, [])
+
+  // Opciones derivadas en cascada
+  const deptItem   = taxonomia?.depts.find(d => d.nombre === filtros.departamento) ?? null
+  const catsOpts   = deptItem ? (taxonomia?.cats.filter(c => c.depId === deptItem.id) ?? []) : []
+  const catItem    = catsOpts.find(c => c.nombre === filtros.categoria) ?? null
+  const marcasOpts = catItem  ? (taxonomia?.marcas.filter(m => m.catId === catItem.id) ?? []) : []
+
+  function setDept(val) {
+    onFiltrosChange(prev => ({ ...prev, departamento: val, categoria: "", marca: "" }))
+  }
+  function setCat(val) {
+    onFiltrosChange(prev => ({ ...prev, categoria: val, marca: "" }))
+  }
+  function setMarca(val) {
+    onFiltrosChange(prev => ({ ...prev, marca: val }))
+  }
 
   async function doSearch() {
     const q = searchQ.trim()
@@ -57,8 +58,6 @@ export default function PedidosFiltros({
     }
   }
 
-  function set(key, val) { onFiltrosChange(prev => ({ ...prev, [key]: val })) }
-
   const addedIds = new Set(rows.map(r => r.articuloId))
 
   return (
@@ -72,7 +71,7 @@ export default function PedidosFiltros({
           role="switch"
           aria-checked={filtros.soloFaltantes}
           className={`pdx-toggle${filtros.soloFaltantes ? " on" : ""}`}
-          onClick={() => set("soloFaltantes", !filtros.soloFaltantes)}
+          onClick={() => onFiltrosChange(prev => ({ ...prev, soloFaltantes: !prev.soloFaltantes }))}
         >
           <span className="pdx-toggle-thumb" />
         </button>
@@ -80,29 +79,53 @@ export default function PedidosFiltros({
 
       <div className="pdx-filter-row">
         <span className="pdx-filter-label">Departamento</span>
-        <select className="pdx-select" value={filtros.departamento} onChange={e => set("departamento", e.target.value)}>
+        <select
+          className="pdx-select"
+          value={filtros.departamento}
+          onChange={e => setDept(e.target.value)}
+        >
           <option value="">Todos</option>
-          {deptos.map(d => <option key={d} value={d}>{d}</option>)}
+          {(taxonomia?.depts ?? []).map(d => (
+            <option key={d.id} value={d.nombre}>{d.nombre}</option>
+          ))}
         </select>
       </div>
 
       <div className="pdx-filter-row">
         <span className="pdx-filter-label">Categoría</span>
-        <select className="pdx-select" value={filtros.categoria} onChange={e => set("categoria", e.target.value)}>
+        <select
+          className="pdx-select"
+          value={filtros.categoria}
+          onChange={e => setCat(e.target.value)}
+          disabled={!filtros.departamento}
+        >
           <option value="">Todas</option>
-          {cats.map(c => <option key={c} value={c}>{c}</option>)}
+          {catsOpts.map(c => (
+            <option key={c.id} value={c.nombre}>{c.nombre}</option>
+          ))}
         </select>
       </div>
 
       <div className="pdx-filter-row">
         <span className="pdx-filter-label">Marca</span>
-        <select className="pdx-select" value={filtros.marca} onChange={e => set("marca", e.target.value)}>
+        <select
+          className="pdx-select"
+          value={filtros.marca}
+          onChange={e => setMarca(e.target.value)}
+          disabled={!filtros.categoria}
+        >
           <option value="">Todas</option>
-          {marcas.map(m => <option key={m} value={m}>{m}</option>)}
+          {marcasOpts.map(m => (
+            <option key={m.id} value={m.nombre}>{m.nombre}</option>
+          ))}
         </select>
       </div>
 
-      <button className="ar-btn-add" style={{ width: "100%", justifyContent: "center", gap: 6 }} onClick={onCargarFaltantes}>
+      <button
+        className="ar-btn-add"
+        style={{ width: "100%", justifyContent: "center", gap: 6 }}
+        onClick={onCargarFaltantes}
+      >
         <Zap size={14} /> Cargar faltantes
       </button>
 
@@ -124,7 +147,9 @@ export default function PedidosFiltros({
           disabled={searching}
           onClick={doSearch}
         >
-          {searching ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Search size={14} />}
+          {searching
+            ? <Loader size={14} style={{ animation: "spin 1s linear infinite" }} />
+            : <Search size={14} />}
         </button>
       </div>
 

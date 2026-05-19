@@ -68,7 +68,7 @@ function UnidadSatSelect({ value, onChange }) {
 }
 
 const EMPTY_FORM = {
-  clave: "", claveAlterna: "", descripcion: "", marca: "",
+  clave: "", claveAlterna: "", descripcion: "", marca: "", proveedor: "",
   categoria: "", departamento: "",
   unidadCompra: "H87", unidadVenta: "H87", factor: 1,
   aplicarIva: true,
@@ -240,6 +240,11 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
               onChange={(e) => f("marca", e.target.value)} placeholder="Ej: Truper, Urrea, Pretul" />
           </Field>
 
+          <Field label="Proveedor">
+            <input type="text" className="ar-input" value={form.proveedor}
+              onChange={(e) => f("proveedor", e.target.value)} placeholder="Ej: Truper, Cintac, Foset" />
+          </Field>
+
           <div className="ar-grid-2">
             <Field label="Categoría">
               <input type="text" className="ar-input" value={form.categoria}
@@ -359,13 +364,16 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
             )
           })()}
 
-          {/* Catálogo */}
-          <p className="ar-section-title">Catálogo</p>
+          {/* Fiscal */}
+          <p className="ar-section-title">Fiscal</p>
 
           <Field label="Clave SAT">
             <input type="text" className="ar-input" value={form.claveSat}
               onChange={(e) => f("claveSat", e.target.value)} placeholder="Ej: 31161501" />
           </Field>
+
+          {/* Catálogo */}
+          <p className="ar-section-title">Catálogo</p>
 
           <div className="ar-grid-2">
             <Field label="Inventario Mínimo">

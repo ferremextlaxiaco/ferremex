@@ -13,16 +13,6 @@ const PROVEEDORES = [
   { id: "prov-3", nombre: "Volteck",             telefono: "55-5123-4567",  dias_credito: 0  },
 ]
 
-const ARTICULOS = [
-  { id: "art-1", clave: "MT001", descripcion: 'Martillo de Carpintero 16 oz',       categoria: "Herramientas", departamento: "Manuales",     marca: "Truper",  existencia:  3, minimo: 10, unidad: "Pieza",  ultimoPrecioCompra:  85.50, proveedorId: "prov-1", thumbnail: null },
-  { id: "art-2", clave: "DS002", descripcion: 'Desarmador Phillips #2 x 6"',        categoria: "Herramientas", departamento: "Manuales",     marca: "Truper",  existencia:  8, minimo: 15, unidad: "Pieza",  ultimoPrecioCompra:  22.00, proveedorId: "prov-1", thumbnail: null },
-  { id: "art-3", clave: "CM003", descripcion: "Cinta Métrica 5m",                  categoria: "Medición",     departamento: "Instrumentos", marca: "Urrea",   existencia: 12, minimo: 10, unidad: "Pieza",  ultimoPrecioCompra:  45.00, proveedorId: "prov-2", thumbnail: null },
-  { id: "art-4", clave: "EX004", descripcion: "Extensión Eléctrica 10m",            categoria: "Electricidad", departamento: "Eléctrico",    marca: "Volteck", existencia:  2, minimo:  8, unidad: "Pieza",  ultimoPrecioCompra: 140.00, proveedorId: "prov-3", thumbnail: null },
-  { id: "art-5", clave: "TQ005", descripcion: "Taquetes Fischer #10 (bolsa 100)",   categoria: "Tornillería",  departamento: "Fijación",     marca: "Truper",  existencia:  5, minimo: 20, unidad: "Bolsa",  ultimoPrecioCompra:  38.00, proveedorId: "prov-1", thumbnail: null },
-  { id: "art-6", clave: "LL006", descripcion: 'Llave Stilson 14"',                 categoria: "Herramientas", departamento: "Plomería",     marca: "Urrea",   existencia:  1, minimo:  5, unidad: "Pieza",  ultimoPrecioCompra: 215.00, proveedorId: "prov-2", thumbnail: null },
-  { id: "art-7", clave: "FO007", descripcion: "Foco LED 9W E27",                   categoria: "Electricidad", departamento: "Iluminación",  marca: "Volteck", existencia:  0, minimo: 30, unidad: "Pieza",  ultimoPrecioCompra:  28.50, proveedorId: "prov-3", thumbnail: null },
-  { id: "art-8", clave: "BR008", descripcion: 'Broca para Metal HSS 1/4"',         categoria: "Herramientas", departamento: "Accesorios",   marca: "Truper",  existencia:  7, minimo: 15, unidad: "Pieza",  ultimoPrecioCompra:  18.00, proveedorId: "prov-1", thumbnail: null },
-]
 
 const HISTORIAL_MOCK = [
   {
@@ -518,7 +508,6 @@ export default function PedidosModule() {
           <PedidosFiltros
             filtros={filtros}
             onFiltrosChange={setFiltros}
-            articulos={ARTICULOS}
             rows={rows}
             searchQ={searchQ}
             setSearchQ={setSearchQ}

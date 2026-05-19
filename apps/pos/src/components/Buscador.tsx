@@ -69,8 +69,9 @@ export function Buscador() {
   }
 
   const resultadosFiltrados = resultados.filter((r) => {
-    if (filtroStock === "con-stock") return r.existencia > 0
-    if (filtroStock === "sin-stock") return r.existencia <= 0
+    if (filtroStock === "con-stock" && r.existencia <= 0) return false
+    if (filtroStock === "sin-stock" && r.existencia > 0) return false
+    if (filtros.marca && r.marca !== filtros.marca) return false
     return true
   })
 

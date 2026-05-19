@@ -17,6 +17,7 @@ export interface FiltrosBusqueda {
   q?: string
   category_id?: string
   departamento?: string
+  marca?: string
 }
 
 export interface CategoriasPOS {
@@ -80,6 +81,7 @@ export interface ArticuloPOS {
   precio3: number
   precio4: number
   claveSat: string
+  proveedor?: string
   inventarioMin: number
   inventarioMax: number
   localizacion: string
@@ -288,7 +290,7 @@ export async function guardarTicketConfig(config: TicketConfig): Promise<TicketC
 // ── Catálogos ─────────────────────────────────────────────────────────────────
 
 export interface CatalogosDept  { id: string; nombre: string; articulos: number }
-export interface CatalogosCat   { id: string; nombre: string; depId: string; articulos: number }
+export interface CatalogosCat   { id: string; nombre: string; depId: string; medusaId?: string; articulos: number }
 export interface CatalogosMarca { id: string; nombre: string; catId: string; articulos: number }
 
 export interface CatalogosData {

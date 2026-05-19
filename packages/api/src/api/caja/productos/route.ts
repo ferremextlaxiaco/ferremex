@@ -104,13 +104,30 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     // ── Búsqueda por texto / filtros ────────────────────────────────────────
 
     // Paso 1: cargar todos los productos (solo id + title + metadata, sin relaciones → rápido)
+    // Si hay categoryId, primero obtenemos los productIds de esa categoría porque
+    // listProducts no soporta filtro por category_id en Medusa 2.x.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const filtrosPaso1: any = {}
-    if (categoryId) filtrosPaso1.category_id = [categoryId]
+    let idsFiltroCategoria: string[] | null = null
+    if (categoryId) {
+      const cats = await productModule.listProductCategories(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { id: [categoryId] } as any,
+        { select: ["id"], relations: ["products"], take: 1 }
+      )
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      idsFiltroCategoria = ((cats[0] as any)?.products ?? []).map((p: any) => p.id) as string[]
+      if (idsFiltroCategoria.length === 0) {
+        res.json([])
+        return
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filtrosPaso1: any = idsFiltroCategoria ? { id: idsFiltroCategoria } : {}
 
     const todosLosProductos = await productModule.listProducts(
       filtrosPaso1,
-      { select: ["id", "title", "metadata"], take: 99999 }
+      { select: ["id", "title", "metadata"], take: idsFiltroCategoria ? idsFiltroCategoria.length + 10 : 99999 }
     )
 
     // Paso 2: filtrar en JS (fonética multi-palabra + departamento)

@@ -459,13 +459,13 @@ export default function ArticlesModule() {
                 <p className="ar-detail-section-title">Identificación</p>
                 <div className="ar-detail-rows">
                   {[
-                    ["Descripción",  selected.descripcion || "—"],
-                    ["Marca",        selected.marca || "—"],
-                    ["Categoría",    selected.categoria || "—"],
-                    ["Departamento", selected.departamento || "—"],
-                    ["Clave",        <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
+                    ["Descripción",   selected.descripcion || "—"],
+                    ["Marca",         selected.marca || "—"],
+                    ["Proveedor",     selected.proveedor || "—"],
+                    ["Categoría",     selected.categoria || "—"],
+                    ["Departamento",  selected.departamento || "—"],
+                    ["Clave",         <span style={{ fontFamily: "monospace" }}>{selected.clave || "—"}</span>],
                     ["Clave Alterna", selected.claveAlterna || "—"],
-                    ["Clave SAT",    selected.claveSat || "—"],
                   ].map(([label, value]) => (
                     <div key={label} className="ar-detail-row">
                       <span className="ar-detail-label">{label}</span>
@@ -498,6 +498,7 @@ export default function ArticlesModule() {
                     ["IVA",           selected.aplicarIva ? "Aplica IVA 16%" : "Exento"],
                     ["Precio Compra", `$${(selected.precioCompra ?? 0).toFixed(2)}`],
                     ["Precio Neto",   selected.precioNeto ? "Sí (sin IVA)" : "No"],
+                    ["Clave SAT",     selected.claveSat || "—"],
                   ].map(([label, value]) => (
                     <div key={label} className="ar-detail-row">
                       <span className="ar-detail-label">{label}</span>
