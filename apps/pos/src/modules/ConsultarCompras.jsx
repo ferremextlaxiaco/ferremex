@@ -79,7 +79,7 @@ function EstadoBadge({ estado }) {
 
 export default function ConsultarCompras() {
   const [purchases,       setPurchases]       = useState(() => cargarHistorial())
-  const [filters,         setFilters]         = useState({ fechaInicio: "", fechaFin: "", tipo: "", estado: "" })
+  const [filters,         setFilters]         = useState({ fechaInicio: "", fechaFin: "", tipo: "", estado: "", proveedor: "", categoria: "", marca: "" })
   const [searchInput,     setSearchInput]     = useState("")
   const [appliedSearch,   setAppliedSearch]   = useState("")
   const [sortCol,         setSortCol]         = useState("fecha")
@@ -120,6 +120,23 @@ export default function ConsultarCompras() {
     return () => document.removeEventListener("keydown", onKey)
   }, [selectedId, cancelModal, articleModal, fullscreen])
 
+  // ── Opciones únicas para los selects de filtro ───────────────────────────
+
+  const proveedoresOpts = useMemo(() =>
+    [...new Set(purchases.map(p => p.proveedor).filter(Boolean))].sort((a, b) => a.localeCompare(b, "es")),
+  [purchases])
+
+  const categoriasOpts = useMemo(() =>
+    [...new Set(purchases.flatMap(p => (p.articulos ?? []).map(a => a.categoria).filter(Boolean)))].sort((a, b) => a.localeCompare(b, "es")),
+  [purchases])
+
+  const marcasOpts = useMemo(() => {
+    const cats = filters.categoria
+      ? new Set(purchases.flatMap(p => (p.articulos ?? []).filter(a => a.categoria === filters.categoria).map(a => a.marca).filter(Boolean)))
+      : new Set(purchases.flatMap(p => (p.articulos ?? []).map(a => a.marca).filter(Boolean)))
+    return [...cats].sort((a, b) => a.localeCompare(b, "es"))
+  }, [purchases, filters.categoria])
+
   // ── Filtered + sorted ─────────────────────────────────────────────────────
 
   const filtered = useMemo(() => {
@@ -128,6 +145,9 @@ export default function ConsultarCompras() {
     if (filters.fechaFin)    r = r.filter(p => p.fecha <= filters.fechaFin)
     if (filters.tipo)        r = r.filter(p => p.tipo === filters.tipo)
     if (filters.estado)      r = r.filter(p => p.estado === filters.estado)
+    if (filters.proveedor)   r = r.filter(p => p.proveedor === filters.proveedor)
+    if (filters.categoria)   r = r.filter(p => (p.articulos ?? []).some(a => a.categoria === filters.categoria))
+    if (filters.marca)       r = r.filter(p => (p.articulos ?? []).some(a => a.marca === filters.marca))
     if (appliedSearch.trim()) {
       const q = appliedSearch.trim().toLowerCase()
       r = r.filter(p =>
@@ -148,7 +168,7 @@ export default function ConsultarCompras() {
 
   const selectedPurchase  = purchases.find(p => p.id === selectedId) ?? null
   const panelOpen         = selectedId !== null
-  const anyFilterActive   = !!(filters.fechaInicio || filters.fechaFin || filters.tipo || filters.estado || appliedSearch.trim())
+  const anyFilterActive   = !!(filters.fechaInicio || filters.fechaFin || filters.tipo || filters.estado || filters.proveedor || filters.categoria || filters.marca || appliedSearch.trim())
   const totalFiltrado     = filtered.reduce((s, p) => s + p.total, 0)
   const ivaFiltrado       = filtered.reduce((s, p) => s + p.iva, 0)
 
@@ -157,6 +177,9 @@ export default function ConsultarCompras() {
     filters.fechaFin    && { key: "fechaFin",    label: `Hasta: ${fmtDate(filters.fechaFin)}` },
     filters.tipo        && { key: "tipo",        label: `Tipo: ${filters.tipo}` },
     filters.estado      && { key: "estado",      label: `Estado: ${filters.estado}` },
+    filters.proveedor   && { key: "proveedor",   label: `Prov: ${filters.proveedor}` },
+    filters.categoria   && { key: "categoria",   label: `Cat: ${filters.categoria}` },
+    filters.marca       && { key: "marca",       label: `Marca: ${filters.marca}` },
     appliedSearch.trim()&& { key: "search",      label: `Búsqueda: "${appliedSearch}"` },
   ].filter(Boolean)
 
@@ -165,7 +188,7 @@ export default function ConsultarCompras() {
   function applySearch() { setAppliedSearch(searchInput) }
 
   function clearAll() {
-    setFilters({ fechaInicio: "", fechaFin: "", tipo: "", estado: "" })
+    setFilters({ fechaInicio: "", fechaFin: "", tipo: "", estado: "", proveedor: "", categoria: "", marca: "" })
     setSearchInput("")
     setAppliedSearch("")
   }
@@ -283,6 +306,31 @@ export default function ConsultarCompras() {
             <option value="Recibida">Recibida</option>
             <option value="Cancelada">Cancelada</option>
           </select>
+
+          {proveedoresOpts.length > 0 && (
+            <select value={filters.proveedor} onChange={e => setFilters(f => ({ ...f, proveedor: e.target.value }))} style={{ ...INPUT_STYLE, paddingRight: 6 }}>
+              <option value="">Proveedor: Todos</option>
+              {proveedoresOpts.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          )}
+
+          {categoriasOpts.length > 0 && (
+            <select
+              value={filters.categoria}
+              onChange={e => setFilters(f => ({ ...f, categoria: e.target.value, marca: "" }))}
+              style={{ ...INPUT_STYLE, paddingRight: 6 }}
+            >
+              <option value="">Categoría: Todas</option>
+              {categoriasOpts.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          )}
+
+          {marcasOpts.length > 0 && (
+            <select value={filters.marca} onChange={e => setFilters(f => ({ ...f, marca: e.target.value }))} style={{ ...INPUT_STYLE, paddingRight: 6 }}>
+              <option value="">Marca: Todas</option>
+              {marcasOpts.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+          )}
 
           {anyFilterActive && (
             <button

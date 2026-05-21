@@ -45,9 +45,9 @@
 
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
-| ferremex-admin | 18344 | 5h | 0 | 55.7 MB |
-| ferremex-api | 18368 | 5h | 0 | 55.6 MB |
-| ferremex-pos | 18388 | 5h | 0 | 56.1 MB |
+| ferremex-admin | 18344 | 8h | 0 | 27.5 MB |
+| ferremex-api | 18368 | 8h | 0 | 27.7 MB |
+| ferremex-pos | 18388 | 8h | 0 | 27.8 MB |
 
 ### Acceso al sistema
 
@@ -348,3 +348,52 @@ en `packages/api/src/api/middlewares.ts`.
 - **Bug fix: stock no se descontaba al cancelar compra**
   → Fix: `confirmCancel` en ConsultarCompras ahora llama `incrementarInventario` con `delta = -cantidad`
     para revertir exactamente las unidades que entró la compra cancelada
+
+### Sesión 2026-05-21 (continuación) — Módulo Pedidos OC + mejoras UI
+
+- **Generador de Orden de Compra (OC)** en módulo Pedidos:
+  → Nuevo botón "Generar OC" en toolbar (naranja, deshabilitado si no hay artículos)
+  → `OCConfirmModal.jsx`: modal con selector de proveedor (pre-llenado), fecha entrega (+7 días default),
+    toggle "Incluir precio unitario" (default ON), spinner al generar, estado post-generación con botón WhatsApp
+  → `OCDocument.jsx`: PDF carta con `@react-pdf/renderer` — 4 zonas:
+    - Zone 1: logo "FM" naranja + datos Ferremex + "ORDEN DE COMPRA" + OC-YYYYMMDD-###
+    - Zone 2: barra gris con datos del proveedor
+    - Zone 3: tabla de artículos (15/pág 1, 20/pág sig.) con imagen o placeholder llave inglesa SVG,
+      badge "LIBRE" ámbar para artículos libres, columna precio opcional
+    - Zone 4: notas (izq), total renglones naranja grande (centro), firma (der)
+  → Contador OC en localStorage `ferremex_oc_counter` { date, seq }, se reinicia cada día
+  → Imágenes pre-fetched como base64 data URIs antes de generar PDF
+  → PDF abre en nueva pestaña; botón WhatsApp con fallback web.whatsapp.com
+  → `@react-pdf/renderer@3.4.4` instalado en `apps/pos/`; `optimizeDeps.exclude` en vite.config.ts
+  → `ajustarInventario()` función nueva en `client.ts` (usa `nueva_cantidad` absoluta)
+
+- **Artículos libres en Pedidos** (`PedidosTabla.jsx`):
+  → Botón "+ Agregar artículo libre" debajo de la tabla
+  → Formulario inline: imagen (archivo o URL), SKU opcional, descripción (req, 120 chars), UOM, cantidad, notas
+  → Filas libres con fondo naranja suave + badge "LIBRE"; confirmación de borrado inline
+
+- **Panel "Pedidos Recientes" eliminado** de `PedidosTabla` (el usuario lo pidió)
+
+- **Previsualización de pedido** (`PedidosPreview.jsx`) — pantalla completa:
+  → Eliminado el overlay oscuro; ahora fondo blanco, toolbar con estilo del admin
+  → Fuente en punto medio (19px base): logo 32px, tabla 17px, encabezados 14px
+  → Imágenes 64×64px, SKU a 17px, información de tabla centrada, firma eliminada del footer
+  → Fix `.pdx-preview-overlay`: sin fondo oscuro; `.pdx-sheet`: width 100%, sin sombra
+
+- **ConsultarCompras** — filtros nuevos:
+  → Dropdowns de Proveedor, Categoría y Marca derivados dinámicamente del historial
+  → Cascada: al cambiar Categoría se resetea Marca; solo aparecen si hay opciones disponibles
+  → ComprasModule guarda `categoria`, `departamento`, `marca` en cada artículo al confirmar compra
+
+- **Módulo Artículos** — paginación:
+  → `PAGE_SIZE = 40` artículos por página (evita renderizar 15,000 items de Truper de golpe)
+  → Barra de paginación sticky al fondo: "‹ Anterior | Página X de Y | Siguiente ›"
+  → Subtítulo muestra rango: "1–40 de 15,689 artículos · Truper"
+  → Al cambiar página: deselecciona artículo activo y hace scroll al tope
+
+- **Bug fix: Ajuste de Inventario en blanco**
+  → Causa raíz 1: `import.meta.env.BASE_URL` = `/pos` (sin slash) concatenado directo daba
+    `/posajuste-inventario.html`; Vite devolvía el SPA que React Router no podía rutear
+  → Causa raíz 2: iframe con `height: 100%` dentro de contenedor sin altura explícita
+  → Fix: `src="/pos/ajuste-inventario.html"` hardcodeado + `height: calc(100vh - 56px)`
+  → El módulo HTML original (803 líneas, Bootstrap) sigue intacto en `apps/pos/public/`

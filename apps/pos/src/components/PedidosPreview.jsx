@@ -102,11 +102,12 @@ export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose,
 
   return (
     <div className="pdx-preview-overlay">
-      {/* Toolbar — outside printable area */}
-      <div className="pdx-preview-toolbar">
+      {/* Toolbar */}
+      <div className="pdx-preview-toolbar" style={{ justifyContent: "flex-start" }}>
         <button className="ar-btn-action" onClick={onClose}>
           <X size={14} /> Cerrar
         </button>
+        <div className="ar-toolbar-divider" />
         <button className="ar-btn-action" onClick={handlePrint}>
           <Printer size={14} /> Imprimir
         </button>
@@ -154,28 +155,28 @@ export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose,
           <table className="pdx-sheet-table">
             <thead>
               <tr>
-                <th className="r" style={{ width: 28 }}>#</th>
-                <th style={{ width: 36 }} />
-                <th>SKU</th>
-                <th>Descripción</th>
-                <th>Unidad de medida</th>
-                <th className="r">Cant. solicitada</th>
+                <th style={{ textAlign: "center", width: 28 }}>#</th>
+                <th style={{ textAlign: "center", width: 36 }} />
+                <th style={{ textAlign: "center" }}>SKU</th>
+                <th style={{ textAlign: "center" }}>Descripción</th>
+                <th style={{ textAlign: "center" }}>Unidad de medida</th>
+                <th style={{ textAlign: "center" }}>Cant. solicitada</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row, i) => (
                 <tr key={row._id}>
-                  <td className="r" style={{ color: "#888" }}>{i + 1}</td>
-                  <td>
+                  <td style={{ textAlign: "center", color: "#888" }}>{i + 1}</td>
+                  <td style={{ textAlign: "center" }}>
                     {row.thumbnail
-                      ? <img src={row.thumbnail} alt="" style={{ width: 28, height: 28, objectFit: "cover", borderRadius: 3 }} />
-                      : <div className="pdx-sheet-thumb"><Package size={12} /></div>
+                      ? <img src={row.thumbnail} alt="" style={{ width: 64, height: 64, objectFit: "cover", borderRadius: 5 }} />
+                      : <div className="pdx-sheet-thumb"><Package size={26} /></div>
                     }
                   </td>
-                  <td style={{ fontFamily: "monospace", color: "#F96302", fontSize: 11 }}>{row.clave}</td>
-                  <td>{row.descripcion}</td>
-                  <td style={{ color: "#666" }}>{row.unidad}</td>
-                  <td className="r">{row.cantidad}</td>
+                  <td style={{ textAlign: "center", fontFamily: "monospace", color: "#F96302", fontSize: 17 }}>{row.clave}</td>
+                  <td style={{ textAlign: "center" }}>{row.descripcion}</td>
+                  <td style={{ textAlign: "center", color: "#666" }}>{row.unidad}</td>
+                  <td style={{ textAlign: "center", fontWeight: 600 }}>{row.cantidad}</td>
                 </tr>
               ))}
             </tbody>
@@ -186,9 +187,6 @@ export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose,
             <div className="pdx-sheet-totals">
               <span>Total de artículos: <strong>{totalArts}</strong></span>
               <span>Total de piezas: <strong>{totalPiezas}</strong></span>
-            </div>
-            <div className="pdx-sheet-firma">
-              Firma: ___________________________
             </div>
           </div>
         </div>

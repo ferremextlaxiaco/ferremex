@@ -141,6 +141,15 @@ export async function eliminarArticulo(id: string): Promise<void> {
   await apiFetch(`/caja/articulos?id=${id}`, { method: "DELETE" })
 }
 
+export async function ajustarInventario(
+  ajustes: { sku: string; nueva_cantidad: number }[]
+): Promise<{ ok: boolean; actualizados: number; errores: string[] }> {
+  return apiFetch("/caja/ajuste-inventario", {
+    method: "POST",
+    body: JSON.stringify({ ajustes }),
+  })
+}
+
 export async function incrementarInventario(
   ajustes: { sku: string; delta: number }[]
 ): Promise<{ ok: boolean; actualizados: number; errores: string[] }> {

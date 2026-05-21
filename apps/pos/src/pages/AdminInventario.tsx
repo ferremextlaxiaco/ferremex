@@ -3,7 +3,12 @@ export function AdminInventario() {
     <iframe
       src="/pos/ajuste-inventario.html"
       title="Ajuste de Inventario"
-      style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+      style={{
+        display: "block",
+        width: "100%",
+        height: "calc(100vh - 56px)",
+        border: "none",
+      }}
     />
   )
 }

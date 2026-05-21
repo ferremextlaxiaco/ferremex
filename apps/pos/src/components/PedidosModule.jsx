@@ -1,8 +1,9 @@
 import { useState, useRef } from "react"
-import { Plus, Save, Trash2, ChevronDown } from "lucide-react"
+import { Plus, Save, Trash2, ChevronDown, FileText } from "lucide-react"
 import PedidosFiltros  from "./PedidosFiltros"
 import PedidosTabla    from "./PedidosTabla"
 import PedidosPreview  from "./PedidosPreview"
+import OCConfirmModal  from "./OCConfirmModal"
 import { listarFaltantes } from "../lib/client"
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
@@ -70,6 +71,53 @@ function uid() {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
+}
+
+// ── OC number counter (localStorage, resets daily) ────────────────────────────
+
+function getNextOCNumber() {
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, "")
+  let stored
+  try { stored = JSON.parse(localStorage.getItem("ferremex_oc_counter") ?? "{}") } catch { stored = {} }
+  const count = stored.date === today ? (stored.count + 1) : 1
+  localStorage.setItem("ferremex_oc_counter", JSON.stringify({ date: today, count }))
+  return `OC-${today}-${String(count).padStart(3, "0")}`
+}
+
+// ── Image pre-loader ──────────────────────────────────────────────────────────
+
+async function imageToDataUri(url) {
+  if (!url) return null
+  // If it's already a data URI (e.g. from free item file upload), return as-is
+  if (url.startsWith("data:")) return url
+  try {
+    const abs  = url.startsWith("http") ? url : window.location.origin + url
+    const resp = await fetch(abs)
+    if (!resp.ok) return null
+    const blob = await resp.blob()
+    return await new Promise(res => {
+      const r = new FileReader()
+      r.onload  = () => res(r.result)
+      r.onerror = () => res(null)
+      r.readAsDataURL(blob)
+    })
+  } catch { return null }
+}
+
+async function buildImageMap(allItems) {
+  const map = {}
+  await Promise.all(allItems.map(async item => {
+    const url = item.thumbnail || item.imagenUrl || null
+    if (url) {
+      const key = item._id || item.articuloId
+      map[key] = await imageToDataUri(url)
+      // Also key by articuloId for catalog items
+      if (item.articuloId && item.articuloId !== key) {
+        map[item.articuloId] = map[key]
+      }
+    }
+  }))
+  return map
 }
 
 // ── Status badge (shared) ─────────────────────────────────────────────────────
@@ -249,6 +297,7 @@ function MisPedidos({ pedidos, onStatusChange }) {
 export default function PedidosModule() {
   const [activeTab,   setActiveTab]   = useState("nuevo")
   const [rows,        setRows]        = useState([])
+  const [freeItems,   setFreeItems]   = useState([])
   const [proveedor,   setProveedor]   = useState(null)
   const [fecha,       setFecha]       = useState(todayISO)
   const [status,      setStatus]      = useState("borrador")
@@ -260,6 +309,8 @@ export default function PedidosModule() {
   const [showFalt,       setShowFalt]       = useState(false)
   const [faltantes,      setFaltantes]      = useState([])
   const [cargandoFalt,   setCargandoFalt]   = useState(false)
+  const [showOCModal, setShowOCModal] = useState(false)
+  const [ocNumber,    setOcNumber]    = useState(null)
   const [filtros,     setFiltros]     = useState({
     soloFaltantes: true, departamento: "", categoria: "", marca: "",
   })
@@ -275,6 +326,7 @@ export default function PedidosModule() {
 
   function resetOrder() {
     setRows([])
+    setFreeItems([])
     setProveedor(null)
     setFecha(todayISO())
     setStatus("borrador")
@@ -319,19 +371,65 @@ export default function PedidosModule() {
     setRows(prev => prev.map(r => r._id === id ? { ...r, cantidad: Math.max(1, qty) } : r))
   }
 
+  // ── Free item handlers ────────────────────────────────────────────────────
+
+  function addFreeItem(item) {
+    setFreeItems(prev => [...prev, { _id: uid(), _isFree: true, ultimoPrecioCompra: 0, ...item }])
+    showToast("Artículo libre agregado")
+  }
+
+  function removeFreeItem(id) {
+    setFreeItems(prev => prev.filter(f => f._id !== id))
+    showToast("Artículo libre eliminado")
+  }
+
+  // ── OC generation ─────────────────────────────────────────────────────────
+
+  async function handleGenerarOC(prefs) {
+    const oc = getNextOCNumber()
+    setOcNumber(oc)
+
+    const allItems = [...rows, ...freeItems]
+    const imageMap = await buildImageMap(allItems)
+
+    // Lazy-load @react-pdf/renderer to avoid blocking initial bundle
+    const { pdf }        = await import("@react-pdf/renderer")
+    const { OCDocument } = await import("./OCDocument")
+
+    const blob = await pdf(
+      <OCDocument
+        rows={rows}
+        freeItems={freeItems}
+        imageMap={imageMap}
+        proveedor={prefs.proveedor}
+        ocNumber={oc}
+        fechaEmision={new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" })}
+        fechaEntrega={prefs.fechaEntrega}
+        mostrarPrecios={prefs.mostrarPrecios}
+      />
+    ).toBlob()
+
+    const url = URL.createObjectURL(blob)
+    window.open(url, "_blank")
+    return oc  // Returned to OCConfirmModal to show in "generated" state
+  }
+
+  // ── Other handlers ────────────────────────────────────────────────────────
+
   function handlePonerEnEspera() {
-    if (rows.length === 0) return
-    setEspera(prev => [...prev, { id: uid(), rows, proveedor, fecha, folio, status }])
+    if (rows.length === 0 && freeItems.length === 0) return
+    setEspera(prev => [...prev, { id: uid(), rows, freeItems, proveedor, fecha, folio, status }])
     resetOrder()
     showToast("Pedido puesto en espera")
     setShowEspera(false)
   }
 
   function handleRetomar(item) {
-    if (rows.length > 0) {
-      setEspera(prev => [...prev, { id: uid(), rows, proveedor, fecha, folio, status }])
+    if (rows.length > 0 || freeItems.length > 0) {
+      setEspera(prev => [...prev, { id: uid(), rows, freeItems, proveedor, fecha, folio, status }])
     }
     setRows(item.rows)
+    setFreeItems(item.freeItems ?? [])
     setProveedor(item.proveedor)
     setFecha(item.fecha)
     setFolio(item.folio)
@@ -342,11 +440,15 @@ export default function PedidosModule() {
   }
 
   function handleGuardar() {
-    if (rows.length === 0 || !proveedor) return
+    if ((rows.length === 0 && freeItems.length === 0) || !proveedor) return
+    const allItems = [
+      ...rows.map(r => ({ clave: r.clave, descripcion: r.descripcion, cantidad: r.cantidad })),
+      ...freeItems.map(f => ({ clave: f.clave, descripcion: f.descripcion + " [libre]", cantidad: f.cantidad })),
+    ]
     const ped = {
       id: uid(), folio, fecha,
       proveedor: proveedor.nombre, proveedorId: proveedor.id,
-      articulos: rows.map(r => ({ clave: r.clave, descripcion: r.descripcion, cantidad: r.cantidad })),
+      articulos: allItems,
       status,
     }
     setPedidos(prev => [ped, ...prev])
@@ -387,10 +489,11 @@ export default function PedidosModule() {
     }
   }
 
-  const totalArticulos = rows.length
-  const totalPiezas    = rows.reduce((s, r) => s + r.cantidad, 0)
-  const canSave        = rows.length > 0 && !!proveedor
-  const canShare       = rows.length > 0 && !!proveedor
+  const totalArticulos = rows.length + freeItems.length
+  const totalPiezas    = [...rows, ...freeItems].reduce((s, r) => s + r.cantidad, 0)
+  const canSave        = (rows.length > 0 || freeItems.length > 0) && !!proveedor
+  const canShare       = (rows.length > 0 || freeItems.length > 0) && !!proveedor
+  const hasItems       = rows.length > 0 || freeItems.length > 0
 
   return (
     <div className="pdx-root">
@@ -444,6 +547,19 @@ export default function PedidosModule() {
 
         <div className="ar-toolbar-divider" />
 
+        {/* Generar OC button */}
+        <button
+          className="ar-btn-add"
+          style={{ background: "var(--at-orange)", borderColor: "var(--at-orange)" }}
+          disabled={!hasItems}
+          title={!hasItems ? "Agrega artículos al pedido primero" : undefined}
+          onClick={() => setShowOCModal(true)}
+        >
+          <FileText size={14} /> Generar OC
+        </button>
+
+        <div className="ar-toolbar-divider" />
+
         <button className="ar-btn-add" onClick={resetOrder}>
           <Plus size={14} /> Nuevo pedido
         </button>
@@ -454,7 +570,7 @@ export default function PedidosModule() {
 
         <div className="ar-toolbar-divider" />
 
-        <button className="ar-btn-action ar-btn-danger" disabled={rows.length === 0} onClick={handleCancelar}>
+        <button className="ar-btn-action ar-btn-danger" disabled={!hasItems} onClick={handleCancelar}>
           <Trash2 size={14} /> Cancelar pedido
         </button>
       </div>
@@ -462,7 +578,7 @@ export default function PedidosModule() {
       {/* Toast */}
       {toast && <div className={`pdx-toast${toast.tipo ? " " + toast.tipo : ""}`}>{toast.msg}</div>}
 
-      {/* Faltantes modal */}
+      {/* Faltantes modal — loading */}
       {cargandoFalt && (
         <div className="pdx-modal-overlay">
           <div className="pdx-modal" style={{ width: 280, minHeight: "auto", padding: "32px 24px", alignItems: "center", gap: 16 }}>
@@ -502,6 +618,18 @@ export default function PedidosModule() {
         />
       )}
 
+      {/* OC Confirm Modal */}
+      {showOCModal && (
+        <OCConfirmModal
+          open={showOCModal}
+          proveedores={PROVEEDORES}
+          initialProveedor={proveedor}
+          ocNumber={ocNumber}
+          onClose={() => { setShowOCModal(false); setOcNumber(null) }}
+          onGenerate={handleGenerarOC}
+        />
+      )}
+
       {/* Content */}
       {activeTab === "nuevo" ? (
         <div className="pdx-body">
@@ -516,6 +644,9 @@ export default function PedidosModule() {
           />
           <PedidosTabla
             rows={rows}
+            freeItems={freeItems}
+            onAddFreeItem={addFreeItem}
+            onRemoveFreeItem={removeFreeItem}
             proveedor={proveedor}
             proveedores={PROVEEDORES}
             onProveedorChange={setProveedor}
@@ -529,9 +660,7 @@ export default function PedidosModule() {
             totalPiezas={totalPiezas}
             onPreview={() => setShowPreview(true)}
             canShare={canShare}
-            historial={pedidos}
             folio={folio}
-            onShared={handleShared}
           />
         </div>
       ) : (

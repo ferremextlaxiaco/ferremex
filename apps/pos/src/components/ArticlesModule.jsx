@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react"
+import { useState, useRef, useCallback, useEffect, useMemo } from "react"
 import {
   listarArticulos,
   listarArticulosDeCatalogo,
@@ -61,6 +61,8 @@ function IconFilter() {
   )
 }
 
+const PAGE_SIZE = 40
+
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ArticlesModule() {
@@ -84,8 +86,16 @@ export default function ArticlesModule() {
   const [filterCat,    setFilterCat]    = useState("")  // cat-id
   const [filterMarca,  setFilterMarca]  = useState("")  // mar-id
 
+  const [page, setPage] = useState(0)
+  const listPanelRef = useRef(null)
   const claveCounter = useRef(1)
   const selected = articles.find((a) => a.id === selectedId) ?? null
+
+  const totalPages  = Math.max(1, Math.ceil(articles.length / PAGE_SIZE))
+  const pagedArticles = useMemo(
+    () => articles.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [articles, page]
+  )
 
   // Cargar taxonomía al montar (para los selects en cascada)
   useEffect(() => {
@@ -139,6 +149,7 @@ export default function ArticlesModule() {
         if (mar) data = data.filter(a => a.marca === mar)
       }
       setArticles(data)
+      setPage(0)
     } catch (e) {
       setError(e.message ?? "Error al cargar artículos")
     } finally {
@@ -189,6 +200,13 @@ export default function ArticlesModule() {
   function handleCatChange(e) {
     setFilterCat(e.target.value)
     setFilterMarca("")
+  }
+
+  function goPage(delta) {
+    const np = Math.min(Math.max(page + delta, 0), totalPages - 1)
+    setPage(np)
+    setSelectedId(null)
+    listPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" })
   }
 
   function limpiarFiltros() {
@@ -245,7 +263,10 @@ export default function ArticlesModule() {
     if (loading) return "Buscando…"
     if (!hasBuscado) return " "
     const n = articles.length
-    const parts = [`${n} artículo${n !== 1 ? "s" : ""}`]
+    if (n === 0) return "Sin resultados"
+    const desde = page * PAGE_SIZE + 1
+    const hasta = Math.min((page + 1) * PAGE_SIZE, n)
+    const parts = [`${desde}–${hasta} de ${n} artículo${n !== 1 ? "s" : ""}`]
     if (depNombre) parts.push(depNombre)
     if (catNombre) parts.push(catNombre)
     if (marNombre) parts.push(marNombre)
@@ -365,7 +386,7 @@ export default function ArticlesModule() {
       <div className="ar-content">
 
         {/* Panel izquierdo — lista */}
-        <div className="ar-list-panel">
+        <div className="ar-list-panel" ref={listPanelRef}>
           {loading ? (
             <p className="ar-empty">Buscando artículos…</p>
           ) : !hasBuscado ? (
@@ -377,32 +398,59 @@ export default function ArticlesModule() {
               {depNombre ? ` en ${depNombre}` : ""}
               {catNombre ? ` › ${catNombre}` : ""}
             </p>
-          ) : articles.map((a) => {
-            const sel = a.id === selectedId
-            return (
-              <div key={a.id}
-                className={`ar-list-item${sel ? " selected" : ""}`}
-                onClick={() => setSelectedId((prev) => prev === a.id ? null : a.id)}
-              >
-                <div className="ar-list-thumb">
-                  {a.thumbnail && <img src={a.thumbnail} alt="" />}
+          ) : (
+            <>
+              {pagedArticles.map((a) => {
+                const sel = a.id === selectedId
+                return (
+                  <div key={a.id}
+                    className={`ar-list-item${sel ? " selected" : ""}`}
+                    onClick={() => setSelectedId((prev) => prev === a.id ? null : a.id)}
+                  >
+                    <div className="ar-list-thumb">
+                      {a.thumbnail && <img src={a.thumbnail} alt="" />}
+                    </div>
+                    <div className="ar-list-info">
+                      <p className="ar-list-code">{a.clave}</p>
+                      <p className="ar-list-name">{a.descripcion}</p>
+                      <p className="ar-list-cat">
+                        {[a.departamento, a.categoria, a.marca].filter(Boolean).join(" › ")}
+                      </p>
+                    </div>
+                    <div className="ar-list-right">
+                      <p className="ar-list-price">${(a.aplicarIva ? a.precio1 * 1.16 : a.precio1).toFixed(2)}</p>
+                      <p className={`ar-list-stock${(a.existencia ?? 0) > 0 ? " ok" : (a.existencia ?? 0) < 0 ? " neg" : " zero"}`}>
+                        {a.existencia ?? 0} en stock
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
+
+              {/* Paginación */}
+              {totalPages > 1 && (
+                <div className="ar-pagination">
+                  <button
+                    className="ar-pag-btn"
+                    disabled={page === 0}
+                    onClick={() => goPage(-1)}
+                  >
+                    ‹ Anterior
+                  </button>
+                  <span className="ar-pag-info">
+                    Página {page + 1} de {totalPages}
+                  </span>
+                  <button
+                    className="ar-pag-btn"
+                    disabled={page >= totalPages - 1}
+                    onClick={() => goPage(1)}
+                  >
+                    Siguiente ›
+                  </button>
                 </div>
-                <div className="ar-list-info">
-                  <p className="ar-list-code">{a.clave}</p>
-                  <p className="ar-list-name">{a.descripcion}</p>
-                  <p className="ar-list-cat">
-                    {[a.departamento, a.categoria, a.marca].filter(Boolean).join(" › ")}
-                  </p>
-                </div>
-                <div className="ar-list-right">
-                  <p className="ar-list-price">${(a.aplicarIva ? a.precio1 * 1.16 : a.precio1).toFixed(2)}</p>
-                  <p className={`ar-list-stock${(a.existencia ?? 0) > 0 ? " ok" : (a.existencia ?? 0) < 0 ? " neg" : " zero"}`}>
-                    {a.existencia ?? 0} en stock
-                  </p>
-                </div>
-              </div>
-            )
-          })}
+              )}
+            </>
+          )}
         </div>
 
         {/* Panel derecho — detalle */}
