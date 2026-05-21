@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { listarArticulos, actualizarArticulo } from "../lib/client"
+import { listarArticulos, actualizarArticulo, incrementarInventario } from "../lib/client"
 import { loadProveedores, saveProveedores } from "../lib/proveedores"
 import ComprasTable from "./ComprasTable"
 import ComprasDetailPanel from "./ComprasDetailPanel"
@@ -15,6 +15,18 @@ function uuid() {
 
 function round2(n) {
   return Math.round(n * 100) / 100
+}
+
+// ── Historial de compras (compartido con ConsultarCompras) ────────────────────
+
+const KEY_HISTORIAL = "pos_historial_compras"
+
+function cargarHistorial() {
+  try { return JSON.parse(localStorage.getItem(KEY_HISTORIAL) ?? "[]") } catch { return [] }
+}
+
+function guardarHistorial(lista) {
+  localStorage.setItem(KEY_HISTORIAL, JSON.stringify(lista))
 }
 
 function calcRow(row) {
@@ -34,8 +46,14 @@ function calcRow(row) {
   }
   // costoCalc = base para la calculadora de precios (por unidad de venta)
   const costoCalc = round2(costoSinIva / factor)
-  // Precio 4 = costo c/IVA por unidad de venta
-  const precio4   = row.aplicarIva ? round2(costoCalc * 1.16) : costoCalc
+  // Precio 4 = costo c/IVA por unidad de venta.
+  // Cuando precioNeto=true, usar costoConIva/factor para evitar doble redondeo
+  // (70 ÷ 1.16 → round2 → × 1.16 produce 69.99 en vez de 70.00).
+  const precio4 = !row.aplicarIva
+    ? costoCalc
+    : row.precioNeto
+      ? round2(costoConIva / factor)
+      : round2(costoCalc * 1.16)
   return { ...row, costoSinIva, costoConIva, costoCalc, precio4 }
 }
 
@@ -194,8 +212,10 @@ export default function ComprasModule() {
   const [showPausadas,     setShowPausadas]     = useState(false)
   const [pagoModal,        setPagoModal]        = useState(null)
   const [editandoArticulo, setEditandoArticulo] = useState(false)
-  const [guardandoArticulo,setGuardandoArticulo]= useState(false)
   const [showCompraModal,  setShowCompraModal]  = useState(false)
+  const [refPrecios,    setRefPrecios]    = useState(null)
+  const refPreciosRef  = useRef(null)    // acceso sincrónico en handleRowChange
+  const snapshotMapRef = useRef({})      // { [_id]: snap } — nunca se sobreescribe
 
   // Modal de confirmación personalizado
   const [confirmModal, setConfirmModal] = useState(null) // { mensaje, onAceptar }
@@ -303,8 +323,24 @@ export default function ComprasModule() {
       prev.map((r) => {
         if (r._id !== id) return r
         const merged = { ...r, ...updates }
-        // Si cambia aplicarIva o precioNeto, costoCalc puede cambiar.
-        // Escalar precios 1-3 proporcionalmente para conservar márgenes (s/IVA vs s/IVA).
+
+        // Cuando cambia el costo o el descuento, mantener márgenes y ajustar precios 1-3.
+        // Escalar siempre desde el snapshot original para evitar acumulación de redondeo:
+        // ir C→C'→C con ratio incremental da C±ε; con ratio desde snapshot da C exacto.
+        if ("costo" in updates || "descuento" in updates) {
+          const snap     = refPreciosRef.current
+          const snapCalc = snap?.costoCalc ?? 0
+          const newCalc  = calcRow(merged).costoCalc
+          if (snapCalc > 0) {
+            const ratio = newCalc / snapCalc
+            ;[1, 2, 3].forEach((n) => {
+              const p = snap[`precio${n}`] ?? 0
+              if (p > 0) merged[`precio${n}`] = round2(p * ratio)
+            })
+          }
+        }
+
+        // Cuando cambia aplicarIva o precioNeto, escalar igualmente para conservar márgenes.
         if ("aplicarIva" in updates || "precioNeto" in updates) {
           const oldCalc = calcRow(r).costoCalc
           const newCalc = calcRow(merged).costoCalc
@@ -316,6 +352,7 @@ export default function ComprasModule() {
             })
           }
         }
+
         return calcRow(merged)
       })
     )
@@ -389,6 +426,19 @@ export default function ComprasModule() {
       setPagoModal({ tipo: "error", faltantes })
       return
     }
+    // Validar folio duplicado contra el historial de compras
+    const folioBuscado = numFactura.trim()
+    const duplicado = cargarHistorial().find(
+      (c) => c.folio === folioBuscado && c.estado !== "Cancelada"
+    )
+    if (duplicado) {
+      setPagoModal({
+        tipo: "error",
+        faltantes: [],
+        mensajeError: `El folio "${folioBuscado}" ya fue registrado el ${duplicado.fecha} (${duplicado.proveedor}). Verifica el número de factura.`,
+      })
+      return
+    }
     setPagoModal({ tipo: "pago", formaPago: "efectivo", plazo: proveedor.dias_credito ?? 30 })
   }
 
@@ -396,6 +446,16 @@ export default function ComprasModule() {
     // Guardar precios actualizados de todos los artículos antes de confirmar
     const provNombre = proveedor?.nombre ?? ""
     await Promise.allSettled(rows.map((r) => guardarArticuloDesdeRow(r, provNombre)))
+
+    // Incrementar stock: suma la cantidad comprada al inventario existente de cada SKU
+    const ajustesStock = rows
+      .filter((r) => r.clave && !r.articuloId.startsWith("art-seed"))
+      .map((r) => ({ sku: r.clave, delta: r.cantidad }))
+    if (ajustesStock.length > 0) {
+      await incrementarInventario(ajustesStock).catch((err) =>
+        console.error("Error al actualizar inventario:", err)
+      )
+    }
 
     if (pagoModal.formaPago === "credito" && proveedor) {
       const lista = loadProveedores()
@@ -415,6 +475,29 @@ export default function ComprasModule() {
       )
       saveProveedores(actualizada)
     }
+    // Registrar en historial compartido con Consultar Compras
+    const registroCompra = {
+      id:       uuid(),
+      folio:    numFactura.trim() || `COMP-${fecha}-${Date.now().toString().slice(-4)}`,
+      proveedor: proveedor?.nombre ?? "",
+      fecha,
+      tipo:     "Factura",
+      estado:   "Recibida",
+      articulos: rows.map(r => ({
+        codigo:     r.clave        || "",
+        nombre:     r.descripcion  || "",
+        cantidad:   r.cantidad,
+        precioUnit: round2(r.costoSinIva),
+      })),
+      subtotal: round2(subtotal),
+      iva:      round2(ivaTotal),
+      total:    round2(total),
+      canceladaEl:       null,
+      motivoCancelacion: null,
+    }
+    guardarHistorial([registroCompra, ...cargarHistorial()])
+
+    limpiarSnapshots()
     setRows([])
     setSelectedId(null)
     setProveedor(null)
@@ -425,20 +508,29 @@ export default function ComprasModule() {
     setPagoModal(null)
   }
 
+  function limpiarSnapshots() {
+    snapshotMapRef.current = {}
+    refPreciosRef.current  = null
+    setRefPrecios(null)
+  }
+
   function handleNuevaCompra() {
     if (rows.length > 0) {
       pedirConfirm("¿Iniciar una nueva compra? Se perderá la compra actual si no la guardas.", () => {
+        limpiarSnapshots()
         setRows([]); setSelectedId(null); setProveedor(null)
         setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
       })
       return
     }
+    limpiarSnapshots()
     setRows([]); setSelectedId(null); setProveedor(null)
     setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
   }
 
   function handleCancelar() {
     pedirConfirm("¿Cancelar esta compra? Esta acción no se puede deshacer.", () => {
+      limpiarSnapshots()
       setRows([]); setSelectedId(null); setStatus("borrador"); setNumFactura("")
       showToast("Compra cancelada")
     })
@@ -446,7 +538,33 @@ export default function ComprasModule() {
 
   const selectedRow = rows.find((r) => r._id === selectedId) ?? null
 
-  // Al cambiar de fila mientras se edita, el panel permanece abierto y actualiza los datos
+  // Snapshot de precios por artículo — se captura UNA sola vez al seleccionar por primera vez.
+  // Usar un mapa keyed por _id garantiza que volver a un artículo ya visitado
+  // restaura el snapshot original, no los precios ya modificados.
+  useEffect(() => {
+    if (!selectedRow) return
+    const id = selectedRow._id
+    if (!snapshotMapRef.current[id]) {
+      // Aplicar round2 a todos los valores para que la precisión del snapshot
+      // sea idéntica a la que producirá el escalado posterior. Sin esto,
+      // precios con decimales extendidos del backend (ej. 68.5344...) generan
+      // refDisplay distinto al display actual después de round2, produciendo
+      // falsos deltas de ±$0.01 al regresar al costo original.
+      snapshotMapRef.current[id] = {
+        precio1:    round2(selectedRow.precio1   ?? 0),
+        precio2:    round2(selectedRow.precio2   ?? 0),
+        precio3:    round2(selectedRow.precio3   ?? 0),
+        precio4:    round2(selectedRow.precio4   ?? 0),
+        costoCalc:  round2(selectedRow.costoCalc ?? 0),
+        // Guardar el IVA histórico para que la referencia "Últ. precio c/IVA"
+        // no cambie al activar/desactivar el toggle en la compra actual.
+        aplicarIva: selectedRow.aplicarIva ?? false,
+      }
+    }
+    const snap = snapshotMapRef.current[id]
+    refPreciosRef.current = snap
+    setRefPrecios(snap)
+  }, [selectedRow?._id])
 
   async function guardarArticuloDesdeRow(row, proveedorNombre) {
     if (!row?.articuloId || row.articuloId.startsWith("art-seed")) return
@@ -481,17 +599,11 @@ export default function ComprasModule() {
     })
   }
 
-  async function handleGuardarArticulo() {
+  function handleGuardarArticulo() {
     if (!selectedRow) return
-    setGuardandoArticulo(true)
-    try {
-      await guardarArticuloDesdeRow(selectedRow)
-      showToast("Artículo actualizado")
-    } catch (e) {
-      showToast("Error al guardar artículo", "error")
-    } finally {
-      setGuardandoArticulo(false)
-    }
+    // Los cambios ya están aplicados en la fila de esta compra (onRowChange es en tiempo real).
+    // El backend se actualiza solo al confirmar la compra — no antes.
+    showToast("Cambios guardados en esta compra")
   }
 
   // Cierra popup al hacer clic fuera
@@ -825,19 +937,25 @@ export default function ComprasModule() {
             </div>
 
             {pagoModal.tipo === "error" ? (
-              /* ── Pantalla de error: campos faltantes ── */
+              /* ── Pantalla de error: folio duplicado o campos faltantes ── */
               <div className="cpx-pago-body">
-                <p className="cpx-pago-error-msg">
-                  Para confirmar la compra debes completar los siguientes campos:
-                </p>
-                <ul className="cpx-pago-faltantes">
-                  {pagoModal.faltantes.map((f) => (
-                    <li key={f}>
-                      <span className="cpx-pago-faltante-dot" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
+                {pagoModal.mensajeError ? (
+                  <p className="cpx-pago-error-msg">{pagoModal.mensajeError}</p>
+                ) : (
+                  <>
+                    <p className="cpx-pago-error-msg">
+                      Para confirmar la compra debes completar los siguientes campos:
+                    </p>
+                    <ul className="cpx-pago-faltantes">
+                      {pagoModal.faltantes.map((f) => (
+                        <li key={f}>
+                          <span className="cpx-pago-faltante-dot" />
+                          {f}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
                 <div className="cpx-pago-footer">
                   <button className="ar-btn-add" onClick={() => setPagoModal(null)}>
                     Entendido
@@ -942,7 +1060,7 @@ export default function ComprasModule() {
             row={selectedRow}
             onRowChange={handleRowChange}
             onGuardar={handleGuardarArticulo}
-            guardando={guardandoArticulo}
+            refPrecios={refPrecios}
           />
         )}
       </div>

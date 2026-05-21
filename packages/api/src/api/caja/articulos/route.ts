@@ -583,8 +583,13 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
     title: body.descripcion,
     weight: body.peso > 0 ? Math.round(body.peso * 1000) : 0,
     category_ids: categoryId ? [categoryId] : [],
-    thumbnail: imagenesUpd[0] ?? null,
-    images: imagenesUpd.map((url) => ({ url })),   // reemplaza el array completo
+    // Si el frontend mandó imágenes nuevas, la primera es el thumbnail.
+    // Si no (p.ej. productos importados sin images[]), conservar body.thumbnail para
+    // no borrar el thumbnail que asignó attach:imagenes al importar el catálogo.
+    thumbnail: imagenesUpd[0] ?? (body.thumbnail || null),
+    images: imagenesUpd.length > 0
+      ? imagenesUpd.map((url) => ({ url }))
+      : undefined,   // sin imágenes nuevas → no tocar el array existente
     metadata: {
       departamento: body.departamento ?? "",
       unidadCompra: body.unidadCompra ?? "Pieza",

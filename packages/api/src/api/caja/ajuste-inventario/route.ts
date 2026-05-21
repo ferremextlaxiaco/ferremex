@@ -3,7 +3,8 @@ import { Modules } from "@medusajs/framework/utils"
 
 interface AjusteItem {
   sku: string
-  nueva_cantidad: number
+  nueva_cantidad?: number  // cantidad absoluta (ajuste manual)
+  delta?: number           // incremento relativo (recepción de compra)
 }
 
 // POST /caja/ajuste-inventario
@@ -52,7 +53,6 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   for (const ajuste of body.ajustes) {
     if (!ajuste.sku) continue
-    const qty = Math.round(ajuste.nueva_cantidad ?? 0)
     const item = itemBySku.get(ajuste.sku)
 
     if (!item) {
@@ -61,6 +61,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
 
     const level = levelByItemId.get(item.id)
+
+    // Calcular cantidad final: delta (relativo) o nueva_cantidad (absoluto)
+    let qty: number
+    if (ajuste.delta !== undefined) {
+      qty = Math.max(0, (level?.stocked_quantity ?? 0) + Math.round(ajuste.delta))
+    } else {
+      qty = Math.round(ajuste.nueva_cantidad ?? 0)
+    }
 
     try {
       if (level) {

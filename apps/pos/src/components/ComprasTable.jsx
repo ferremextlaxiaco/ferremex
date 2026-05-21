@@ -150,9 +150,9 @@ function ArticleRow({ row, selected, onClick, onChange, onDelete, pendingDelete,
         {row.aplicarIva ? fmtPeso(row.costoConIva) : <span style={{ color: "var(--at-text-muted)" }}>—</span>}
       </td>
 
-      {/* Variación vs último precio de compra */}
+      {/* Variación vs último precio de compra — ambos en base s/IVA */}
       <td className="cpx-td cpx-td-num">
-        <PriceIndicator costo={row.costo} ultimoPrecio={row.ultimoPrecioCompra} />
+        <PriceIndicator costo={row.costoSinIva} ultimoPrecio={row.ultimoPrecioCompra} />
       </td>
 
       {/* Importe = cantidad × costo c/IVA */}

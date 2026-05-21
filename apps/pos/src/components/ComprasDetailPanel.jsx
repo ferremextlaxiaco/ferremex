@@ -273,12 +273,29 @@ function FieldRow({ label, children }) {
 
 // precio y costoSinIva siempre se reciben SIN IVA.
 // aplicarIva=true → muestra c/IVA; guarda s/IVA. Margen en s/IVA vs s/IVA.
-function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = false, aplicarIva = false }) {
+// refPrecio (opcional): precio s/IVA capturado al abrir el artículo — referencia visual.
+function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = false, aplicarIva = false, refPrecio = null }) {
   const [margenLocal, setMargenLocal] = useState("")
   const [margenFocused, setMargenFocused] = useState(false)
+  // Cuando el usuario escribe un precio c/IVA que no tiene representación exacta
+  // en s/IVA con 2 decimales (ej. $36.50 → s/IVA=$31.47 → c/IVA=$36.51), guardamos
+  // el valor que escribió para mostrarlo tal cual. Si el s/IVA subyacente cambia
+  // por un escalado externo, el override se invalida automáticamente.
+  const [displayOverride, setDisplayOverride] = useState(null)
+  // displayOverride = { for: sIVA_almacenado, display: cIVA_ingresado } | null
 
   const factor        = aplicarIva ? 1.16 : 1
-  const precioDisplay = round2(precio * factor)   // lo que ve el usuario (c/IVA)
+  const precioDisplay = round2(precio * factor)
+  const displayedValue = (displayOverride && displayOverride.for === precio)
+    ? displayOverride.display
+    : precioDisplay
+
+  // Comparación con snapshot de apertura — solo visible cuando el precio cambió
+  const refDisplay  = refPrecio != null ? round2(refPrecio * factor) : null
+  const delta       = refDisplay != null ? round2(precioDisplay - refDisplay) : null
+  const hasChange   = refDisplay != null && refDisplay > 0 && Math.abs(delta) >= 0.01
+  const pctChange   = hasChange ? round2((delta / refDisplay) * 100) : null
+  const showRef     = hasChange
 
   // Margen s/IVA vs s/IVA — no cambia al activar/desactivar IVA
   const margenCalculado =
@@ -290,64 +307,90 @@ function PriceCalcRow({ label, precio, costoSinIva, onPrecioChange, readOnly = f
     setMargenFocused(false)
     const m = parseFloat(margenLocal)
     if (isNaN(m) || m >= 100) return
-    // Calcula s/IVA directamente — sin factor IVA en la fórmula
     const p = m <= 0 ? costoSinIva : round2(costoSinIva / (1 - m / 100))
     onPrecioChange(p)
   }
 
+  const refRow = showRef && (
+    <div className="cpx-calc-row" style={{ paddingTop: 0, paddingBottom: 6, marginTop: -2 }}>
+      <span className="cpx-calc-label" />
+      <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 5, paddingLeft: 2 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: delta > 0 ? "#F96302" : "#6b7280" }}>
+          {delta > 0 ? "↑" : "↓"}
+        </span>
+        <span style={{ fontSize: 11, color: "var(--at-text-muted)" }}>
+          Antes: ${refDisplay.toFixed(2)}
+        </span>
+      </div>
+      <div style={{ flex: 1, textAlign: "right", paddingRight: 8, fontSize: 11, fontWeight: 600, color: delta > 0 ? "#F96302" : "#6b7280" }}>
+        {delta > 0 ? "+" : ""}{delta.toFixed(2)} ({pctChange > 0 ? "+" : ""}{pctChange.toFixed(1)}%)
+      </div>
+    </div>
+  )
+
   if (readOnly) {
     return (
-      <div className="cpx-calc-row cpx-calc-row-readonly">
-        <span className="cpx-calc-label">{label}</span>
-        <div className="cpx-calc-field cpx-calc-field-ro">
-          <span className="cpx-calc-prefix">$</span>
-          <span className="cpx-calc-ro-val">{precioDisplay.toFixed(2)}</span>
+      <>
+        <div className="cpx-calc-row cpx-calc-row-readonly">
+          <span className="cpx-calc-label">{label}</span>
+          <div className="cpx-calc-field cpx-calc-field-ro">
+            <span className="cpx-calc-prefix">$</span>
+            <span className="cpx-calc-ro-val">{precioDisplay.toFixed(2)}</span>
+          </div>
+          <div className="cpx-calc-field cpx-calc-field-ro">
+            <span className="cpx-calc-ro-val">0.00</span>
+            <span className="cpx-calc-suffix">%</span>
+          </div>
         </div>
-        <div className="cpx-calc-field cpx-calc-field-ro">
-          <span className="cpx-calc-ro-val">0.00</span>
-          <span className="cpx-calc-suffix">%</span>
-        </div>
-      </div>
+        {refRow}
+      </>
     )
   }
 
   return (
-    <div className="cpx-calc-row">
-      <span className="cpx-calc-label">{label}</span>
-      <div className="cpx-calc-field">
-        <span className="cpx-calc-prefix">$</span>
-        <NumField
-          className="cpx-calc-input"
-          value={precioDisplay}
-          min={0}
-          step={1}
-          onChange={(cIva) => onPrecioChange(round2(cIva / factor))}
-        />
+    <>
+      <div className="cpx-calc-row">
+        <span className="cpx-calc-label">{label}</span>
+        <div className="cpx-calc-field">
+          <span className="cpx-calc-prefix">$</span>
+          <NumField
+            className="cpx-calc-input"
+            value={displayedValue}
+            min={0}
+            step={1}
+            onChange={(cIva) => {
+              const sIva = round2(cIva / factor)
+              setDisplayOverride({ for: sIva, display: cIva })
+              onPrecioChange(sIva)
+            }}
+          />
+        </div>
+        <div className="cpx-calc-field">
+          <input
+            className="cpx-calc-input"
+            type="number"
+            step="0.01"
+            value={margenFocused ? margenLocal : margenCalculado}
+            onFocus={() => { setMargenLocal(String(margenCalculado)); setMargenFocused(true) }}
+            onBlur={commitMargen}
+            onChange={(e) => setMargenLocal(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitMargen() }}
+          />
+          <span className="cpx-calc-suffix">%</span>
+        </div>
       </div>
-      <div className="cpx-calc-field">
-        <input
-          className="cpx-calc-input"
-          type="number"
-          step="0.01"
-          value={margenFocused ? margenLocal : margenCalculado}
-          onFocus={() => { setMargenLocal(String(margenCalculado)); setMargenFocused(true) }}
-          onBlur={commitMargen}
-          onChange={(e) => setMargenLocal(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") commitMargen() }}
-        />
-        <span className="cpx-calc-suffix">%</span>
-      </div>
-    </div>
+      {refRow}
+    </>
   )
 }
 
 // ── Panel derecho ─────────────────────────────────────────────────────────────
 
-export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guardando }) {
-  const [uploading, setUploading]     = useState(0)
-  const [newEsp, setNewEsp]           = useState({ clave: "", valor: "" })
-  const fileInputRef                  = useRef(null)
-  const rowRef                        = useRef(row)
+export default function ComprasDetailPanel({ row, onRowChange, onGuardar, refPrecios }) {
+  const [uploading, setUploading] = useState(0)
+  const [newEsp, setNewEsp]       = useState({ clave: "", valor: "" })
+  const fileInputRef              = useRef(null)
+  const rowRef                    = useRef(row)
 
   useEffect(() => { rowRef.current = row }, [row])
 
@@ -459,20 +502,22 @@ export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guarda
           />
         </FieldRow>
 
-        {/* Último precio compra — referencia */}
+        {/* Último precio compra — referencia fija (no cambia con el toggle actual) */}
         <div className="cpx-detail-row">
           <span className="cpx-detail-label">Últ. precio compra s/IVA</span>
           <span className="cpx-detail-val">{fmtPeso(row.ultimoPrecioCompra)}</span>
         </div>
-        <div className="cpx-detail-row">
-          <span className="cpx-detail-label">Últ. precio compra c/IVA</span>
-          <span className="cpx-detail-val">
-            {fmtPeso(row.aplicarIva
-              ? round2((row.ultimoPrecioCompra || 0) * 1.16)
-              : (row.ultimoPrecioCompra || 0)
-            )}
-          </span>
-        </div>
+        {/* Solo mostrar c/IVA si la última compra realmente tuvo IVA.
+            Se usa refPrecios.aplicarIva (histórico), no row.aplicarIva (actual),
+            para que el toggle de la compra actual no altere la referencia. */}
+        {refPrecios?.aplicarIva === true && (
+          <div className="cpx-detail-row">
+            <span className="cpx-detail-label">Últ. precio compra c/IVA</span>
+            <span className="cpx-detail-val">
+              {fmtPeso(round2((row.ultimoPrecioCompra || 0) * 1.16))}
+            </span>
+          </div>
+        )}
 
         {/* Costo — editable */}
         <FieldRow label="Costo unitario">
@@ -601,6 +646,7 @@ export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guarda
                   costoSinIva={costoCalc}
                   aplicarIva={row.aplicarIva}
                   onPrecioChange={(p) => set(`precio${n}`, p)}
+                  refPrecio={refPrecios?.[`precio${n}`] ?? null}
                 />
               ))}
               <PriceCalcRow
@@ -610,6 +656,7 @@ export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guarda
                 aplicarIva={false}
                 onPrecioChange={() => {}}
                 readOnly
+                refPrecio={refPrecios?.precio4 ?? null}
               />
             </>
           )
@@ -771,10 +818,12 @@ export default function ComprasDetailPanel({ row, onRowChange, onGuardar, guarda
         <button
           className="ar-btn-add cpx-dp-save-btn"
           onClick={onGuardar}
-          disabled={guardando}
         >
-          {guardando ? "Guardando…" : "✓ Guardar cambios"}
+          ✓ Guardar en esta compra
         </button>
+        <p style={{ fontSize: 11, color: "var(--at-text-muted)", marginTop: 6, textAlign: "center", lineHeight: 1.4 }}>
+          Los cambios se aplicarán al artículo al confirmar la compra
+        </p>
       </div>
 
     </div>

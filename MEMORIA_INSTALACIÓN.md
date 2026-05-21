@@ -45,9 +45,9 @@
 
 | Proceso | PID | Uptime | Reinicios | Memoria |
 |---------|-----|--------|-----------|---------|
-| ferremex-admin | 13872 | 7h | 0 | 49.5 MB |
-| ferremex-api | 16820 | 7h | 0 | 49.5 MB |
-| ferremex-pos | 8792 | 7h | 0 | 49.6 MB |
+| ferremex-admin | 18344 | 5h | 0 | 55.7 MB |
+| ferremex-api | 18368 | 5h | 0 | 55.6 MB |
+| ferremex-pos | 18388 | 5h | 0 | 56.1 MB |
 
 ### Acceso al sistema
 
@@ -191,9 +191,14 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Cajón de dinero: Web Serial API envia ESC/POS [0x1B, 0x70, 0x00, 0x19, 0x19] a la impresora
 - PM2: proceso `ferremex-pos` agregado a `ecosystem.config.js`
 
-### Estado actual (2026-05-07)
+### Estado actual (2026-05-21)
 - ✅ Interfaz POS visible en http://localhost:7002/pos/
-- ✅ Módulo de Compras funcional con todas las mejoras de esta sesión
+- ✅ Módulo de Compras con landing (2 opciones: Hacer Compra / Consultar Compras)
+- ✅ Módulo ConsultarCompras conectado a localStorage (pos_historial_compras)
+- ✅ Confirmación de compra actualiza precios + incrementa inventario + guarda historial
+- ✅ Cancelación de compra descuenta inventario automáticamente
+- ✅ Validación de folio duplicado antes de confirmar
+- ✅ Images protegidas: thumbnail no se borra al confirmar compra (fix backend PUT)
 - ✅ 10,255 productos actualizados con clave SAT en la DB
 - ✅ Catálogo SAT completo (52,516 claves) generado en `packages/api/static/claves-sat.json`
 
@@ -298,3 +303,48 @@ en `packages/api/src/api/middlewares.ts`.
 - **Módulo Proveedores**: confirmaciones con modal estilo POS (sin `confirm()` nativo del browser)
 - **Lib compartida**: `apps/pos/src/lib/unidades-sat.ts` usada por Compras y Artículos
 - Commit `b94e79b`: todos los cambios guardados
+
+### Sesión 2026-05-19 — Módulo ConsultarCompras + mejoras de Compras
+- **Landing de Compras**: `/admin/compras` ahora muestra 2 cards (Hacer Compra / Consultar Compras)
+  → rutas nuevas: `/admin/compras-nueva` (ComprasModule) y `/admin/consultar-compras` (ConsultarCompras)
+  → páginas: `AdminComprasNueva.jsx` y `AdminConsultarCompras.jsx`
+- **ConsultarCompras** — módulo de historial de compras completo:
+  → Tabla ordenable con filtros (rango fecha, tipo, estado) y búsqueda por folio/proveedor/artículo
+  → Panel lateral colapsable con detalle de compra (artículos, totales, comparativo de precios)
+  → Vista pantalla completa (fullscreen modal)
+  → Exportar CSV con los resultados filtrados
+  → Cancelación de compra con motivo mínimo de 5 caracteres
+  → Totales filtrados en footer (subtotal + IVA incluido)
+- **Persistencia localStorage** `pos_historial_compras`:
+  → ComprasModule guarda registro al confirmar (folio, proveedor, fecha, artículos, totales)
+  → ConsultarCompras lee y escribe el mismo key
+- **Panel de precios en ComprasDetailPanel** (historial + referencias):
+  → Snapshot por artículo al seleccionar por primera vez (mapa keyed por _id)
+  → Precios 1-3 se escalan desde snapshot para mantener márgenes al cambiar costo
+  → Indicadores ▲▼ solo se muestran cuando el precio realmente cambió (delta ≥ $0.01)
+  → `displayOverride` preserva el valor exacto que escribe el usuario (evita round-trip $36.50→$36.51)
+  → Precio 4 (neto): usa `costoConIva / factor` directamente para evitar doble redondeo ($70.00 no $69.99)
+  → "Últ. precio compra c/IVA" solo visible si el artículo histórico tenía IVA
+- **Botón "Guardar en esta compra"**: solo actualiza la compra actual (NO escribe al backend)
+  → El backend se actualiza únicamente al confirmar la compra
+
+### Sesión 2026-05-21 — Correcciones de integridad (imagen, folio, inventario)
+- **Bug fix: imagen perdida al confirmar compra**
+  → Causa: PUT `/caja/articulos` usaba `imagenesUpd[0] ?? null` para thumbnail; artículos importados
+    tienen `images[] = []` (solo `thumbnail` nativo de Medusa) → se borraba el thumbnail
+  → Fix backend: `thumbnail: imagenesUpd[0] ?? (body.thumbnail || null)` y
+    `images: imagenesUpd.length > 0 ? imagenesUpd.map(...) : undefined` (no tocar array si vacío)
+- **Bug fix: folio duplicado permitido**
+  → Causa: `handleConfirmar` no validaba contra el historial
+  → Fix: antes de mostrar el modal de pago, busca en `cargarHistorial()` si ya existe ese folio
+    con estado ≠ "Cancelada"; si existe, muestra modal de error con fecha y proveedor de la compra anterior
+  → Modal de error extendido para soportar `mensajeError` (string libre) además de lista de faltantes
+- **Bug fix: stock no se actualizaba al confirmar compra**
+  → Causa: `ejecutarConfirmar` solo llamaba `guardarArticuloDesdeRow` (precios/metadata) sin tocar inventario
+  → Fix backend: `/caja/ajuste-inventario` ahora acepta `delta` (incremental) además de `nueva_cantidad`
+    (absoluto). Con `delta`, calcula `stock_actual + delta` en lugar de pisarlo
+  → Nueva función `incrementarInventario(ajustes)` en `client.ts`
+  → `ejecutarConfirmar` llama `incrementarInventario` con `delta = cantidad` por SKU tras confirmar
+- **Bug fix: stock no se descontaba al cancelar compra**
+  → Fix: `confirmCancel` en ConsultarCompras ahora llama `incrementarInventario` con `delta = -cantidad`
+    para revertir exactamente las unidades que entró la compra cancelada
