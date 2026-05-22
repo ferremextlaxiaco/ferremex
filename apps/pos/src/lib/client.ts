@@ -141,6 +141,28 @@ export async function eliminarArticulo(id: string): Promise<void> {
   await apiFetch(`/caja/articulos?id=${id}`, { method: "DELETE" })
 }
 
+export async function generarOCPdf(data: {
+  rows: any[]
+  freeItems: any[]
+  proveedor: any | null
+  ocNumber: string
+  fechaEmision: string
+  mostrarPrecios: boolean
+  mostrarImagenes: boolean
+}): Promise<string> {
+  const res = await fetch("/caja/generar-oc", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Error ${res.status}: ${body}`)
+  }
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 export async function ajustarInventario(
   ajustes: { sku: string; nueva_cantidad: number }[]
 ): Promise<{ ok: boolean; actualizados: number; errores: string[] }> {

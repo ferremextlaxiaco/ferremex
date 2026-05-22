@@ -124,6 +124,7 @@ export default function PedidosFiltros({
       <button
         className="ar-btn-add"
         style={{ width: "100%", justifyContent: "center", gap: 6 }}
+        disabled={!filtros.departamento && !filtros.categoria && !filtros.marca}
         onClick={onCargarFaltantes}
       >
         <Zap size={14} /> Cargar faltantes

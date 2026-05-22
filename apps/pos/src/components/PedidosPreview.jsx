@@ -1,5 +1,5 @@
 import { useRef } from "react"
-import { X, Printer, MessageSquare, Package } from "lucide-react"
+import { X, Package } from "lucide-react"
 
 function buildSheetHTML(rows, proveedor, fecha, folio) {
   const totalArts   = rows.length
@@ -59,7 +59,7 @@ function buildSheetHTML(rows, proveedor, fecha, folio) {
 </body></html>`
 }
 
-export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose, onShared }) {
+export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose }) {
   const sheetRef = useRef(null)
 
   const totalArts   = rows.length
@@ -68,51 +68,12 @@ export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose,
     ? new Date(fecha + "T12:00:00").toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" })
     : "—"
 
-  function handlePrint() {
-    window.print()
-  }
-
-  async function handleShare() {
-    const html  = buildSheetHTML(rows, proveedor, fecha, folio)
-    const blob  = new Blob([html], { type: "text/html" })
-    const file  = new File([blob], `Pedido-Ferremex-${folio}.pdf`, { type: "application/pdf" })
-
-    if (navigator.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({
-          files: [file],
-          title: "Pedido Ferremex",
-          text:  `Pedido para surtir – ${proveedor?.nombre ?? ""}`,
-        })
-        onShared?.()
-      } catch (err) {
-        if (err.name !== "AbortError") console.warn("share error", err)
-      }
-    } else {
-      // Fallback: download
-      const url = URL.createObjectURL(blob)
-      const a   = document.createElement("a")
-      a.href     = url
-      a.download = `Pedido-Ferremex-${folio}.html`
-      a.click()
-      URL.revokeObjectURL(url)
-      onShared?.()
-    }
-  }
-
   return (
     <div className="pdx-preview-overlay">
       {/* Toolbar */}
       <div className="pdx-preview-toolbar" style={{ justifyContent: "flex-start" }}>
         <button className="ar-btn-action" onClick={onClose}>
           <X size={14} /> Cerrar
-        </button>
-        <div className="ar-toolbar-divider" />
-        <button className="ar-btn-action" onClick={handlePrint}>
-          <Printer size={14} /> Imprimir
-        </button>
-        <button className="ar-btn-add" onClick={handleShare}>
-          <MessageSquare size={14} /> Compartir por WhatsApp
         </button>
       </div>
 

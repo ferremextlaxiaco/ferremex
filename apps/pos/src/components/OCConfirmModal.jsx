@@ -1,48 +1,30 @@
 import { useState } from "react"
-import { X, CheckCircle, MessageCircle, Loader } from "lucide-react"
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-function today7() {
-  const d = new Date()
-  d.setDate(d.getDate() + 7)
-  return d.toISOString().slice(0, 10)
-}
-
-// ── Componente ─────────────────────────────────────────────────────────────
+import { X, Download, MessageCircle, Mail, Loader } from "lucide-react"
 
 export default function OCConfirmModal({
   open,
-  proveedores,
   initialProveedor,
   ocNumber,
   onClose,
   onGenerate,
 }) {
-  const [proveedorId,    setProveedorId]    = useState(initialProveedor?.id ?? "")
-  const [fechaEntrega,   setFechaEntrega]   = useState(today7)
-  const [mostrarPrecios, setMostrarPrecios] = useState(true)   // default ON
-  const [generating,     setGenerating]     = useState(false)
-  const [generated,      setGenerated]      = useState(false)
-  const [localOcNumber,  setLocalOcNumber]  = useState(null)
-  const [whatsAppTip,    setWhatsAppTip]    = useState(false)
+  const [mostrarPrecios,  setMostrarPrecios]  = useState(true)
+  const [mostrarImagenes, setMostrarImagenes] = useState(true)
+  const [generating,      setGenerating]      = useState(false)
+  const [preview,         setPreview]         = useState(null)   // { oc, blobUrl }
+  const [whatsAppTip,     setWhatsAppTip]     = useState(false)
 
   if (!open) return null
 
-  const proveedorSelected = proveedores.find(p => p.id === proveedorId) ?? null
+  const isPreview = !!preview
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   async function handleGenerate() {
     setGenerating(true)
     try {
-      const oc = await onGenerate({
-        proveedor:     proveedorSelected,
-        fechaEntrega:  fechaEntrega || null,
-        mostrarPrecios,
-      })
-      setLocalOcNumber(oc)
-      setGenerated(true)
+      const result = await onGenerate({ proveedor: initialProveedor, mostrarPrecios, mostrarImagenes })
+      setPreview(result)
     } catch (err) {
       console.error("Error generando OC:", err)
     } finally {
@@ -50,18 +32,47 @@ export default function OCConfirmModal({
     }
   }
 
-  function handleWhatsApp() {
-    const num = localOcNumber || ocNumber || ""
-    const msg = encodeURIComponent(`Orden de Compra ${num} - Ferremex`)
-    try { window.open(`whatsapp://send?text=${msg}`, "_blank") }
-    catch { window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank") }
+  function handleClose() {
+    if (preview?.blobUrl) URL.revokeObjectURL(preview.blobUrl)
+    setPreview(null)
+    setGenerating(false)
+    onClose()
   }
 
-  function handleClose() {
-    setGenerated(false)
-    setGenerating(false)
-    setLocalOcNumber(null)
-    onClose()
+  function handleDownload() {
+    const a = document.createElement("a")
+    a.href = preview.blobUrl
+    a.download = `${preview.oc}.pdf`
+    a.click()
+  }
+
+  function handleWhatsApp() {
+    // Descarga el PDF automáticamente para que el usuario lo adjunte en WhatsApp
+    const a = document.createElement("a")
+    a.href = preview.blobUrl
+    a.download = `${preview.oc}.pdf`
+    a.click()
+
+    // Abre WhatsApp Web directamente al número del proveedor (sin seleccionar contacto)
+    setTimeout(() => {
+      const msg     = encodeURIComponent(
+        `Hola, adjunto la Orden de Compra *${preview.oc}* de Ferremex.\nPor favor confirmar recepción.`
+      )
+      const telRaw  = initialProveedor?.telefono ?? ""
+      const digits  = telRaw.replace(/\D/g, "")
+      // Agrega código de país México (52) si no lo tiene ya
+      const phone   = digits.length === 10 ? `52${digits}` : digits
+      const waUrl   = phone
+        ? `https://wa.me/${phone}?text=${msg}`
+        : `https://wa.me/?text=${msg}`
+      window.open(waUrl, "_blank")
+    }, 400)
+  }
+
+  function handleEmail() {
+    const subject = encodeURIComponent(`Orden de Compra ${preview.oc} – Ferremex`)
+    const body    = encodeURIComponent(`Estimado proveedor,\n\nAdjunto encontrará la Orden de Compra ${preview.oc} de Ferremex.\n\nSaludos,\nFerremex`)
+    window.location.href = `mailto:?subject=${subject}&body=${body}`
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -76,29 +87,31 @@ export default function OCConfirmModal({
         onClick={e => e.stopPropagation()}
         style={{
           background: "var(--at-bg-panel)",
-          borderRadius: 10,
-          width: "min(480px, 95vw)",
-          maxHeight: "90vh",
+          borderRadius: 12,
+          width:    isPreview ? "min(92vw, 1150px)" : "min(480px, 95vw)",
+          height:   isPreview ? "88vh" : "auto",
+          maxHeight: isPreview ? "88vh" : "90vh",
           display: "flex",
           flexDirection: "column",
-          boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+          boxShadow: "0 24px 72px rgba(0,0,0,0.28)",
           overflow: "hidden",
+          transition: "width 0.2s ease",
         }}
       >
         {/* ── Header ── */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "16px 20px",
+          padding: "14px 20px",
           borderBottom: "1px solid var(--at-border)",
           flexShrink: 0,
         }}>
           <div>
             <div style={{ fontSize: 15, fontWeight: 700, color: "var(--at-text)" }}>
-              {generated ? "PDF generado" : "Confirmar Orden de Compra"}
+              {isPreview ? "Orden de Compra" : "Confirmar Orden de Compra"}
             </div>
-            {!generated && (localOcNumber || ocNumber) && (
-              <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--at-orange)", marginTop: 3 }}>
-                {localOcNumber || ocNumber}
+            {(isPreview ? preview.oc : (ocNumber)) && (
+              <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--at-orange)", marginTop: 2 }}>
+                {isPreview ? preview.oc : ocNumber}
               </div>
             )}
           </div>
@@ -111,154 +124,192 @@ export default function OCConfirmModal({
         </div>
 
         {/* ── Body ── */}
-        <div style={{ padding: "20px", overflowY: "auto" }}>
-          {!generated ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {isPreview ? (
+          /* ── Vista previa ── */
+          <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-              {/* Proveedor */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--at-text-soft)" }}>
-                  Proveedor <span style={{ color: "var(--at-red, #dc2626)" }}>*</span>
-                </label>
-                <select
-                  value={proveedorId}
-                  onChange={e => setProveedorId(e.target.value)}
-                  style={{ padding: "8px 10px", border: "1px solid var(--at-border)", borderRadius: "var(--at-radius)", background: "var(--at-bg-input)", fontSize: 13, color: "var(--at-text)", cursor: "pointer" }}
-                >
-                  <option value="">— Sin proveedor —</option>
-                  {proveedores.map(p => (
-                    <option key={p.id} value={p.id}>{p.nombre}</option>
-                  ))}
-                </select>
+            {/* Panel de acciones */}
+            <div style={{
+              flex: "0 0 38%",
+              display: "flex",
+              flexDirection: "column",
+              padding: "28px 24px",
+              gap: 14,
+              borderRight: "1px solid var(--at-border)",
+              overflowY: "auto",
+            }}>
+
+              {/* Info */}
+              <div>
+                <div style={{ fontSize: 12, color: "var(--at-text-muted)", marginBottom: 4 }}>Proveedor</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--at-text)" }}>
+                  {initialProveedor?.nombre ?? "—"}
+                </div>
               </div>
 
-              {/* Fecha entrega */}
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: "var(--at-text-soft)" }}>
-                  Fecha estimada de entrega
-                </label>
-                <input
-                  type="date"
-                  value={fechaEntrega}
-                  onChange={e => setFechaEntrega(e.target.value)}
-                  style={{ padding: "8px 10px", border: "1px solid var(--at-border)", borderRadius: "var(--at-radius)", background: "var(--at-bg-input)", fontSize: 13, color: "var(--at-text)" }}
-                />
+              <div style={{ borderTop: "1px solid var(--at-border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: "var(--at-text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Acciones
+                </div>
+
+                {/* Descargar */}
+                <button
+                  onClick={handleDownload}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "11px 16px",
+                    background: "var(--at-orange)", color: "white",
+                    border: "none", borderRadius: "var(--at-radius)",
+                    fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    width: "100%",
+                  }}
+                >
+                  <Download size={16} /> Descargar PDF
+                </button>
+
+                {/* WhatsApp */}
+                <div style={{ position: "relative" }}>
+                  <button
+                    onClick={handleWhatsApp}
+                    onMouseEnter={() => setWhatsAppTip(true)}
+                    onMouseLeave={() => setWhatsAppTip(false)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      padding: "11px 16px",
+                      background: "#25d366", color: "white",
+                      border: "none", borderRadius: "var(--at-radius)",
+                      fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      width: "100%",
+                    }}
+                  >
+                    <MessageCircle size={16} /> Enviar por WhatsApp
+                  </button>
+                  {whatsAppTip && (
+                    <div style={{
+                      position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
+                      transform: "translateX(-50%)",
+                      background: "var(--at-text)", color: "white",
+                      padding: "6px 10px", borderRadius: 5, fontSize: 11,
+                      whiteSpace: "nowrap", pointerEvents: "none", zIndex: 10,
+                    }}>
+                      El PDF se descarga automáticamente. En WhatsApp solo adjúntalo con el clip y envía.
+                      <div style={{
+                        position: "absolute", top: "100%", left: "50%",
+                        transform: "translateX(-50%)",
+                        borderLeft: "5px solid transparent", borderRight: "5px solid transparent",
+                        borderTop: "5px solid var(--at-text)",
+                      }} />
+                    </div>
+                  )}
+                </div>
+
+                {/* Email */}
+                <button
+                  onClick={handleEmail}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "11px 16px",
+                    background: "transparent", color: "var(--at-text)",
+                    border: "1.5px solid var(--at-border)",
+                    borderRadius: "var(--at-radius)",
+                    fontSize: 13, fontWeight: 600, cursor: "pointer",
+                    width: "100%",
+                  }}
+                >
+                  <Mail size={16} /> Enviar por Email
+                </button>
+              </div>
+
+              <div style={{ marginTop: "auto", paddingTop: 16, borderTop: "1px solid var(--at-border)" }}>
+                <button
+                  className="ar-btn-action"
+                  style={{ width: "100%", justifyContent: "center" }}
+                  onClick={handleClose}
+                >
+                  Cerrar
+                </button>
+              </div>
+            </div>
+
+            {/* PDF iframe */}
+            <div style={{ flex: "0 0 62%", background: "#525659", position: "relative" }}>
+              <iframe
+                src={`${preview.blobUrl}#navpanes=0&toolbar=1`}
+                title="Vista previa OC"
+                style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+              />
+            </div>
+          </div>
+        ) : (
+          /* ── Config inicial ── */
+          <div style={{ padding: "20px", overflowY: "auto" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+              {/* Proveedor (solo lectura) */}
+              {initialProveedor && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 14px",
+                  background: "var(--at-bg-subtle, #f8f8f8)",
+                  borderRadius: "var(--at-radius)",
+                  border: "1px solid var(--at-border)",
+                }}>
+                  <span style={{ fontSize: 12, color: "var(--at-text-muted)", minWidth: 72 }}>Proveedor</span>
+                  <span style={{ fontSize: 14, fontWeight: 600, color: "var(--at-text)" }}>
+                    {initialProveedor.nombre}
+                  </span>
+                </div>
+              )}
+
+              {/* Toggle imágenes */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--at-text)" }}>Incluir imágenes en el PDF</div>
+                  <div style={{ fontSize: 11, color: "var(--at-text-muted)", marginTop: 2 }}>Muestra la foto de cada artículo en la tabla</div>
+                </div>
+                <button type="button" role="switch" aria-checked={mostrarImagenes}
+                  className={`pdx-toggle${mostrarImagenes ? " on" : ""}`}
+                  onClick={() => setMostrarImagenes(v => !v)}
+                ><span className="pdx-toggle-thumb" /></button>
               </div>
 
               {/* Toggle precios */}
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
                 <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--at-text)" }}>
-                    Incluir precio unitario en el PDF
-                  </div>
-                  <div style={{ fontSize: 11, color: "var(--at-text-muted)", marginTop: 2 }}>
-                    Muestra el último precio de compra de cada artículo
-                  </div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--at-text)" }}>Incluir precio unitario en el PDF</div>
+                  <div style={{ fontSize: 11, color: "var(--at-text-muted)", marginTop: 2 }}>Muestra el último precio de compra de cada artículo</div>
                 </div>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={mostrarPrecios}
+                <button type="button" role="switch" aria-checked={mostrarPrecios}
                   className={`pdx-toggle${mostrarPrecios ? " on" : ""}`}
                   onClick={() => setMostrarPrecios(v => !v)}
-                >
-                  <span className="pdx-toggle-thumb" />
-                </button>
-              </div>
-
-            </div>
-          ) : (
-            /* ── Estado: generado ── */
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 16, padding: "8px 0" }}>
-              <CheckCircle size={48} style={{ color: "var(--at-green, #16a34a)" }} />
-              <div style={{ textAlign: "center" }}>
-                <div style={{ fontSize: 15, fontWeight: 700, color: "var(--at-text)", marginBottom: 6 }}>
-                  PDF generado correctamente
-                </div>
-                <div style={{ fontSize: 13, color: "var(--at-text-soft)" }}>
-                  Se abrió en una nueva pestaña para imprimir o descargar.
-                </div>
-                {(localOcNumber || ocNumber) && (
-                  <div style={{ fontSize: 12, fontFamily: "monospace", color: "var(--at-orange)", marginTop: 6 }}>
-                    {localOcNumber || ocNumber}
-                  </div>
-                )}
-              </div>
-
-              {/* Botón WhatsApp */}
-              <div style={{ position: "relative" }}>
-                <button
-                  onClick={handleWhatsApp}
-                  onMouseEnter={() => setWhatsAppTip(true)}
-                  onMouseLeave={() => setWhatsAppTip(false)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 7,
-                    padding: "8px 18px",
-                    border: "1.5px solid var(--at-orange)", borderRadius: "var(--at-radius)",
-                    background: "transparent", color: "var(--at-orange)",
-                    fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  }}
-                >
-                  <MessageCircle size={16} />
-                  Enviar por WhatsApp
-                </button>
-                {whatsAppTip && (
-                  <div style={{
-                    position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
-                    transform: "translateX(-50%)",
-                    background: "var(--at-text)", color: "white",
-                    padding: "6px 10px", borderRadius: 5, fontSize: 11,
-                    whiteSpace: "nowrap", pointerEvents: "none", zIndex: 10,
-                  }}>
-                    Abre WhatsApp. Adjunta el PDF descargado manualmente.
-                    <div style={{
-                      position: "absolute", top: "100%", left: "50%",
-                      transform: "translateX(-50%)",
-                      borderLeft: "5px solid transparent",
-                      borderRight: "5px solid transparent",
-                      borderTop: "5px solid var(--at-text)",
-                    }} />
-                  </div>
-                )}
+                ><span className="pdx-toggle-thumb" /></button>
               </div>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        {/* ── Footer ── */}
-        <div style={{
-          padding: "12px 20px",
-          borderTop: "1px solid var(--at-border)",
-          display: "flex", justifyContent: "flex-end", gap: 8,
-          flexShrink: 0,
-        }}>
-          {!generated ? (
-            <>
-              <button className="ar-btn-action" onClick={handleClose}>
-                Cancelar
-              </button>
-              <button
-                className="ar-btn-add"
-                style={{ background: "var(--at-orange)", borderColor: "var(--at-orange)", minWidth: 130, justifyContent: "center" }}
-                disabled={generating}
-                onClick={handleGenerate}
-              >
-                {generating
-                  ? <><Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> Generando PDF…</>
-                  : "Generar PDF"
-                }
-              </button>
-            </>
-          ) : (
+        {/* ── Footer (solo en config) ── */}
+        {!isPreview && (
+          <div style={{
+            padding: "12px 20px",
+            borderTop: "1px solid var(--at-border)",
+            display: "flex", justifyContent: "flex-end", gap: 8,
+            flexShrink: 0,
+          }}>
+            <button className="ar-btn-action" onClick={handleClose}>Cancelar</button>
             <button
               className="ar-btn-add"
-              style={{ background: "var(--at-orange)", borderColor: "var(--at-orange)" }}
-              onClick={handleClose}
+              style={{ background: "var(--at-orange)", borderColor: "var(--at-orange)", minWidth: 130, justifyContent: "center" }}
+              disabled={generating}
+              onClick={handleGenerate}
             >
-              Cerrar
+              {generating
+                ? <><Loader size={14} style={{ animation: "spin 1s linear infinite" }} /> Generando PDF…</>
+                : "Generar PDF"
+              }
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
   )

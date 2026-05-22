@@ -1,10 +1,10 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { Plus, Save, Trash2, ChevronDown, FileText } from "lucide-react"
 import PedidosFiltros  from "./PedidosFiltros"
 import PedidosTabla    from "./PedidosTabla"
 import PedidosPreview  from "./PedidosPreview"
 import OCConfirmModal  from "./OCConfirmModal"
-import { listarFaltantes } from "../lib/client"
+import { listarFaltantes, generarOCPdf } from "../lib/client"
 
 // ── Mock data ─────────────────────────────────────────────────────────────────
 
@@ -82,6 +82,14 @@ function getNextOCNumber() {
   const count = stored.date === today ? (stored.count + 1) : 1
   localStorage.setItem("ferremex_oc_counter", JSON.stringify({ date: today, count }))
   return `OC-${today}-${String(count).padStart(3, "0")}`
+}
+
+// ── Draft persistence ─────────────────────────────────────────────────────────
+
+const DRAFT_KEY = "ferremex_pedido_draft"
+
+function loadDraft() {
+  try { return JSON.parse(localStorage.getItem(DRAFT_KEY)) ?? null } catch { return null }
 }
 
 // ── Image pre-loader ──────────────────────────────────────────────────────────
@@ -296,13 +304,15 @@ function MisPedidos({ pedidos, onStatusChange }) {
 
 export default function PedidosModule() {
   const [activeTab,   setActiveTab]   = useState("nuevo")
-  const [rows,        setRows]        = useState([])
-  const [freeItems,   setFreeItems]   = useState([])
-  const [proveedor,   setProveedor]   = useState(null)
-  const [fecha,       setFecha]       = useState(todayISO)
-  const [status,      setStatus]      = useState("borrador")
-  const [folio,       setFolio]       = useState(genFolio)
-  const [espera,      setEspera]      = useState([])
+  const [rows,        setRows]        = useState(() => loadDraft()?.rows      ?? [])
+  const [freeItems,   setFreeItems]   = useState(() => loadDraft()?.freeItems ?? [])
+  const [proveedor,   setProveedor]   = useState(() => loadDraft()?.proveedor ?? null)
+  const [fecha,       setFecha]       = useState(() => loadDraft()?.fecha     ?? todayISO())
+  const [status,      setStatus]      = useState(() => loadDraft()?.status    ?? "borrador")
+  const [folio,       setFolio]       = useState(() => loadDraft()?.folio     ?? genFolio())
+  const [espera,      setEspera]      = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ferremex_pedidos_espera")) ?? [] } catch { return [] }
+  })
   const [showEspera,  setShowEspera]  = useState(false)
   const [pedidos,     setPedidos]     = useState(HISTORIAL_MOCK)
   const [showPreview, setShowPreview] = useState(false)
@@ -318,6 +328,14 @@ export default function PedidosModule() {
   const [toast,    setToast]    = useState(null)
   const toastRef = useRef(null)
 
+  useEffect(() => {
+    localStorage.setItem("ferremex_pedidos_espera", JSON.stringify(espera))
+  }, [espera])
+
+  useEffect(() => {
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ rows, freeItems, proveedor, fecha, folio, status }))
+  }, [rows, freeItems, proveedor, fecha, folio, status])
+
   function showToast(msg, tipo = "") {
     clearTimeout(toastRef.current)
     setToast({ msg, tipo })
@@ -325,6 +343,7 @@ export default function PedidosModule() {
   }
 
   function resetOrder() {
+    localStorage.removeItem(DRAFT_KEY)
     setRows([])
     setFreeItems([])
     setProveedor(null)
@@ -389,29 +408,17 @@ export default function PedidosModule() {
     const oc = getNextOCNumber()
     setOcNumber(oc)
 
-    const allItems = [...rows, ...freeItems]
-    const imageMap = await buildImageMap(allItems)
+    const blobUrl = await generarOCPdf({
+      rows,
+      freeItems,
+      proveedor:      prefs.proveedor,
+      ocNumber:       oc,
+      fechaEmision:   new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" }),
+      mostrarPrecios:  prefs.mostrarPrecios,
+      mostrarImagenes: prefs.mostrarImagenes,
+    })
 
-    // Lazy-load @react-pdf/renderer to avoid blocking initial bundle
-    const { pdf }        = await import("@react-pdf/renderer")
-    const { OCDocument } = await import("./OCDocument")
-
-    const blob = await pdf(
-      <OCDocument
-        rows={rows}
-        freeItems={freeItems}
-        imageMap={imageMap}
-        proveedor={prefs.proveedor}
-        ocNumber={oc}
-        fechaEmision={new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" })}
-        fechaEntrega={prefs.fechaEntrega}
-        mostrarPrecios={prefs.mostrarPrecios}
-      />
-    ).toBlob()
-
-    const url = URL.createObjectURL(blob)
-    window.open(url, "_blank")
-    return oc  // Returned to OCConfirmModal to show in "generated" state
+    return { oc, blobUrl }
   }
 
   // ── Other handlers ────────────────────────────────────────────────────────
@@ -515,6 +522,7 @@ export default function PedidosModule() {
         <div className="pdx-espera-wrap">
           <button
             className="ar-btn-action"
+            disabled={espera.length === 0}
             onClick={() => setShowEspera(v => !v)}
           >
             En espera
@@ -531,13 +539,26 @@ export default function PedidosModule() {
                       <div className="pdx-espera-prov">{e.proveedor?.nombre ?? "Sin proveedor"}</div>
                       <div className="pdx-espera-meta">{e.rows.length} arts · {e.folio}</div>
                     </div>
-                    <button
-                      className="ar-btn-action"
-                      style={{ padding: "4px 10px", fontSize: 12 }}
-                      onClick={() => handleRetomar(e)}
-                    >
-                      Retomar
-                    </button>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        className="ar-btn-action"
+                        style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => handleRetomar(e)}
+                      >
+                        Retomar
+                      </button>
+                      <button
+                        className="ar-btn-action"
+                        style={{ padding: "4px 8px", fontSize: 12, color: "var(--at-red, #dc2626)", borderColor: "var(--at-red, #dc2626)" }}
+                        title="Eliminar pedido en espera"
+                        onClick={() => {
+                          if (window.confirm(`¿Eliminar el pedido ${e.folio}? Esta acción no se puede deshacer.`))
+                            setEspera(prev => prev.filter(x => x.id !== e.id))
+                        }}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -551,8 +572,8 @@ export default function PedidosModule() {
         <button
           className="ar-btn-add"
           style={{ background: "var(--at-orange)", borderColor: "var(--at-orange)" }}
-          disabled={!hasItems}
-          title={!hasItems ? "Agrega artículos al pedido primero" : undefined}
+          disabled={!hasItems || !proveedor}
+          title={!hasItems ? "Agrega artículos al pedido primero" : !proveedor ? "Selecciona un proveedor primero" : undefined}
           onClick={() => setShowOCModal(true)}
         >
           <FileText size={14} /> Generar OC
@@ -614,7 +635,6 @@ export default function PedidosModule() {
           fecha={fecha}
           folio={folio}
           onClose={() => setShowPreview(false)}
-          onShared={handleShared}
         />
       )}
 
@@ -622,7 +642,6 @@ export default function PedidosModule() {
       {showOCModal && (
         <OCConfirmModal
           open={showOCModal}
-          proveedores={PROVEEDORES}
           initialProveedor={proveedor}
           ocNumber={ocNumber}
           onClose={() => { setShowOCModal(false); setOcNumber(null) }}

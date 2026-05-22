@@ -31,7 +31,7 @@
 |---------|--------|-------------|--------|
 | MedusaJS API | 9000 | ferremex-api | ✅ online |
 | Vite Admin Dev Server | 7000 | ferremex-admin | ✅ online |
-| Vite POS Dev Server | 7002 | ferremex-pos | ✅ online |
+| Vite POS Dev Server | 7002 | ferremex-pos | ✅ online (HTTPS) |
 | Redis | 6379 | Docker (redis-ferremex) | ✅ online |
 | PostgreSQL | 5432 | Servicio Windows | ✅ online |
 
@@ -39,7 +39,11 @@
 
 | Pantalla | URL local | URL desde cajas |
 |---------|-----------|-----------------|
-| **POS** | **http://localhost:7002/pos/** | **http://192.168.1.105:7002/pos/** |
+| **POS** | **https://localhost:7002/pos/** | **https://192.168.1.105:7002/pos/** |
+
+> ⚠️ El POS ahora usa HTTPS. La primera vez que se acceda desde un dispositivo, Chrome
+> mostrará "Tu conexión no es privada" — dar clic en **Avanzado → Acceder al sitio (no seguro)**.
+> Solo se pide una vez por dispositivo. Ver sección "PENDIENTE: Instalar CA de mkcert" abajo.
 
 ### Estado PM2
 
@@ -191,8 +195,8 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Cajón de dinero: Web Serial API envia ESC/POS [0x1B, 0x70, 0x00, 0x19, 0x19] a la impresora
 - PM2: proceso `ferremex-pos` agregado a `ecosystem.config.js`
 
-### Estado actual (2026-05-21)
-- ✅ Interfaz POS visible en http://localhost:7002/pos/
+### Estado actual (2026-05-22)
+- ✅ Interfaz POS visible en https://localhost:7002/pos/ (ahora HTTPS)
 - ✅ Módulo de Compras con landing (2 opciones: Hacer Compra / Consultar Compras)
 - ✅ Módulo ConsultarCompras conectado a localStorage (pos_historial_compras)
 - ✅ Confirmación de compra actualiza precios + incrementa inventario + guarda historial
@@ -201,11 +205,67 @@ POS de mostrador — ventas rápidas desde las cajas.
 - ✅ Images protegidas: thumbnail no se borra al confirmar compra (fix backend PUT)
 - ✅ 10,255 productos actualizados con clave SAT en la DB
 - ✅ Catálogo SAT completo (52,516 claves) generado en `packages/api/static/claves-sat.json`
+- ✅ Módulo Pedidos con generador de OC PDF (servidor Node.js vía /caja/generar-oc)
+- ✅ Modal de previsualización OC: panel acciones (izq) + iframe PDF (der)
+- ✅ Persistencia de borrador de pedido activo en localStorage (sobrevive cambios de módulo y reinicios)
+- ✅ Persistencia de pedidos en espera en localStorage (indefinida, con botón eliminar)
+- ✅ Botón "En espera" deshabilitado si no hay pedidos en espera
+- ✅ Botón "Generar OC" requiere proveedor seleccionado + artículos en el pedido
+- ✅ Botón "Cargar faltantes" requiere al menos un filtro seleccionado (Dept/Cat/Marca)
 
 ### Nota técnica importante
 Las rutas del POS NO van bajo `/store/` porque Medusa requiere `x-publishable-api-key`
 para todas las rutas `/store/*`. Las rutas POS van bajo `/caja/` con CORS configurado
 en `packages/api/src/api/middlewares.ts`.
+
+---
+
+## ⚠️ PENDIENTE: Instalar CA de mkcert para HTTPS completo y sin advertencias
+
+### Situación actual (2026-05-22)
+El POS corre en HTTPS con un certificado auto-firmado por mkcert. Chrome muestra
+"Tu conexión no es privada" la primera vez, pero funciona si el usuario hace clic en
+"Avanzado → Acceder al sitio". Las descargas de PDF ya funcionan sin advertencias una
+vez aceptada la excepción.
+
+### Lo que falta hacer (requiere presencia física en la computadora de Oaxaca)
+
+**Paso 1 — Instalar el CA en el servidor Windows (1 vez)**
+
+Abrir PowerShell como Administrador:
+```powershell
+mkcert -install
+```
+Esto instala el certificado raíz en el sistema. Chrome dejará de mostrar advertencias en
+la máquina del servidor.
+
+**Paso 2 — Instalar el CA en cada Mac / dispositivo de la tienda**
+
+El archivo CA está en el servidor en:
+```
+C:\Users\andre\AppData\Local\mkcert\rootCA.pem
+```
+
+En cada Mac:
+1. Copiar `rootCA.pem` al dispositivo (AirDrop, USB, etc.)
+2. Abrirlo → se abre Acceso a Llaveros
+3. Importarlo en "Sistema"
+4. Doble clic → "Confiar" → "Al usar este certificado: Confiar siempre"
+5. Ingresar contraseña del Mac para confirmar
+
+En Chrome de Windows (otras computadoras de la tienda):
+```powershell
+# En PowerShell normal (sin admin):
+certutil -user -addstore Root "C:\Users\andre\AppData\Local\mkcert\rootCA.pem"
+```
+
+**Paso 3 — Verificar**
+Después de instalar, visitar https://192.168.1.105:7002/pos/ — debe cargar con candado verde sin advertencias.
+
+### Archivos generados por mkcert
+- Certificados del servidor: `C:\ferremex\certs\cert.pem` y `key.pem`
+- CA raíz (para distribuir a dispositivos): `C:\Users\andre\AppData\Local\mkcert\rootCA.pem`
+- Los certificados vencen el **22 de agosto de 2028**
 
 ---
 
@@ -390,6 +450,51 @@ en `packages/api/src/api/middlewares.ts`.
   → Barra de paginación sticky al fondo: "‹ Anterior | Página X de Y | Siguiente ›"
   → Subtítulo muestra rango: "1–40 de 15,689 artículos · Truper"
   → Al cambiar página: deselecciona artículo activo y hace scroll al tope
+
+### Sesión 2026-05-22 — Módulo Pedidos (mejoras UX + OC PDF servidor + HTTPS)
+
+**Mejoras de UX en módulo Pedidos:**
+- Botón "Cargar faltantes" deshabilitado hasta seleccionar Dept/Cat/Marca
+- Botón "Generar OC" requiere proveedor seleccionado + artículos en la tabla
+- Botón "En espera" deshabilitado si no hay pedidos pendientes
+- Previsualización de pedido: quitados botones "Imprimir" y "Compartir por WhatsApp" (solo en OC)
+- Modal OC eliminó selector de proveedor (ya requerido antes de abrirlo) y fecha de entrega
+- Agregado toggle "Incluir imágenes en el PDF" al modal OC
+- Panel de acciones OC movido al lado izquierdo del modal (PDF a la derecha)
+
+**Persistencia de estado en Pedidos:**
+- Borrador activo guardado en `localStorage["ferremex_pedido_draft"]` — sobrevive cambios de módulo
+- Pedidos en espera guardados en `localStorage["ferremex_pedidos_espera"]` — persistencia indefinida
+- Cada item en espera tiene botón "Eliminar" con confirmación
+
+**Generador OC PDF — migrado a servidor:**
+- Problema: `@react-pdf/renderer` tiene incompatibilidades CJS/ESM con Vite — juego de whack-a-mole con `optimizeDeps`
+- Solución: PDF generado en servidor Node.js (Medusa) vía `POST /caja/generar-oc`
+- Nuevo archivo: `packages/api/src/api/caja/generar-oc/route.ts` — usa `renderToBuffer` de @react-pdf/renderer
+- Nuevo archivo: `packages/api/src/api/caja/generar-oc/OcDocument.tsx` — copia del OCDocument con estilos explícitos
+- Fix crítico: estilos shorthand (`border: "2 solid #F96302"`, `padding: "36 40"`, `borderRadius: "3 3 0 0"`)
+  causan `NaN` en pdfkit del servidor → reemplazados por propiedades explícitas (`borderBottomWidth`, `paddingTop`, etc.)
+- Fix versión React: `bun add react` instaló React 19 (incompatible con @react-pdf 3.4.x) → forzado a `react@^18.3.1`
+- Instalados en `packages/api`: `@react-pdf/renderer@^3.4.4` y `react@^18.3.1`
+- `vite.config.ts` del POS simplificado: eliminadas todas las entradas `optimizeDeps` de react-pdf
+- Frontend: `generarOCPdf()` en `client.ts` → fetch POST → recibe blob → `URL.createObjectURL`
+
+**Modal de previsualización OC (rediseño):**
+- Config inicial: modal compacto (480px) con info proveedor + 2 toggles
+- Post-generación: modal grande (92vw × 88vh) dividido en 2 paneles
+  - Izquierda (38%): proveedor, botón Descargar PDF, Enviar WhatsApp, Enviar Email, Cerrar
+  - Derecha (62%): iframe con el PDF (`blob:https://...#navpanes=0`)
+- WhatsApp: usa número del proveedor → `https://wa.me/52{phone}?text=...` (sin diálogo de sistema)
+  Auto-descarga el PDF antes de abrir WhatsApp para que el usuario lo adjunte manualmente
+- Email: `mailto:` con asunto y cuerpo prefillado
+
+**HTTPS en el POS:**
+- mkcert instalado via winget (`mkcert v1.4.4`)
+- Certificados generados en `C:\ferremex\certs\` (cert.pem + key.pem, válidos hasta 2028-08-22)
+- `apps/pos/vite.config.ts` actualizado con `server.https: { key, cert }`
+- `packages/api/.env` actualizado con CORS para `https://` en todos los orígenes del POS
+- POS ahora en `https://localhost:7002/pos/` — descargas PDF sin advertencias de Chrome
+- ⚠️ CA raíz NO instalada en sistema (requiere admin presencial en Oaxaca) — ver sección PENDIENTE arriba
 
 - **Bug fix: Ajuste de Inventario en blanco**
   → Causa raíz 1: `import.meta.env.BASE_URL` = `/pos` (sin slash) concatenado directo daba
