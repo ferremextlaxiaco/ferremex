@@ -1,18 +1,12 @@
 import { useState, useRef, useEffect } from "react"
-import { Plus, Save, Trash2, ChevronDown, FileText } from "lucide-react"
+import { Plus, Trash2, ChevronDown, FileText } from "lucide-react"
 import PedidosFiltros  from "./PedidosFiltros"
 import PedidosTabla    from "./PedidosTabla"
 import PedidosPreview  from "./PedidosPreview"
 import OCConfirmModal  from "./OCConfirmModal"
+import OCViewModal     from "./OCViewModal"
 import { listarFaltantes, generarOCPdf } from "../lib/client"
-
-// ── Mock data ─────────────────────────────────────────────────────────────────
-
-const PROVEEDORES = [
-  { id: "prov-1", nombre: "Truper",              telefono: "800-800-8787",  dias_credito: 30 },
-  { id: "prov-2", nombre: "Urrea Herramientas",  telefono: "800-714-4800",  dias_credito: 15 },
-  { id: "prov-3", nombre: "Volteck",             telefono: "55-5123-4567",  dias_credito: 0  },
-]
+import { loadProveedores } from "../lib/proveedores"
 
 
 const HISTORIAL_MOCK = [
@@ -216,7 +210,7 @@ function FaltantesModal({ faltantes, rows, onConfirm, onClose }) {
 
 // ── Mis Pedidos tab ───────────────────────────────────────────────────────────
 
-function MisPedidos({ pedidos, onStatusChange }) {
+function MisPedidos({ pedidos, onStatusChange, onVerOC }) {
   const [filtro, setFiltro] = useState("todos")
   const statuses = ["todos", "borrador", "enviado", "confirmado", "recibido"]
 
@@ -275,11 +269,13 @@ function MisPedidos({ pedidos, onStatusChange }) {
                 </td>
                 <td>
                   <div className="pdx-mis-actions">
-                    <button className="ar-btn-action" style={{ padding: "4px 10px", fontSize: 12 }}
-                      onClick={() => alert(`Ver pedido ${p.folio}`)}>Ver</button>
-                    {p.status === "enviado" && (
+                    {p.rows && (
                       <button className="ar-btn-action" style={{ padding: "4px 10px", fontSize: 12 }}
-                        onClick={() => alert(`Reenviar ${p.folio}`)}>Reenviar</button>
+                        onClick={() => onVerOC(p)}>Ver OC</button>
+                    )}
+                    {p.status === "enviado" && p.rows && (
+                      <button className="ar-btn-action" style={{ padding: "4px 10px", fontSize: 12 }}
+                        onClick={() => onVerOC(p)}>Reenviar</button>
                     )}
                     {(p.status === "enviado" || p.status === "confirmado") && (
                       <button className="ar-btn-action" style={{ padding: "4px 10px", fontSize: 12 }}
@@ -303,7 +299,8 @@ function MisPedidos({ pedidos, onStatusChange }) {
 // ── Main module ───────────────────────────────────────────────────────────────
 
 export default function PedidosModule() {
-  const [activeTab,   setActiveTab]   = useState("nuevo")
+  const [proveedores,  setProveedores]  = useState(() => loadProveedores())
+  const [activeTab,    setActiveTab]    = useState("nuevo")
   const [rows,        setRows]        = useState(() => loadDraft()?.rows      ?? [])
   const [freeItems,   setFreeItems]   = useState(() => loadDraft()?.freeItems ?? [])
   const [proveedor,   setProveedor]   = useState(() => loadDraft()?.proveedor ?? null)
@@ -314,7 +311,10 @@ export default function PedidosModule() {
     try { return JSON.parse(localStorage.getItem("ferremex_pedidos_espera")) ?? [] } catch { return [] }
   })
   const [showEspera,  setShowEspera]  = useState(false)
-  const [pedidos,     setPedidos]     = useState(HISTORIAL_MOCK)
+  const [pedidos,     setPedidos]     = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ferremex_mis_pedidos")) ?? [] } catch { return [] }
+  })
+  const [verOC,       setVerOC]       = useState(null)
   const [showPreview, setShowPreview] = useState(false)
   const [showFalt,       setShowFalt]       = useState(false)
   const [faltantes,      setFaltantes]      = useState([])
@@ -331,6 +331,10 @@ export default function PedidosModule() {
   useEffect(() => {
     localStorage.setItem("ferremex_pedidos_espera", JSON.stringify(espera))
   }, [espera])
+
+  useEffect(() => {
+    localStorage.setItem("ferremex_mis_pedidos", JSON.stringify(pedidos))
+  }, [pedidos])
 
   useEffect(() => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ rows, freeItems, proveedor, fecha, folio, status }))
@@ -408,15 +412,34 @@ export default function PedidosModule() {
     const oc = getNextOCNumber()
     setOcNumber(oc)
 
+    const fechaEmision = new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" })
+
     const blobUrl = await generarOCPdf({
       rows,
       freeItems,
       proveedor:      prefs.proveedor,
       ocNumber:       oc,
-      fechaEmision:   new Date().toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" }),
+      fechaEmision,
       mostrarPrecios:  prefs.mostrarPrecios,
       mostrarImagenes: prefs.mostrarImagenes,
     })
+
+    // Guardar en Mis Pedidos
+    const registro = {
+      id:              uid(),
+      folio:           oc,
+      fecha:           todayISO(),
+      fechaEmision,
+      proveedor:       prefs.proveedor?.nombre ?? "—",
+      proveedorData:   prefs.proveedor,
+      articulos:       [...rows, ...freeItems],
+      rows,
+      freeItems,
+      status:          "enviado",
+      mostrarPrecios:  prefs.mostrarPrecios,
+      mostrarImagenes: prefs.mostrarImagenes,
+    }
+    setPedidos(prev => [registro, ...prev])
 
     return { oc, blobUrl }
   }
@@ -446,21 +469,6 @@ export default function PedidosModule() {
     showToast("Pedido retomado")
   }
 
-  function handleGuardar() {
-    if ((rows.length === 0 && freeItems.length === 0) || !proveedor) return
-    const allItems = [
-      ...rows.map(r => ({ clave: r.clave, descripcion: r.descripcion, cantidad: r.cantidad })),
-      ...freeItems.map(f => ({ clave: f.clave, descripcion: f.descripcion + " [libre]", cantidad: f.cantidad })),
-    ]
-    const ped = {
-      id: uid(), folio, fecha,
-      proveedor: proveedor.nombre, proveedorId: proveedor.id,
-      articulos: allItems,
-      status,
-    }
-    setPedidos(prev => [ped, ...prev])
-    showToast("Borrador guardado", "ok")
-  }
 
   function handleCancelar() {
     if (!window.confirm("¿Cancelar este pedido? Los datos no guardados se perderán.")) return
@@ -585,10 +593,6 @@ export default function PedidosModule() {
           <Plus size={14} /> Nuevo pedido
         </button>
 
-        <button className="ar-btn-action" disabled={!canSave} onClick={handleGuardar}>
-          <Save size={14} /> Guardar borrador
-        </button>
-
         <div className="ar-toolbar-divider" />
 
         <button className="ar-btn-action ar-btn-danger" disabled={!hasItems} onClick={handleCancelar}>
@@ -649,6 +653,14 @@ export default function PedidosModule() {
         />
       )}
 
+      {/* OC View Modal (Mis Pedidos) */}
+      {verOC && (
+        <OCViewModal
+          pedido={verOC}
+          onClose={() => setVerOC(null)}
+        />
+      )}
+
       {/* Content */}
       {activeTab === "nuevo" ? (
         <div className="pdx-body">
@@ -667,7 +679,7 @@ export default function PedidosModule() {
             onAddFreeItem={addFreeItem}
             onRemoveFreeItem={removeFreeItem}
             proveedor={proveedor}
-            proveedores={PROVEEDORES}
+            proveedores={proveedores}
             onProveedorChange={setProveedor}
             fecha={fecha}
             onFechaChange={setFecha}
@@ -686,6 +698,7 @@ export default function PedidosModule() {
         <MisPedidos
           pedidos={pedidos}
           onStatusChange={(id, s) => setPedidos(prev => prev.map(p => p.id === id ? { ...p, status: s } : p))}
+          onVerOC={setVerOC}
         />
       )}
     </div>

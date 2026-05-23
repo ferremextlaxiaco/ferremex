@@ -19,7 +19,7 @@ export function Admin() {
   }
 
   const path = location.pathname
-  const tab = path.includes("/admin/clientes")
+  const tab = path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
     ? "clientes"
     : path.includes("/admin/usuarios")
     ? "usuarios"

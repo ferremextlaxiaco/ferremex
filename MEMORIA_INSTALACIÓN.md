@@ -212,6 +212,11 @@ POS de mostrador — ventas rápidas desde las cajas.
 - ✅ Botón "En espera" deshabilitado si no hay pedidos en espera
 - ✅ Botón "Generar OC" requiere proveedor seleccionado + artículos en el pedido
 - ✅ Botón "Cargar faltantes" requiere al menos un filtro seleccionado (Dept/Cat/Marca)
+- ✅ Módulo Clientes convertido a landing (Ver Clientes / Cartera de Crédito)
+- ✅ Cartera de Crédito: módulo completo con semáforos FIFO, abonos, notas, KPIs, historial límite
+- ✅ SalesCreditWarning.jsx: componente de advertencia de crédito para módulo de Ventas
+- ✅ OCViewModal: ver/reenviar OCs desde "Mis Pedidos" con regeneración de PDF desde servidor
+- ✅ Pedidos conectados a proveedores reales (loadProveedores) para número de WhatsApp correcto
 
 ### Nota técnica importante
 Las rutas del POS NO van bajo `/store/` porque Medusa requiere `x-publishable-api-key`
@@ -450,6 +455,41 @@ Después de instalar, visitar https://192.168.1.105:7002/pos/ — debe cargar co
   → Barra de paginación sticky al fondo: "‹ Anterior | Página X de Y | Siguiente ›"
   → Subtítulo muestra rango: "1–40 de 15,689 artículos · Truper"
   → Al cambiar página: deselecciona artículo activo y hace scroll al tope
+
+### Sesión 2026-05-22 (continuación) — Módulo Clientes + Cartera de Crédito
+
+**Módulo Clientes convertido a landing page (patrón AdminCompras):**
+- `AdminClientes.tsx` → ahora es landing con 2 cards: "Ver Clientes" y "Cartera de Crédito"
+- `AdminClientesLista.tsx` → contiene la lista de clientes existente (movida de AdminClientes)
+- Nuevas rutas en `main.tsx`: `/admin/clientes-lista` y `/admin/cartera-credito`
+- `Admin.tsx` actualizado: tab "clientes" activo también en `/admin/cartera-credito`
+
+**Módulo Pedidos — mejoras adicionales:**
+- Botón "Guardar borrador" eliminado (el draft ya se guarda automáticamente en localStorage)
+- Botón "Cargar faltantes" deshabilitado hasta seleccionar Dept/Cat/Marca
+- Módulo Pedidos conectado a proveedores reales: usa `loadProveedores()` de `lib/proveedores.ts`
+  en lugar del array hardcodeado con teléfonos 800 (incompatibles con WhatsApp)
+- OC guardada en "Mis Pedidos" automáticamente al generar (localStorage `ferremex_mis_pedidos`)
+- `OCViewModal.jsx` — nuevo modal para ver/reenviar OC desde "Mis Pedidos":
+  regenera el PDF desde el servidor, muestra iframe + acciones (Descargar, WhatsApp, Email)
+- WhatsApp usa número real del proveedor: `wa.me/52{telefono}?text=...`
+
+**Cartera de Crédito — módulo nuevo completo:**
+- `CarteraCredito.jsx` (1,754 líneas) — módulo completo de gestión de cartera:
+  - KPI bar: Cartera total, Total vencido, Clientes en mora, DSO
+  - Banner de alerta para vencimientos hoy/mañana (dismissable por sesión)
+  - Columna izquierda: búsqueda, filtros (Estado, Plazo, Antigüedad), tabs (Activa/Saldo $0/Inhabilitados)
+  - Tabla central sortable con semáforos por movimiento más crítico (verde/amarillo/naranja/rojo/rojo oscuro/azul)
+  - Panel derecho 4 tabs: Resumen (límite, saldo, historial cambios), Movimientos (FIFO), Abono (form inline), Notas
+  - Modal "Habilitar cliente": busca en `loadClientes()` donde `limite_credito === 0`, guarda con `saveClientes()`
+  - Modal "Editar límite": requiere motivo, log de auditoría inmutable
+  - 8 clientes mock con fechas relativas (semáforos siempre correctos)
+  - Cálculo FIFO real para determinar estado de cada movimiento
+- `SalesCreditWarning.jsx` — componente autónomo para módulo Ventas:
+  - Muestra banner de advertencia cuando cliente tiene crédito limitado o vencido
+  - Para venta a crédito: botón "Continuar como contado" + "Autorización supervisor" (PIN 1234)
+  - Para venta de contado: solo informativo
+  - Self-contained, importable sin dependencia de CarteraCredito
 
 ### Sesión 2026-05-22 — Módulo Pedidos (mejoras UX + OC PDF servidor + HTTPS)
 

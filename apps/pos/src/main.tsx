@@ -9,6 +9,8 @@ import { Admin } from "./pages/Admin"
 import { AdminTickets } from "./pages/AdminTickets"
 import { AdminUsuarios } from "./pages/AdminUsuarios"
 import { AdminClientes } from "./pages/AdminClientes"
+import { AdminClientesLista } from "./pages/AdminClientesLista"
+import CarteraCredito from "./pages/CarteraCredito"
 import { AdminArticulos } from "./pages/AdminArticulos"
 import { AdminInventario } from "./pages/AdminInventario"
 import { AdminProveedores } from "./pages/AdminProveedores"
@@ -33,6 +35,8 @@ createRoot(document.getElementById("root")!).render(
             <Route path="tickets" element={<AdminTickets />} />
             <Route path="usuarios" element={<AdminUsuarios />} />
             <Route path="clientes" element={<AdminClientes />} />
+            <Route path="clientes-lista" element={<AdminClientesLista />} />
+            <Route path="cartera-credito" element={<CarteraCredito />} />
             <Route path="articulos" element={<AdminArticulos />} />
             <Route path="inventario" element={<AdminInventario />} />
             <Route path="proveedores" element={<AdminProveedores />} />
