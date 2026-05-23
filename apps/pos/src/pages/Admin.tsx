@@ -48,15 +48,19 @@ export function Admin() {
             title={sidebarOculto ? "Mostrar panel lateral" : "Ocultar panel lateral"}
           />
           <span className="admin-brand-mark">FERREMEX</span>
-          <span className="admin-brand-sep">—</span>
-          <span className="admin-brand-section">Administración</span>
+          <button
+            className="admin-btn-panel-ventas"
+            onClick={() => navigate("/venta")}
+            title="Ir al panel de ventas"
+          >
+            🛒 Panel de ventas
+          </button>
         </div>
         <div className="admin-topbar-right">
           <span className="admin-user-chip">
             <span className="admin-avatar">{state.cajero.nombre[0].toUpperCase()}</span>
             {state.cajero.nombre}
           </span>
-          <button className="admin-btn-back" onClick={() => navigate("/venta")}>← Volver al POS</button>
         </div>
       </div>
 

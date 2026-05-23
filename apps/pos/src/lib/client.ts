@@ -32,6 +32,8 @@ export interface VentaRequest {
   turno_id: string
   items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number }[]
   pago_efectivo: number
+  pago_transferencia?: number
+  pago_credito?: number
 }
 
 export interface VentaResponse {
@@ -41,6 +43,8 @@ export interface VentaResponse {
   items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number }[]
   total: number
   pago_efectivo: number
+  pago_transferencia: number
+  pago_credito: number
   cambio: number
 }
 

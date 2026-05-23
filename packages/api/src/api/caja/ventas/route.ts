@@ -16,6 +16,8 @@ interface VentaBody {
   turno_id: string
   items: ItemVenta[]
   pago_efectivo: number
+  pago_transferencia?: number
+  pago_credito?: number
 }
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
@@ -45,7 +47,7 @@ function generarFolio(): string {
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const inventoryModule = req.scope.resolve(Modules.INVENTORY)
   const body = req.body as VentaBody
-  const { cajero, turno_id, items, pago_efectivo } = body
+  const { cajero, turno_id, items, pago_efectivo = 0, pago_transferencia = 0, pago_credito = 0 } = body
 
   if (!cajero || !turno_id || !items?.length) {
     res.status(400).json({ error: "Faltan campos requeridos: cajero, turno_id, items" })
@@ -53,8 +55,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
+  const total_pagado = pago_efectivo + pago_transferencia + pago_credito
 
-  if (pago_efectivo < total) {
+  if (total_pagado < total - 0.01) {
     res.status(400).json({ error: "El pago es menor al total" })
     return
   }
@@ -108,7 +111,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     })),
     total,
     pago_efectivo,
-    cambio: pago_efectivo - total,
+    pago_transferencia,
+    pago_credito,
+    cambio: Math.max(0, pago_efectivo - Math.max(0, total - pago_transferencia - pago_credito)),
   }
 
   const ventas = cargarVentas()

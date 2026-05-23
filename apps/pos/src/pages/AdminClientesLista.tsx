@@ -46,6 +46,11 @@ export function AdminClientesLista() {
   const [esNuevo, setEsNuevo] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [nuevoGrupo, setNuevoGrupo] = useState<string | null>(null)
+  const [creditoHabilitado, setCreditoHabilitado] = useState(false)
+
+  function tieneCredito(c: Cliente) {
+    return (c.limite_credito ?? 0) > 0 || (c.dias_credito ?? 0) > 0
+  }
 
   useEffect(() => {
     const editarId = searchParams.get("editar")
@@ -55,10 +60,11 @@ export function AdminClientesLista() {
     const todos = loadClientes()
     if (editarId) {
       const c = todos.find((c) => c.id === editarId)
-      if (c) { setEditando({ ...c }); setEsNuevo(false) }
+      if (c) { setEditando({ ...c }); setEsNuevo(false); setCreditoHabilitado(tieneCredito(c)) }
     } else {
       setEditando({ id: uuid(), ...CLIENTE_VACIO, num_cliente: siguienteNumCliente(todos) })
       setEsNuevo(true)
+      setCreditoHabilitado(false)
     }
     setSearchParams({}, { replace: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -74,6 +80,7 @@ export function AdminClientesLista() {
     setEsNuevo(true)
     setFormError(null)
     setNuevoGrupo(null)
+    setCreditoHabilitado(false)
   }
 
   function abrirEditar(cliente?: Cliente) {
@@ -83,12 +90,22 @@ export function AdminClientesLista() {
     setEsNuevo(false)
     setFormError(null)
     setNuevoGrupo(null)
+    setCreditoHabilitado(tieneCredito(c))
   }
 
   function cerrar() {
     setEditando(null)
     setFormError(null)
     setNuevoGrupo(null)
+    setCreditoHabilitado(false)
+  }
+
+  function toggleCredito() {
+    if (creditoHabilitado) {
+      setField("dias_credito", 0)
+      setField("limite_credito", 0)
+    }
+    setCreditoHabilitado(v => !v)
   }
 
   function eliminar() {
@@ -186,14 +203,21 @@ export function AdminClientesLista() {
                 )}
               </div>
             </div>
-            <div className="ac-grid-3" style={{ marginTop: 10 }}>
+            <div className="ac-grid-2" style={{ marginTop: 10 }}>
               <div className="ac-field">
-                <label className="ac-label">Días de crédito</label>
-                <input className="ac-input" type="number" min={0} value={editando.dias_credito} onChange={(e) => setField("dias_credito", Number(e.target.value))} />
-              </div>
-              <div className="ac-field">
-                <label className="ac-label">Límite de crédito ($)</label>
-                <input className="ac-input" type="number" min={0} step={100} value={editando.limite_credito} onChange={(e) => setField("limite_credito", Number(e.target.value))} />
+                <label className="ac-label">Crédito</label>
+                <div className="ac-credito-toggle-row">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={creditoHabilitado}
+                    className={`ac-toggle${creditoHabilitado ? " on" : ""}`}
+                    onClick={toggleCredito}
+                  />
+                  <span className={`ac-toggle-label${creditoHabilitado ? " on" : ""}`}>
+                    {creditoHabilitado ? "Habilitado" : "Sin crédito"}
+                  </span>
+                </div>
               </div>
               <div className="ac-field">
                 <label className="ac-label">Monedero electrónico</label>
@@ -203,6 +227,37 @@ export function AdminClientesLista() {
                 </select>
               </div>
             </div>
+
+            {creditoHabilitado && (
+              <div className="ac-credito-panel">
+                <div className="ac-grid-2">
+                  <div className="ac-field">
+                    <label className="ac-label">Días de crédito</label>
+                    <input
+                      className="ac-input"
+                      type="number"
+                      min={1}
+                      value={editando.dias_credito || ""}
+                      onChange={(e) => setField("dias_credito", Number(e.target.value))}
+                      placeholder="30"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="ac-field">
+                    <label className="ac-label">Límite de crédito ($)</label>
+                    <input
+                      className="ac-input"
+                      type="number"
+                      min={1}
+                      step={100}
+                      value={editando.limite_credito || ""}
+                      onChange={(e) => setField("limite_credito", Number(e.target.value))}
+                      placeholder="5000"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="ac-section">

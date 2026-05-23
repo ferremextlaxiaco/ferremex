@@ -195,7 +195,7 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Cajón de dinero: Web Serial API envia ESC/POS [0x1B, 0x70, 0x00, 0x19, 0x19] a la impresora
 - PM2: proceso `ferremex-pos` agregado a `ecosystem.config.js`
 
-### Estado actual (2026-05-22)
+### Estado actual (2026-05-23)
 - ✅ Interfaz POS visible en https://localhost:7002/pos/ (ahora HTTPS)
 - ✅ Módulo de Compras con landing (2 opciones: Hacer Compra / Consultar Compras)
 - ✅ Módulo ConsultarCompras conectado a localStorage (pos_historial_compras)
@@ -217,6 +217,10 @@ POS de mostrador — ventas rápidas desde las cajas.
 - ✅ SalesCreditWarning.jsx: componente de advertencia de crédito para módulo de Ventas
 - ✅ OCViewModal: ver/reenviar OCs desde "Mis Pedidos" con regeneración de PDF desde servidor
 - ✅ Pedidos conectados a proveedores reales (loadProveedores) para número de WhatsApp correcto
+- ✅ Admin topbar: botón "🛒 Panel de ventas" junto al logo; eliminado texto "Administración"
+- ✅ Modal de cobro rediseñado: split payment (Efectivo + Transferencia + Crédito combinables)
+- ✅ Backend /caja/ventas: acepta pago_efectivo + pago_transferencia + pago_credito
+- ✅ Editor de cliente: toggle de crédito; días y límite ocultos hasta habilitarlo
 
 ### Nota técnica importante
 Las rutas del POS NO van bajo `/store/` porque Medusa requiere `x-publishable-api-key`
@@ -535,6 +539,36 @@ Después de instalar, visitar https://192.168.1.105:7002/pos/ — debe cargar co
 - `packages/api/.env` actualizado con CORS para `https://` en todos los orígenes del POS
 - POS ahora en `https://localhost:7002/pos/` — descargas PDF sin advertencias de Chrome
 - ⚠️ CA raíz NO instalada en sistema (requiere admin presencial en Oaxaca) — ver sección PENDIENTE arriba
+
+### Sesión 2026-05-23 — Cobro split-payment + mejoras Admin
+
+**Admin topbar rediseñado (`Admin.tsx`):**
+- Eliminado texto "— Administración" del topbar
+- Eliminado botón "← Volver al POS" (derecha)
+- Agregado botón naranja "🛒 Panel de ventas" junto al logo FERREMEX → navega a `/venta`
+- CSS: nueva clase `admin-btn-panel-ventas`
+
+**Modal de cobro — split payment (`ModalCobro.tsx` reescrito):**
+- Título: "Cobro" (antes "Cobrar en efectivo")
+- 3 tarjetas de método de pago: 💵 Efectivo, 📱 Transferencia, 📋 Crédito
+- Se pueden combinar libremente (ej: $100 efectivo + $100 transferencia)
+- Botón "Completar $XX" en cada tarjeta autorrellena el monto restante
+- Crédito solo disponible si `clienteActivo?.limite_credito > 0`
+- Cambio calculado solo sobre el excedente de efectivo tras otros métodos
+- Cajón de dinero solo abre si `pEfectivo > 0`
+
+**Backend /caja/ventas actualizado:**
+- `VentaBody` acepta `pago_efectivo`, `pago_transferencia?`, `pago_credito?` (opcionales, default 0)
+- Validación: `total_pagado >= total - 0.01`
+- Registro guarda los 3 campos + cambio correcto
+- `VentaRequest` / `VentaResponse` en `client.ts` actualizados
+
+**Toggle de crédito en editor de clientes (`AdminClientesLista.tsx`):**
+- Nuevo estado `creditoHabilitado` (local, no persistido en Cliente)
+- OFF: oculta y resetea a 0 los campos `dias_credito` y `limite_credito`
+- ON: muestra panel naranja con ambos campos (días y límite)
+- Al abrir un cliente con crédito existente el toggle arranca encendido automáticamente
+- CSS: `ac-toggle`, `ac-toggle.on`, `ac-credito-panel`, `ac-credito-toggle-row`
 
 - **Bug fix: Ajuste de Inventario en blanco**
   → Causa raíz 1: `import.meta.env.BASE_URL` = `/pos` (sin slash) concatenado directo daba

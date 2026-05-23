@@ -8,21 +8,47 @@ interface ModalCobroProps {
   onVentaCompletada: (venta: VentaResponse) => void
 }
 
+type Metodo = "efectivo" | "transferencia" | "credito"
+
+const METODOS: { id: Metodo; label: string; icon: string }[] = [
+  { id: "efectivo",      label: "Efectivo",       icon: "💵" },
+  { id: "transferencia", label: "Transferencia",   icon: "📱" },
+  { id: "credito",       label: "Crédito",         icon: "📋" },
+]
+
+const fmt = (n: number) =>
+  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2 }).format(n)
+
 export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const { state, total, dispatch } = usePOS()
-  const [pagoStr, setPagoStr] = useState("")
+  const [pagos, setPagos] = useState<Record<Metodo, string>>({ efectivo: "", transferencia: "", credito: "" })
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
+  const efectivoRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => { inputRef.current?.focus() }, [])
+  useEffect(() => { efectivoRef.current?.focus() }, [])
 
-  const pago = parseFloat(pagoStr) || 0
-  const cambio = pago - total
-  const pagoValido = pago >= total
+  const tieneCredito = (state.clienteActivo?.limite_credito ?? 0) > 0
+
+  const pEfectivo      = parseFloat(pagos.efectivo)      || 0
+  const pTransferencia = parseFloat(pagos.transferencia)  || 0
+  const pCredito       = parseFloat(pagos.credito)        || 0
+  const asignado       = pEfectivo + pTransferencia + pCredito
+
+  // Cuánto falta cubrir con efectivo una vez restados otros métodos
+  const neededCash = Math.max(0, total - pTransferencia - pCredito)
+  const cambio     = Math.max(0, pEfectivo - neededCash)
+  const pendiente  = Math.max(0, neededCash - pEfectivo)
+  const cubierto   = asignado >= total - 0.005
+
+  function completar(id: Metodo) {
+    const otros = asignado - (parseFloat(pagos[id]) || 0)
+    const resto = Math.max(0, total - otros)
+    setPagos(p => ({ ...p, [id]: resto.toFixed(2) }))
+  }
 
   async function handleConfirmar() {
-    if (!pagoValido || procesando || !state.cajero) return
+    if (!cubierto || procesando || !state.cajero) return
     setProcesando(true)
     setError(null)
     try {
@@ -35,10 +61,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           cantidad: i.cantidad,
           precio_unitario: i.precio,
         })),
-        pago_efectivo: pago,
+        pago_efectivo: pEfectivo,
+        pago_transferencia: pTransferencia,
+        pago_credito: pCredito,
       })
-      // El cajón es best-effort — un fallo no cancela la venta
-      try { await abrirCajon() } catch { /* sin cajón, continuar */ }
+      if (pEfectivo > 0) {
+        try { await abrirCajon() } catch { /* sin cajón, continuar */ }
+      }
       dispatch({ type: "CLEAR" })
       onVentaCompletada(venta)
     } catch (err) {
@@ -48,14 +77,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && pagoValido) handleConfirmar()
     if (e.key === "Escape") onCerrar()
   }
 
   return (
     <div className="modal-overlay" onKeyDown={handleKeyDown}>
       <div className="modal-cobro">
-        <h2 className="modal-titulo">Cobrar en efectivo</h2>
+        <h2 className="modal-titulo">Cobro</h2>
 
         <div className="cobro-resumen">
           {state.items.map((i) => (
@@ -71,26 +99,64 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           <span className="cobro-total-valor">${total.toFixed(2)}</span>
         </div>
 
-        <div className="cobro-campo">
-          <label>Recibido ($)</label>
-          <input
-            ref={inputRef}
-            type="number"
-            min={total}
-            step="0.50"
-            className="cobro-input"
-            value={pagoStr}
-            onChange={(e) => setPagoStr(e.target.value)}
-            placeholder="0.00"
-          />
+        <p className="cobro-instruccion">Selecciona una forma de pago o combínalas:</p>
+
+        <div className="cobro-metodos">
+          {METODOS.map(({ id, label, icon }) => {
+            const disabled = id === "credito" && !tieneCredito
+            const activo   = (parseFloat(pagos[id]) || 0) > 0
+            const restante = Math.max(0, total - asignado + (parseFloat(pagos[id]) || 0))
+
+            return (
+              <div key={id} className={`cobro-metodo${activo ? " activo" : ""}${disabled ? " deshabilitado" : ""}`}>
+                <div className="cobro-metodo-header">
+                  <span className="cobro-metodo-icon">{icon}</span>
+                  <span className="cobro-metodo-label">{label}</span>
+                  {id === "credito" && !tieneCredito && (
+                    <span className="cobro-metodo-nota">Requiere cliente con crédito</span>
+                  )}
+                </div>
+
+                <input
+                  ref={id === "efectivo" ? efectivoRef : undefined}
+                  type="number"
+                  min={0}
+                  step="0.50"
+                  className="cobro-metodo-input"
+                  value={pagos[id]}
+                  onChange={(e) => setPagos(p => ({ ...p, [id]: e.target.value }))}
+                  placeholder="$0.00"
+                  disabled={disabled}
+                />
+
+                {!disabled && !cubierto && (
+                  <button className="cobro-btn-completar" onClick={() => completar(id)}>
+                    Completar {fmt(restante)}
+                  </button>
+                )}
+
+                {id === "efectivo" && activo && cubierto && cambio >= 0.01 && (
+                  <div className="cobro-cambio-mini">
+                    Cambio: <strong>{fmt(cambio)}</strong>
+                  </div>
+                )}
+              </div>
+            )
+          })}
         </div>
 
-        <div className={`cobro-cambio ${pagoValido ? "cambio-ok" : "cambio-insuficiente"}`}>
-          <span className="cobro-cambio-label">Cambio</span>
-          <span className="cobro-cambio-valor">
-            {pagoValido ? `$${cambio.toFixed(2)}` : "—"}
-          </span>
-        </div>
+        {pendiente > 0.005 && (
+          <div className="cobro-pendiente">
+            Falta por cubrir: <strong>{fmt(pendiente)}</strong>
+          </div>
+        )}
+
+        {cubierto && cambio >= 0.01 && pTransferencia === 0 && pCredito === 0 && (
+          <div className="cobro-cambio cobro-cambio-ok">
+            <span className="cobro-cambio-label">Cambio</span>
+            <span className="cobro-cambio-valor">{fmt(cambio)}</span>
+          </div>
+        )}
 
         {error && <p className="error-text">{error}</p>}
 
@@ -101,7 +167,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           <button
             className="btn-confirmar"
             onClick={handleConfirmar}
-            disabled={!pagoValido || procesando}
+            disabled={!cubierto || procesando}
           >
             {procesando ? "Procesando…" : "✓ Confirmar y ticket"}
           </button>
