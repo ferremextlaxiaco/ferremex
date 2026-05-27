@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react"
 import { registrarVenta, type VentaResponse } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
-import { usePOS } from "../lib/pos-store"
+import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { agregarMovimientoCredito } from "../lib/clientes"
 
 interface ModalCobroProps {
   onCerrar: () => void
@@ -49,22 +50,39 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
 
   async function handleConfirmar() {
     if (!cubierto || procesando || !state.cajero) return
+    if (pCredito > 0 && !state.clienteActivo) return
     setProcesando(true)
     setError(null)
     try {
+      const ventaItems = state.items
+      const ventaCliente = state.clienteActivo
       const venta = await registrarVenta({
         cajero: state.cajero.nombre,
         turno_id: state.cajero.turno_id,
-        items: state.items.map((i) => ({
+        items: ventaItems.map((i) => ({
           sku: i.sku,
           descripcion: i.descripcion,
           cantidad: i.cantidad,
-          precio_unitario: i.precio,
+          precio_unitario: efectivoPrecio(i),
         })),
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,
         pago_credito: pCredito,
       })
+      if (pCredito > 0 && ventaCliente) {
+        const desc = ventaItems
+          .map((i) => `${i.descripcion} ×${i.cantidad}`)
+          .join(", ")
+          .slice(0, 100)
+        agregarMovimientoCredito(ventaCliente.id, {
+          tipo: "compra",
+          monto: pCredito,
+          fecha: new Date().toISOString().slice(0, 10),
+          folio: venta.folio,
+          plazo: ventaCliente.dias_credito,
+          descripcion: desc || "Venta en mostrador",
+        })
+      }
       if (pEfectivo > 0) {
         try { await abrirCajon() } catch { /* sin cajón, continuar */ }
       }

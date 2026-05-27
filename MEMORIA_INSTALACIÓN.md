@@ -195,7 +195,7 @@ POS de mostrador — ventas rápidas desde las cajas.
 - Cajón de dinero: Web Serial API envia ESC/POS [0x1B, 0x70, 0x00, 0x19, 0x19] a la impresora
 - PM2: proceso `ferremex-pos` agregado a `ecosystem.config.js`
 
-### Estado actual (2026-05-23)
+### Estado actual (2026-05-27)
 - ✅ Interfaz POS visible en https://localhost:7002/pos/ (ahora HTTPS)
 - ✅ Módulo de Compras con landing (2 opciones: Hacer Compra / Consultar Compras)
 - ✅ Módulo ConsultarCompras conectado a localStorage (pos_historial_compras)
@@ -221,6 +221,10 @@ POS de mostrador — ventas rápidas desde las cajas.
 - ✅ Modal de cobro rediseñado: split payment (Efectivo + Transferencia + Crédito combinables)
 - ✅ Backend /caja/ventas: acepta pago_efectivo + pago_transferencia + pago_credito
 - ✅ Editor de cliente: toggle de crédito; días y límite ocultos hasta habilitarlo
+- ✅ Precio de mayoreo (Precio 2 automático) en artículos: toggle + cantidad mínima en ArticleDrawer
+- ✅ Contador [-] n [+] en tarjetas del grid de productos para agregar/quitar sin abrir detalle
+- ✅ Carrito: cantidad editable con teclado (input numérico + flechas ↑↓); fila resaltada en verde con badge "Mayoreo" al activar precio mayoreo; precio original tachado + precio mayoreo naranja
+- ✅ Buscador: búsqueda de SKU case-insensitive y parcial (ej. "gr6x1" encuentra GR6X1, GR6X11/2, etc.)
 
 ### Nota técnica importante
 Las rutas del POS NO van bajo `/store/` porque Medusa requiere `x-publishable-api-key`
@@ -576,3 +580,33 @@ Después de instalar, visitar https://192.168.1.105:7002/pos/ — debe cargar co
   → Causa raíz 2: iframe con `height: 100%` dentro de contenedor sin altura explícita
   → Fix: `src="/pos/ajuste-inventario.html"` hardcodeado + `height: calc(100vh - 56px)`
   → El módulo HTML original (803 líneas, Bootstrap) sigue intacto en `apps/pos/public/`
+
+### Sesión 2026-05-27 — Mayoreo + búsqueda case-insensitive + fixes de precios
+
+**Precio de mayoreo (Precio 2 automático) — feature completo:**
+- `ArticleDrawer.jsx`: sección "MAYOREO" con toggle "Activar precio de mayoreo (Precio 2 automático)"
+  y campo "Cantidad mínima para mayoreo" (visible solo cuando el toggle está encendido)
+- `pos-store.ts`: `CartItem` incluye `precio2`, `mayoreoActivo`, `mayoreoMin`; nueva acción
+  `SET_CANTIDAD`; función exportada `efectivoPrecio(item)` — devuelve precio2 cuando se alcanza mayoreoMin
+- `Carrito.tsx`: fila verde con badge "Mayoreo" + precio original tachado cuando se activa;
+  hint "+X para $Y" mientras no se llega al mínimo; `efectivoPrecio` usado en subtotal
+- `ModalCobro.tsx`: `precio_unitario: efectivoPrecio(i)` al registrar venta
+- Backend `/caja/articulos` PUT: los campos `mayoreoActivo` y `mayoreoMin` ahora sí se guardan
+  en metadata al editar un artículo (bug: faltaban en el bloque PUT aunque sí estaban en POST)
+- Backend `/caja/productos`: `precio2` ahora tiene IVA aplicado cuando `impuesto = true`,
+  igual que `precio` (bug: se devolvía el valor raw de metadata sin multiplicar por 1.16)
+
+**Contador rápido [-] n [+] en tarjetas del buscador:**
+- `GridProductos.tsx`: cuando qty=0 muestra botón `+` circular; cuando qty>0 muestra control
+  `[−] n [+]` naranja; `cartMap: Map<sku,cantidad>` pasado desde Buscador vía useMemo
+- `Buscador.tsx`: computa cartMap desde state.items, pasa `onAgregar` y `onQuitar` al grid
+
+**Cantidad editable en carrito con teclado:**
+- `Carrito.tsx`: input numérico en lugar de span; patrón draft (solo activo mientras se edita);
+  flechas ↑↓ incrementan/decrementan; Enter confirma; Escape cancela; click en fila enfoca el input
+
+**Búsqueda de SKU case-insensitive y parcial:**
+- `/caja/productos` route: match exacto ahora prueba `[sku, sku.toUpperCase()]` simultáneamente
+- Si el match exacto falla, nuevo bloque de partial SKU match: carga todos los variants y filtra
+  por `sku.toLowerCase().includes(query.toLowerCase())` antes de caer a la búsqueda fonética
+  → "gr6x1" ahora encuentra GR6X1, GR6X11/2, GR6X11/4, GR6X1 5/8, GR6X15/8

@@ -7,10 +7,13 @@ export interface ProductoPOS {
   sku: string
   descripcion: string
   precio: number
+  precio2?: number
   existencia: number
   thumbnail: string | null
   marca?: string
   especificaciones?: { clave: string; valor: string }[]
+  mayoreoActivo?: boolean
+  mayoreoMin?: number
 }
 
 export interface FiltrosBusqueda {
@@ -91,6 +94,8 @@ export interface ArticuloPOS {
   localizacion: string
   peso: number
   ventaGranel: boolean
+  mayoreoActivo: boolean
+  mayoreoMin: number
   thumbnail: string | null
   imagenes: string[]
   especificaciones: { clave: string; valor: string }[]
@@ -228,6 +233,11 @@ export interface TicketConfig {
     cancelacion: { titulo: string; activo: boolean }
     nota_credito: { titulo: string; activo: boolean }
   }
+  formato_folio?: {
+    modo: "secuencial" | "fecha"
+    prefijo: string
+    digitos: number
+  }
 }
 
 export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
@@ -242,6 +252,7 @@ export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
       email: enc.email ?? "",
       rfc: enc.rfc ?? "",
     },
+    formato_folio: raw.formato_folio ?? { modo: "fecha", prefijo: "", digitos: 4 },
   }
 }
 
@@ -275,11 +286,41 @@ export async function buscarCategorias(): Promise<CategoriasPOS> {
 
 // ── Ventas ───────────────────────────────────────────────────────────────────
 
+export interface VentaListItem {
+  folio: string
+  fecha: string
+  cajero: string
+  turno_id: string
+  items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number }[]
+  total: number
+  pago_efectivo: number
+  pago_transferencia: number
+  pago_credito: number
+  cambio: number
+  estado?: string
+  motivo_cancelacion?: string
+}
+
+export async function listarVentas(desde?: string, hasta?: string): Promise<VentaListItem[]> {
+  const params = new URLSearchParams()
+  if (desde) params.set("desde", desde)
+  if (hasta) params.set("hasta", hasta)
+  return apiFetch<VentaListItem[]>(`/caja/ventas?${params}`)
+}
+
 export async function registrarVenta(venta: VentaRequest): Promise<VentaResponse> {
   return apiFetch<VentaResponse>("/caja/ventas", {
     method: "POST",
     body: JSON.stringify(venta),
   })
+}
+
+export async function obtenerVenta(folio: string): Promise<VentaResponse | null> {
+  try {
+    return await apiFetch<VentaResponse>(`/caja/ventas/${encodeURIComponent(folio)}`)
+  } catch {
+    return null
+  }
 }
 
 export async function obtenerCorte(cajero: string, turno_id: string): Promise<CorteResponse> {
@@ -322,6 +363,15 @@ export async function eliminarUsuario(id: string): Promise<void> {
 
 export async function obtenerTicketConfig(): Promise<TicketConfig> {
   return apiFetch<TicketConfig>("/caja/ticket-config")
+}
+
+export async function obtenerFolioContador(): Promise<number> {
+  const r = await apiFetch<{ contador: number }>("/caja/folio-contador")
+  return r.contador
+}
+
+export async function reiniciarFolioContador(): Promise<void> {
+  await apiFetch<{ ok: boolean }>("/caja/folio-contador", { method: "DELETE" })
 }
 
 export async function guardarTicketConfig(config: TicketConfig): Promise<TicketConfig> {

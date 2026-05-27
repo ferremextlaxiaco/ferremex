@@ -119,6 +119,8 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     localizacion: metaStr(meta, "localizacion"),
     peso: product.weight ? product.weight / 1000 : metaNum(meta, "peso"),
     ventaGranel: metaBool(meta, "granel", "ventaGranel"),
+    mayoreoActivo: metaBool(meta, "mayoreoActivo"),
+    mayoreoMin: metaNum(meta, "mayoreoMin"),
     thumbnail: thumb,
     imagenes,
     existencia,
@@ -519,6 +521,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         claveAlterna: body.claveAlterna ?? "",
         marca: body.marca ?? "",
         especificaciones: body.especificaciones ?? [],
+        mayoreoActivo: body.mayoreoActivo ?? false,
+        mayoreoMin: body.mayoreoMin ?? 0,
       },
       variants: [
         {
@@ -610,6 +614,8 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       claveAlterna: body.claveAlterna ?? "",
       marca: body.marca ?? "",
       especificaciones: body.especificaciones ?? [],
+      mayoreoActivo: body.mayoreoActivo ?? false,
+      mayoreoMin: body.mayoreoMin ?? 0,
     },
   })
 

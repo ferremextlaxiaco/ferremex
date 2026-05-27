@@ -82,6 +82,7 @@ The POS lives at `apps/pos/` (Vite, port 7002, `base: "/pos"`). It is a standalo
   /proveedores  → Supplier management
   /compras      → Purchase orders (ComprasModule — frontend-only, phase 2)
   /pedidos      → Supplier order creation (PedidosModule — frontend-only, mock data, no backend route yet)
+  /cartera      → Credit portfolio management (CarteraCredito.jsx — localStorage, Fase 3 migration pending)
   /generador    → Ticket generator / peripheral config tester
 ```
 
@@ -174,6 +175,7 @@ Sistemas compartidos y sus consumidores actuales:
 | Shape `ArticuloPOS` (campos de artículo) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal` |
 | Búsqueda fonética (backend `/caja/productos`) | `Buscador` |
 | `CatalogosOp` PATCH (`/caja/catalogos`) | `CatalogosModule` |
+| `pos_cartera` localStorage + `agregarMovimientoCredito()` | `CarteraCredito`, `ModalCobro` |
 
 **Protocolo:** cuando un cambio toca uno de estos sistemas, Claude debe:
 1. Listar qué otros módulos consumen el mismo sistema.
@@ -188,7 +190,7 @@ React Context + useReducer. Key state: `cajero`, `items` (cart), `ticketConfig`,
 
 ### Data persistence
 
-- **Clientes**: `localStorage` (`pos_clientes`, `pos_grupos`) — NOT in Medusa DB yet.
+- **Clientes + Cartera de crédito**: `localStorage` (`pos_clientes`, `pos_grupos`, `pos_cartera`) — NOT in Medusa DB yet. Each terminal has its own copy; migration planned for Fase 3.
 - **Ventas / cortes / usuarios / ticket-config**: JSON files at `packages/api/data/*.json`.
 
 ### Client library
@@ -197,9 +199,9 @@ All backend calls go through `apps/pos/src/lib/client.ts` which hits `/caja/*` e
 
 ### POS helper libraries (`apps/pos/src/lib/`)
 
-- `client.ts` — all `/caja/*` fetch calls. Key functions: `buscarProductos`, `registrarVenta`, `obtenerCorte/cerrarCorte`, `listarArticulos`, `listarFaltantes` (articles below min stock, hits `/caja/articulos?faltantes=1`), `crearArticulo/actualizarArticulo/eliminarArticulo`, `subirImagenArticulo`.
+- `client.ts` — all `/caja/*` fetch calls. Key functions: `buscarProductos`, `registrarVenta`, `obtenerCorte/cerrarCorte`, `listarArticulos`, `listarFaltantes` (articles below `inventarioMin`), `crearArticulo/actualizarArticulo/eliminarArticulo`, `subirImagenArticulo`, `generarOCPdf` (PDF via `/caja/generar-oc`), `ajustarInventario` / `incrementarInventario`.
 - `pos-store.ts` — global state (Context + useReducer)
-- `clientes.ts` — localStorage client list (`pos_clientes`, `pos_grupos`)
+- `clientes.ts` — localStorage client list (`pos_clientes`, `pos_grupos`) + cartera de crédito (`pos_cartera`). Credit functions: `loadCartera()`, `saveCartera()`, `agregarMovimientoCredito()`.
 - `proveedores.ts` — supplier data (in-memory, phase 2)
 - `serial.ts` — ESC/POS printer + cash drawer (Chrome/Web Serial)
 - `unidades-sat.ts` — SAT unit-of-measure definitions for product catalog
@@ -207,6 +209,26 @@ All backend calls go through `apps/pos/src/lib/client.ts` which hits `/caja/*` e
 ### ESC/POS and cash drawer
 
 `apps/pos/src/lib/serial.ts` uses **Web Serial API** (Chrome only — does not work in Firefox or Safari). It sends ESC/POS commands directly to the thermal printer for receipts and `[0x1B, 0x70, 0x00, 0x19, 0x19]` to open the cash drawer.
+
+---
+
+### Cartera de Crédito (Fase 2 — localStorage)
+
+`apps/pos/src/pages/CarteraCredito.jsx` is the full credit portfolio page mounted at `/pos/admin/cartera`. All data is in `localStorage` key `pos_cartera` (a `Record<clienteId, CartEntrada>`).
+
+**Types in `clientes.ts`:**
+```ts
+interface Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota? }
+interface NotaCartera { id, fecha, hora, autor, texto }
+interface HistorialLimite { id, fecha, usuario, anterior, nuevo, nota }
+interface CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: HistorialLimite[] }
+```
+
+**Key business logic:**
+- **FIFO payment allocation** (`calcularSaldos()`): payments are applied to the oldest purchase first. Each purchase's state is `pagado` / `parcial` / `pendiente`.
+- **Semáforo** (traffic-light color): `azul` = al día, `verde` = ≥7 days until due, `amarillo` = 1–7 days until due, `naranja` = 1–30 days overdue, `rojo` = 30–60 days overdue, `rojo_oscuro` = 60+ days overdue.
+
+**Payment dispatch flow (ModalCobro.tsx):** when `pago_credito > 0` and `clienteActivo` exists, after `registrarVenta()` succeeds the modal calls `agregarMovimientoCredito(clienteId, { tipo: "compra", monto, folio, ... })` to log the debit in `pos_cartera`. Cash payments additionally call `abrirCajon()`.
 
 ---
 
@@ -226,6 +248,7 @@ POS routes live at `packages/api/src/api/caja/` and do NOT go under `/store/` (w
 | GET/PUT | `/caja/ticket-config` | Ticket header/footer/print options. Handles legacy field migration. |
 | POST | `/caja/imagen` | Upload base64 product thumbnail via Medusa File Module. Returns `{ url }`. |
 | POST | `/caja/ajuste-inventario` | Bulk stock correction by SKU. Body: `{ ajustes: [{ sku, nueva_cantidad }] }`. Returns `{ ok, actualizados, errores }`. |
+| POST | `/caja/generar-oc` | Generate PDF purchase order using React PDF (`OcDocument.tsx`). Body: `{ rows, freeItems, proveedor, ocNumber, fechaEmision, mostrarPrecios, mostrarImagenes }`. Returns PDF blob. |
 
 ### Product pricing model
 
@@ -379,7 +402,7 @@ Skills live in `.claude/skills/`. Load the matching one before non-trivial work:
 - **POS `/caja/*` must not import the `cors` npm package**: The Vite proxy already resolves cross-origin in dev. Adding `import cors from 'cors'` to middlewares fails at runtime because the package isn't installed in the Medusa workspace.
 - **Medusa 2.x prices are not a direct relation**: `ProductVariant` does not have a `prices` property. Fetch prices via `query.graph` with `entity: "product_variant"` and variant IDs as a separate query.
 - **Web Serial API = Chrome only**: The cash drawer and direct ESC/POS printing in `serial.ts` require Chrome (or Chromium). POS terminals must use Chrome.
-- **Clientes are in localStorage, not Medusa DB**: `clientes.ts` reads/writes `localStorage` (`pos_clientes`, `pos_grupos`). Data lives in the browser — each POS terminal has its own client list until Fase 4 migrates this to the database.
+- **Clientes + cartera are in localStorage, not Medusa DB**: `clientes.ts` reads/writes `localStorage` (`pos_clientes`, `pos_grupos`, `pos_cartera`). Data lives in the browser — each POS terminal has its own isolated copy until Fase 3 migrates this to the database.
 - **POS is mounted as a `vendor-ui` module** in `medusa-config.ts` with `viteDevServerPort: 7002` (`@ts-expect-error` suppresses the non-standard option). The port must stay in sync with the `--port 7002` flag in `apps/pos/package.json`'s `dev` script.
 - **PM2 start order matters**: `ferremex-admin` and `ferremex-pos` (Vite) must be running before `ferremex-api`. The API proxies both — if Vite is down at startup, `/dashboard` and `/pos` return errors.
 - **blocks.json aliases** control where Mercur CLI places installed block files: `api` → `packages/api/src`, `vendor` → `apps/vendor/src`, `admin` → `apps/admin/src`. Update these if the directory structure changes.

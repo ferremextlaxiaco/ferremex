@@ -60,17 +60,21 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[] }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number }
   const variantesBase: VarianteBase[] = []
 
   // ── Intento de match exacto por SKU o código de barras ──────────────────
   const codigoCandidato = skuExacto || (q && !q.includes(" ") ? q : "")
   if (codigoCandidato) {
-    // Buscar por SKU y por barcode en paralelo
+    // Buscar por SKU (original + uppercase para ignorar mayúsculas) y por barcode en paralelo
+    const skuCandidatos: string[] = [codigoCandidato]
+    const skuUpper = codigoCandidato.toUpperCase()
+    if (skuUpper !== codigoCandidato) skuCandidatos.push(skuUpper)
+
     const [varsPorSku, varsPorBarcode] = await Promise.all([
       productModule.listProductVariants(
-        { sku: [codigoCandidato] },
-        { select: ["id", "sku", "title", "product_id"], take: 1 }
+        { sku: skuCandidatos },
+        { select: ["id", "sku", "title", "product_id"], take: skuCandidatos.length }
       ),
       productModule.listProductVariants(
         { barcode: [codigoCandidato] },
@@ -83,6 +87,9 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let impuesto = false
       let marca = ""
       let especificaciones: { clave: string; valor: string }[] = []
+      let mayoreoActivo = false
+      let mayoreoMin = 0
+      let precio2 = 0
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
@@ -92,14 +99,57 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           impuesto = !!meta.impuesto
           marca = meta.marca ?? ""
           especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
+          mayoreoActivo = !!meta.mayoreoActivo
+          mayoreoMin = Number(meta.mayoreoMin) || 0
+          precio2 = Number(meta.precio2) || 0
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones, mayoreoActivo, mayoreoMin, precio2 })
+    }
+  }
+
+  // ── Búsqueda parcial de SKU (case-insensitive) cuando el match exacto falló ──
+  // Cubre casos como "gr6x1" → GR6X1, GR6X11/2, GR6X11/4, etc.
+  if (variantesBase.length === 0 && codigoCandidato && !skuExacto) {
+    const qLower = codigoCandidato.toLowerCase()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allVars = await productModule.listProductVariants(
+      {},
+      { select: ["id", "sku", "product_id"], take: 99999 }
+    ) as any[]
+    const partialProductIds = [
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...new Set<string>(
+        allVars
+          .filter((v: any) => v.sku && v.sku.toLowerCase().includes(qLower) && v.product_id)
+          .map((v: any) => v.product_id as string)
+      ),
+    ]
+    if (partialProductIds.length > 0) {
+      const prods = await productModule.listProducts(
+        { id: partialProductIds },
+        { select: ["id", "thumbnail", "metadata"], relations: ["variants"], take: partialProductIds.length + 10 }
+      ) as any[]
+      for (const p of prods) {
+        const meta = (p.metadata ?? {}) as any
+        const thumb = thumbnailPath(p.thumbnail)
+        for (const v of (p.variants ?? []) as any[]) {
+          if (v.sku?.toLowerCase().includes(qLower)) {
+            variantesBase.push({
+              id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb,
+              impuesto: !!meta.impuesto, marca: meta.marca ?? "",
+              especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
+              mayoreoActivo: !!meta.mayoreoActivo, mayoreoMin: Number(meta.mayoreoMin) || 0,
+              precio2: Number(meta.precio2) || 0,
+            })
+          }
+        }
+      }
     }
   }
 
   if (variantesBase.length > 0) {
-    // Ya encontramos por SKU exacto — saltar la búsqueda fonética
+    // Ya encontramos por SKU (exacto o parcial) — saltar la búsqueda fonética
   } else if (!skuExacto) {
     // ── Búsqueda por texto / filtros ────────────────────────────────────────
 
@@ -170,8 +220,11 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const meta = (p.metadata ?? {}) as any
       const marca = meta.marca ?? ""
       const especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
+      const vMayoreoActivo = !!meta.mayoreoActivo
+      const vMayoreoMin = Number(meta.mayoreoMin) || 0
+      const vPrecio2 = Number(meta.precio2) || 0
       for (const v of p.variants ?? []) {
-        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, especificaciones })
+        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2 })
       }
     }
   }
@@ -225,14 +278,18 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const precioBase = (precioPorVariantId.get(v.id) ?? 0) / 100
       // Si el producto tiene impuesto, el precio base es sin IVA → aplicar 16%
       const precio = v.impuesto ? Math.round(precioBase * 1.16 * 100) / 100 : precioBase
+      const precio2 = v.precio2 > 0 && v.impuesto ? Math.round(v.precio2 * 1.16 * 100) / 100 : v.precio2
       return {
         sku: v.sku ?? "",
         descripcion: v.title ?? "",
         precio,
+        precio2,
         existencia: existenciaPorSku.get(v.sku ?? "") ?? 0,
         thumbnail: v.thumbnail,
         marca: v.marca,
         especificaciones: v.especificaciones,
+        mayoreoActivo: v.mayoreoActivo,
+        mayoreoMin: v.mayoreoMin,
       }
     })
     .filter((r) => r.sku && r.descripcion)

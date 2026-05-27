@@ -1,10 +1,16 @@
-import { useRef, useState } from "react"
+import { useRef, useState, useMemo } from "react"
 import { buscarProductos, type FiltrosBusqueda, type ProductoPOS } from "../lib/client"
+import { usePOS } from "../lib/pos-store"
 import { FiltroBar, type FiltroStock } from "./FiltroBar"
 import { GridProductos } from "./GridProductos"
 import { ProductoDetalle } from "./ProductoDetalle"
 
 export function Buscador() {
+  const { state, dispatch } = usePOS()
+  const cartMap = useMemo(
+    () => new Map(state.items.map((i) => [i.sku, i.cantidad])),
+    [state.items]
+  )
   const [query, setQuery] = useState("")
   const [filtros, setFiltros] = useState<FiltrosBusqueda>({})
   const [filtroStock, setFiltroStock] = useState<FiltroStock>("todos")
@@ -117,7 +123,13 @@ export function Buscador() {
       {!seleccionado && tieneResultados && (
         <>
           <p className="resultados-conteo">{resultadosFiltrados.length} producto{resultadosFiltrados.length !== 1 ? "s" : ""} encontrado{resultadosFiltrados.length !== 1 ? "s" : ""}</p>
-          <GridProductos productos={resultadosFiltrados} onSeleccionar={setSeleccionado} />
+          <GridProductos
+            productos={resultadosFiltrados}
+            onSeleccionar={setSeleccionado}
+            cartMap={cartMap}
+            onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin } })}
+            onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
+          />
         </>
       )}
 

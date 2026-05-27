@@ -3,6 +3,9 @@ import type { ProductoPOS } from "../lib/client"
 interface GridProductosProps {
   productos: ProductoPOS[]
   onSeleccionar: (p: ProductoPOS) => void
+  cartMap?: Map<string, number>
+  onAgregar?: (p: ProductoPOS) => void
+  onQuitar?: (sku: string) => void
 }
 
 function stockLabel(existencia: number) {
@@ -11,13 +14,16 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar }: GridProductosProps) {
   if (productos.length === 0) return null
 
   return (
     <div className="grid-productos">
       {productos.map((p) => {
         const stock = stockLabel(p.existencia)
+        const qty = cartMap?.get(p.sku) ?? 0
+        const showControls = onAgregar && p.existencia > 0
+
         return (
           <button
             key={p.sku}
@@ -38,7 +44,39 @@ export function GridProductos({ productos, onSeleccionar }: GridProductosProps) 
             <div className="tarjeta-info">
               <p className="tarjeta-nombre">{p.descripcion}</p>
               <p className="tarjeta-sku">{p.sku}</p>
-              <p className="tarjeta-precio">${p.precio.toFixed(2)}</p>
+              <div className="tarjeta-footer">
+                <p className="tarjeta-precio">${p.precio.toFixed(2)}</p>
+                {showControls && (
+                  qty === 0 ? (
+                    <button
+                      className="btn-agregar-rapido"
+                      onClick={(e) => { e.stopPropagation(); onAgregar(p) }}
+                      title="Agregar al carrito"
+                    >
+                      +
+                    </button>
+                  ) : (
+                    <div className="qty-control" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className="qty-btn"
+                        onClick={() => onQuitar?.(p.sku)}
+                        title="Quitar uno"
+                      >
+                        −
+                      </button>
+                      <span className="qty-num">{qty}</span>
+                      <button
+                        className="qty-btn"
+                        onClick={() => onAgregar(p)}
+                        disabled={qty >= p.existencia}
+                        title="Agregar uno más"
+                      >
+                        +
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
             </div>
           </button>
         )

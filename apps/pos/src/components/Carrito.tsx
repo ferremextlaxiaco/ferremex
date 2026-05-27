@@ -1,4 +1,5 @@
-import { usePOS } from "../lib/pos-store"
+import { useRef, useState } from "react"
+import { usePOS, efectivoPrecio } from "../lib/pos-store"
 
 interface CarritoProps {
   onCobrar: () => void
@@ -7,6 +8,53 @@ interface CarritoProps {
 export function Carrito({ onCobrar }: CarritoProps) {
   const { state, dispatch, total } = usePOS()
   const { items } = state
+
+  // draft values while the user is typing (sku → string)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+
+  function startDraft(sku: string, current: number) {
+    setDrafts((prev) => ({ ...prev, [sku]: String(current) }))
+  }
+
+  function commitDraft(sku: string) {
+    const raw = drafts[sku]
+    if (raw === undefined) return
+    const n = parseInt(raw, 10)
+    if (!isNaN(n) && n >= 1) {
+      dispatch({ type: "SET_CANTIDAD", sku, cantidad: n })
+    }
+    setDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
+  }
+
+  function cancelDraft(sku: string) {
+    setDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>, sku: string) {
+    const item = items.find((i) => i.sku === sku)
+    if (!item) return
+
+    if (e.key === "Enter") {
+      commitDraft(sku)
+      e.currentTarget.blur()
+    } else if (e.key === "Escape") {
+      cancelDraft(sku)
+      e.currentTarget.blur()
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      if (item.cantidad < item.existencia) {
+        dispatch({ type: "INCREMENT", sku })
+        setDrafts((prev) => ({ ...prev, [sku]: String(item.cantidad + 1) }))
+      }
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault()
+      if (item.cantidad > 1) {
+        dispatch({ type: "DECREMENT", sku })
+        setDrafts((prev) => ({ ...prev, [sku]: String(item.cantidad - 1) }))
+      }
+    }
+  }
 
   return (
     <div className="carrito">
@@ -20,41 +68,77 @@ export function Carrito({ onCobrar }: CarritoProps) {
         </div>
       ) : (
         <div className="carrito-items">
-          {items.map((item) => (
-            <div key={item.sku} className="carrito-item">
-              <div className="carrito-item-desc">
-                <span className="carrito-item-nombre">{item.descripcion}</span>
-                <span className="carrito-item-sku">{item.sku}</span>
-              </div>
-              <div className="carrito-item-controles">
-                <button
-                  className="btn-cantidad"
-                  onClick={() => dispatch({ type: "DECREMENT", sku: item.sku })}
-                >
-                  −
-                </button>
-                <span className="carrito-item-cantidad">{item.cantidad}</span>
-                <button
-                  className="btn-cantidad"
-                  onClick={() => dispatch({ type: "INCREMENT", sku: item.sku })}
-                  disabled={item.cantidad >= item.existencia}
-                  title={item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
-                >
-                  +
-                </button>
-              </div>
-              <div className="carrito-item-subtotal">
-                ${(item.precio * item.cantidad).toFixed(2)}
-              </div>
-              <button
-                className="btn-eliminar"
-                onClick={() => dispatch({ type: "REMOVE", sku: item.sku })}
-                title="Eliminar"
+          {items.map((item) => {
+            const draft = drafts[item.sku]
+            const displayValue = draft !== undefined ? draft : String(item.cantidad)
+
+            const precioEfectivo = efectivoPrecio(item)
+            const esMayoreo = item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin
+            const faltanMayoreo = item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
+              ? item.mayoreoMin - item.cantidad : 0
+
+            return (
+              <div
+                key={item.sku}
+                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}`}
+                onClick={() => inputRefs.current[item.sku]?.focus()}
               >
-                ✕
-              </button>
-            </div>
-          ))}
+                <div className="carrito-item-desc">
+                  <span className="carrito-item-nombre">{item.descripcion}</span>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                    <span className="carrito-item-sku">{item.sku}</span>
+                    {esMayoreo && <span className="badge-mayoreo">Mayoreo</span>}
+                    {faltanMayoreo > 0 && (
+                      <span className="badge-mayoreo-hint">+{faltanMayoreo} para ${item.precio2!.toFixed(2)}</span>
+                    )}
+                  </div>
+                </div>
+                <div className="carrito-item-controles">
+                  <button
+                    className="btn-cantidad"
+                    onClick={(e) => { e.stopPropagation(); dispatch({ type: "DECREMENT", sku: item.sku }) }}
+                  >
+                    −
+                  </button>
+                  <input
+                    ref={(el) => { inputRefs.current[item.sku] = el }}
+                    className="carrito-item-cantidad-input"
+                    type="number"
+                    min={1}
+                    max={item.existencia}
+                    value={displayValue}
+                    onClick={(e) => e.stopPropagation()}
+                    onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
+                    onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
+                    onBlur={() => commitDraft(item.sku)}
+                    onKeyDown={(e) => handleKeyDown(e, item.sku)}
+                    title={`Máximo ${item.existencia} disponibles`}
+                  />
+                  <button
+                    className="btn-cantidad"
+                    onClick={(e) => { e.stopPropagation(); dispatch({ type: "INCREMENT", sku: item.sku }) }}
+                    disabled={item.cantidad >= item.existencia}
+                    title={item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
+                  >
+                    +
+                  </button>
+                </div>
+                <div className="carrito-item-subtotal">
+                  {esMayoreo && (
+                    <span className="carrito-precio-tachado">${(item.precio * item.cantidad).toFixed(2)}</span>
+                  )}
+                  ${(precioEfectivo * item.cantidad).toFixed(2)}
+                </div>
+                <button
+                  className="btn-eliminar"
+                  onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE", sku: item.sku }) }}
+                  title="Eliminar"
+                >
+                  ✕
+                </button>
+              </div>
+            )
+          })}
         </div>
       )}
 

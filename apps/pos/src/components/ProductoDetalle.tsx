@@ -18,7 +18,15 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
     for (let i = 0; i < cantidad; i++) {
       dispatch({
         type: "ADD_ITEM",
-        item: { sku: producto.sku, descripcion: producto.descripcion, precio: producto.precio, existencia: producto.existencia },
+        item: {
+          sku: producto.sku,
+          descripcion: producto.descripcion,
+          precio: producto.precio,
+          precio2: producto.precio2,
+          existencia: producto.existencia,
+          mayoreoActivo: producto.mayoreoActivo,
+          mayoreoMin: producto.mayoreoMin,
+        },
       })
     }
     setAgregado(true)
@@ -57,6 +65,11 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           </div>
 
           <div className="detalle-precio">${producto.precio.toFixed(2)}</div>
+          {producto.mayoreoActivo && producto.precio2 && producto.mayoreoMin && (
+            <div className="detalle-mayoreo-badge">
+              Mayoreo: {producto.mayoreoMin}+ piezas → ${producto.precio2.toFixed(2)} c/u
+            </div>
+          )}
 
           <div className={`detalle-stock-badge ${sinStock ? "badge-sin-stock" : producto.existencia <= 3 ? "badge-poco-stock" : "badge-en-stock"}`}>
             {sinStock

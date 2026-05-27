@@ -79,6 +79,7 @@ const EMPTY_FORM = {
   localizacion: "", peso: "",
   ventaGranel: false, imagenes: [],
   especificaciones: [],
+  mayoreoActivo: false, mayoreoMin: "",
 }
 
 function Toggle({ id, checked, onChange, label }) {
@@ -201,6 +202,8 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
       inventarioMin: Number(form.inventarioMin) || 0,
       inventarioMax: Number(form.inventarioMax) || 0,
       peso: Number(form.peso) || 0,
+      mayoreoActivo: form.mayoreoActivo,
+      mayoreoMin: Number(form.mayoreoMin) || 0,
     })
   }
 
@@ -398,6 +401,26 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
 
           <Toggle id="ar-granel" checked={form.ventaGranel} onChange={(v) => f("ventaGranel", v)}
             label="Permite cantidades fraccionadas" />
+
+          {/* Precio de mayoreo */}
+          <p className="ar-section-title">Mayoreo</p>
+
+          <Toggle id="ar-mayoreo" checked={form.mayoreoActivo} onChange={(v) => f("mayoreoActivo", v)}
+            label="Activar precio de mayoreo (Precio 2 automático)" />
+
+          {form.mayoreoActivo && (
+            <Field
+              label="Cantidad mínima para mayoreo"
+              tooltip="A partir de esta cantidad se aplica Precio 2 automáticamente"
+            >
+              <input
+                type="number" min="2" step="1" className="ar-input"
+                value={form.mayoreoMin}
+                onChange={(e) => f("mayoreoMin", e.target.value)}
+                placeholder="Ej: 12"
+              />
+            </Field>
+          )}
 
           {/* Especificaciones */}
           <p className="ar-section-title">Especificaciones</p>

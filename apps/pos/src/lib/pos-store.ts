@@ -10,8 +10,18 @@ export interface CartItem {
   sku: string
   descripcion: string
   precio: number
+  precio2?: number
   cantidad: number
   existencia: number
+  mayoreoActivo?: boolean
+  mayoreoMin?: number
+}
+
+export function efectivoPrecio(item: CartItem): number {
+  if (item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin) {
+    return item.precio2
+  }
+  return item.precio
 }
 
 export interface Permisos {
@@ -42,6 +52,7 @@ type PosAction =
   | { type: "ADD_ITEM"; item: Omit<CartItem, "cantidad"> }
   | { type: "INCREMENT"; sku: string }
   | { type: "DECREMENT"; sku: string }
+  | { type: "SET_CANTIDAD"; sku: string; cantidad: number }
   | { type: "REMOVE"; sku: string }
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
@@ -94,6 +105,14 @@ function posReducer(state: PosState, action: PosAction): PosState {
           .filter((i) => i.cantidad > 0),
       }
 
+    case "SET_CANTIDAD": {
+      const clamped = Math.max(1, Math.min(action.cantidad, state.items.find(i => i.sku === action.sku)?.existencia ?? action.cantidad))
+      return {
+        ...state,
+        items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),
+      }
+    }
+
     case "REMOVE":
       return { ...state, items: state.items.filter((i) => i.sku !== action.sku) }
 
@@ -125,7 +144,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     ticketConfig: null,
     clienteActivo: null,
   })
-  const total = state.items.reduce((sum, i) => sum + i.precio * i.cantidad, 0)
+  const total = state.items.reduce((sum, i) => sum + efectivoPrecio(i) * i.cantidad, 0)
   return createElement(PosContext.Provider, { value: { state, dispatch, total } }, children)
 }
 
