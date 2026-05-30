@@ -1,5 +1,6 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
+import { normalizarFonetico } from "../../../lib/text"
 
 /** Convierte una URL absoluta de thumbnail a ruta relativa /static/... */
 function thumbnailPath(url: string | null | undefined): string | null {
@@ -10,33 +11,8 @@ function thumbnailPath(url: string | null | undefined): string | null {
     return url.startsWith("/") ? url : null
   }
 }
-
-/**
- * Normalización fonética para español:
- * - quita acentos
- * - qu → k, c[ei] → s, z → s  (ce/ci/za/ze/zi suenan igual que se/si/sa...)
- * - v → b
- * - ll → y
- * - h → "" (muda)
- * - todo carácter no alfanumérico → espacio
- *
- * Así "cierra" y "sierra" quedan iguales, "pvc" y "pbc" quedan iguales, etc.
- */
-function normalizarFonetico(texto: string): string {
-  return texto
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")  // quitar acentos (á→a, é→e…)
-    .replace(/ll/g, "y")              // ll → y  (antes que otras reglas)
-    .replace(/qu/g, "k")              // qu → k
-    .replace(/c(?=[ei])/g, "s")       // ce → se, ci → si
-    .replace(/z/g, "s")               // z → s
-    .replace(/v/g, "b")               // v → b
-    .replace(/h/g, "")                // h muda
-    .replace(/[^a-z0-9]/g, " ")       // todo lo demás → espacio
-    .replace(/\s+/g, " ")
-    .trim()
-}
+// normalizarFonetico canonico vive en lib/text (dedupe API-M3): la busqueda fonetica
+// de venta (/caja/productos) y admin (/caja/articulos) comparten la misma normalizacion.
 
 /** Parte la query normalizada en palabras de ≥ 2 caracteres */
 function palabrasQuery(q: string): string[] {

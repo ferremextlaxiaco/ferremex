@@ -4,6 +4,8 @@ import {
   obtenerTicketConfig,
   guardarTicketConfig,
   migrarTicketConfig,
+  obtenerFolioContador,
+  reiniciarFolioContador,
   type TicketConfig,
 } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
@@ -40,6 +42,7 @@ const DEFAULT_CONFIG: TicketConfig = {
     cancelacion: { titulo: "CANCELACIÓN", activo: true },
     nota_credito: { titulo: "NOTA DE CRÉDITO", activo: true },
   },
+  formato_folio: { modo: "fecha", prefijo: "", digitos: 4 },
 }
 
 export function AdminTickets() {
@@ -50,6 +53,9 @@ export function AdminTickets() {
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [contador, setContador] = useState<number | null>(null)
+  const [reseteando, setReseteando] = useState(false)
+  const [resetConfirm, setResetConfirm] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -57,6 +63,12 @@ export function AdminTickets() {
       .then((raw) => setConfig(migrarTicketConfig(raw)))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (config.formato_folio?.modo === "secuencial") {
+      obtenerFolioContador().then(setContador).catch(() => setContador(0))
+    }
+  }, [config.formato_folio?.modo])
 
   /* ── Logo ──────────────────────────────────────────────────────── */
   function handleLogoFile(e: React.ChangeEvent<HTMLInputElement>) {
@@ -90,6 +102,27 @@ export function AdminTickets() {
     setConfig((c) => ({ ...c, opciones: { ...c.opciones, [campo]: valor } }))
   }
 
+  /* ── Formato folio ─────────────────────────────────────────────── */
+  function setFormatoFolio<K extends keyof NonNullable<TicketConfig["formato_folio"]>>(
+    campo: K, valor: NonNullable<TicketConfig["formato_folio"]>[K]
+  ) {
+    setConfig((c) => ({
+      ...c,
+      formato_folio: { ...(c.formato_folio ?? DEFAULT_CONFIG.formato_folio!), [campo]: valor },
+    }))
+  }
+
+  async function handleResetContador() {
+    setReseteando(true)
+    try {
+      await reiniciarFolioContador()
+      setContador(0)
+      setResetConfirm(false)
+    } catch { /* noop */ } finally {
+      setReseteando(false)
+    }
+  }
+
   /* ── Tipos ─────────────────────────────────────────────────────── */
   function setTipoTitulo(tipo: TipoTicket, titulo: string) {
     setConfig((c) => ({ ...c, tipos: { ...c.tipos, [tipo]: { ...c.tipos[tipo], titulo } } }))
@@ -118,6 +151,10 @@ export function AdminTickets() {
   const total = ITEMS_EJEMPLO.reduce((s, i) => s + i.subtotal, 0)
   const tipo = config.tipos[tipoActivo]
   const enc = config.encabezado
+  const fmt = config.formato_folio ?? DEFAULT_CONFIG.formato_folio!
+  const previewFolio = fmt.modo === "secuencial"
+    ? `${fmt.prefijo}${((contador ?? 0) + 1).toString().padStart(fmt.digitos, "0")}`
+    : "POS-20260502-DEMO"
 
   return (
     <div className="at-root">
@@ -239,6 +276,94 @@ export function AdminTickets() {
           ))}
         </div>
 
+        {/* Numeración de tickets */}
+        <div className="at-group">
+          <div className="at-group-label">Numeración de tickets</div>
+
+          {/* Selector de modo */}
+          <div style={{ display: "flex", gap: 0, marginBottom: 14, border: "1px solid var(--border, #e4e4e7)", borderRadius: 7, overflow: "hidden" }}>
+            {([["fecha", "Folio con fecha"], ["secuencial", "Secuencial"]] as const).map(([modo, label]) => (
+              <button
+                key={modo}
+                onClick={() => setFormatoFolio("modo", modo)}
+                style={{
+                  flex: 1, padding: "7px 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: fmt.modo === modo ? 700 : 400,
+                  background: fmt.modo === modo ? "var(--orange, #F96302)" : "transparent",
+                  color: fmt.modo === modo ? "#fff" : "var(--text, #18181b)",
+                  transition: "background 0.15s, color 0.15s",
+                }}
+              >{label}</button>
+            ))}
+          </div>
+
+          {fmt.modo === "fecha" ? (
+            <p className="at-col-subtitle" style={{ margin: 0 }}>
+              Ejemplo: <strong>POS-20260525-A3F2</strong> — incluye fecha y código aleatorio.
+            </p>
+          ) : (
+            <>
+              <div className="at-grid-2">
+                <div className="at-field">
+                  <label className="at-label">Prefijo (opcional)</label>
+                  <input
+                    className="at-input"
+                    value={fmt.prefijo}
+                    placeholder='Ej: TCK, T-, ""'
+                    maxLength={10}
+                    onChange={(e) => setFormatoFolio("prefijo", e.target.value)}
+                  />
+                </div>
+                <div className="at-field">
+                  <label className="at-label">Dígitos del número</label>
+                  <div style={{ display: "flex", gap: 0, border: "1px solid var(--border, #e4e4e7)", borderRadius: 7, overflow: "hidden" }}>
+                    {([2, 3, 4, 5] as const).map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => setFormatoFolio("digitos", d)}
+                        style={{
+                          flex: 1, padding: "7px 0", border: "none", cursor: "pointer", fontSize: 13, fontWeight: fmt.digitos === d ? 700 : 400,
+                          background: fmt.digitos === d ? "var(--orange, #F96302)" : "transparent",
+                          color: fmt.digitos === d ? "#fff" : "var(--text, #18181b)",
+                          transition: "background 0.15s, color 0.15s",
+                        }}
+                      >{d}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: "var(--panel-bg, #f4f4f5)", borderRadius: 7, padding: "10px 14px", marginBottom: 10 }}>
+                <p className="at-label" style={{ marginBottom: 4 }}>Vista previa del próximo folio</p>
+                <span style={{ fontSize: 22, fontWeight: 700, fontFamily: "monospace", letterSpacing: 1, color: "var(--orange, #F96302)" }}>
+                  {previewFolio}
+                </span>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span className="at-col-subtitle" style={{ margin: 0 }}>
+                  Contador actual: <strong>{contador ?? "…"}</strong>
+                </span>
+                {resetConfirm ? (
+                  <>
+                    <span style={{ fontSize: 12, color: "#6b7280" }}>¿Reiniciar a 0?</span>
+                    <button
+                      className="at-btn-link"
+                      style={{ color: "#dc2626", fontWeight: 700 }}
+                      onClick={handleResetContador}
+                      disabled={reseteando}
+                    >{reseteando ? "Reiniciando…" : "Sí, reiniciar"}</button>
+                    <button className="at-btn-link" onClick={() => setResetConfirm(false)}>Cancelar</button>
+                  </>
+                ) : (
+                  <button className="at-btn-link" onClick={() => setResetConfirm(true)}>
+                    Reiniciar contador
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
         {/* Generador de tickets */}
         <div className="at-group at-generador-cta">
           <div className="at-group-label">Generador de tickets</div>
@@ -297,9 +422,9 @@ export function AdminTickets() {
             <div className="at-tk-center at-tk-bold">{tipo.titulo || tipoActivo.toUpperCase()}</div>
             <hr className="at-tk-sep-thin" />
 
-            <div className="at-tk-meta">Folio: POS-20260502-DEMO</div>
+            <div className="at-tk-meta">Folio: {previewFolio}</div>
             <div className="at-tk-meta">Fecha: 02/05/2026 10:32 a.m.</div>
-            {config.opciones.mostrar_cajero && <div className="at-tk-meta">Cajero: André</div>}
+            {config.opciones.mostrar_cajero && <div className="at-tk-meta">Cajero: Andrés</div>}
             {config.opciones.mostrar_turno && <div className="at-tk-meta">Turno: 2026-05-02-m</div>}
 
             <hr className="at-tk-sep" />

@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Navigate } from "react-router-dom"
 import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
 import { ModalCobro } from "../components/ModalCobro"
@@ -14,11 +14,8 @@ export function Venta() {
   const [mostrarCobro, setMostrarCobro] = useState(false)
   const [ventaCompletada, setVentaCompletada] = useState<VentaResponse | null>(null)
 
-  // Redirigir al login si no hay cajero
-  if (!state.cajero) {
-    navigate("/", { replace: true })
-    return null
-  }
+  // Redirigir al login si no hay cajero (declarativo, no navigate en render).
+  if (!state.cajero) return <Navigate to="/" replace />
 
   function handleVentaCompletada(venta: VentaResponse) {
     setMostrarCobro(false)
@@ -38,7 +35,7 @@ export function Venta() {
           <SelectorCliente />
         </div>
         <div className="pos-header-derecha">
-          <span className="pos-cajero">👤 {state.cajero.nombre}</span>
+          <span className="pos-cajero">👤 {state.cajero.alias || state.cajero.nombre}</span>
           {state.cajero.permisos.puede_ver_corte && (
             <button className="btn-secondary btn-sm" onClick={() => navigate("/corte")}>
               Corte de caja

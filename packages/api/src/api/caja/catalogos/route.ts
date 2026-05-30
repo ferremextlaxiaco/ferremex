@@ -2,19 +2,16 @@ import fs   from "fs"
 import path from "path"
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules, ProductStatus } from "@medusajs/framework/utils"
+import { slugify as slugifyText } from "../../../lib/text"
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
+// slugify canónico de lib/text con la longitud histórica de esta ruta (80).
+// Preserva los IDs de Dept/Cat/Marca ya generados (el frontend los usa en joins).
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80)
+  return slugifyText(text, 80)
 }
 
 // Batch-update products in chunks to avoid overwhelming the DB connection pool.

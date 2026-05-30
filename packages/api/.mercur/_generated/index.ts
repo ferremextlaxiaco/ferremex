@@ -699,11 +699,19 @@ export type Routes = {
     caja: {
         ajusteInventario: typeof import("../../src/api/caja/ajuste-inventario/route");
         articulos: typeof import("../../src/api/caja/articulos/route");
+        catalogos: typeof import("../../src/api/caja/catalogos/route");
         categorias: typeof import("../../src/api/caja/categorias/route");
         corte: typeof import("../../src/api/caja/corte/route");
+        folioContador: typeof import("../../src/api/caja/folio-contador/route");
+        generarOc: typeof import("../../src/api/caja/generar-oc/route");
+        imagen: typeof import("../../src/api/caja/imagen/route");
+        login: typeof import("../../src/api/caja/login/route");
+        pedidos: typeof import("../../src/api/caja/pedidos/route");
         productos: typeof import("../../src/api/caja/productos/route");
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");
         usuarios: typeof import("../../src/api/caja/usuarios/route");
-        ventas: typeof import("../../src/api/caja/ventas/route");
+        ventas: typeof import("../../src/api/caja/ventas/route") & {
+            $folio: typeof import("../../src/api/caja/ventas/[folio]/route");
+        };
     };
 };

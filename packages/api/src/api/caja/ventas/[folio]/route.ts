@@ -1,0 +1,122 @@
+import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
+import { Modules } from "@medusajs/framework/utils"
+import * as path from "path"
+import { readJson, writeJsonAtomic, withFileLock } from "../../../../lib/json-store"
+
+const VENTAS_FILE = path.join(__dirname, "../../../../../data/ventas-pos.json")
+
+interface VentaRegistro {
+  folio: string
+  estado?: string
+  motivo_cancelacion?: string
+  fecha_cancelacion?: string
+  items?: { sku?: string; cantidad: number; descripcion?: string }[]
+  [k: string]: unknown
+}
+
+function cargarVentas(): VentaRegistro[] {
+  return readJson<VentaRegistro[]>(VENTAS_FILE, [])
+}
+
+/** GET /caja/ventas/:folio */
+export async function GET(req: MedusaRequest, res: MedusaResponse) {
+  const folio = (req.params as Record<string, string>).folio
+  if (!folio) {
+    res.status(400).json({ error: "Folio requerido" })
+    return
+  }
+  const venta = cargarVentas().find((v) => v.folio === folio)
+  if (!venta) {
+    res.status(404).json({ error: "Venta no encontrada" })
+    return
+  }
+  res.json(venta)
+}
+
+/**
+ * PATCH /caja/ventas/:folio — cancela una venta.
+ *
+ * Marca la venta como cancelada (con motivo y fecha) y reintegra el inventario
+ * de sus items. Todo bajo el lock de ventas para que el reintegro y la escritura
+ * sean atómicos respecto a otras ventas. Idempotente: cancelar dos veces no
+ * reintegra dos veces.
+ *
+ * Body: { estado: "cancelada", motivo: string }
+ * Nota: el reintegro requiere que los items de la venta tengan `sku` guardado.
+ * Las ventas registradas antes de este cambio no lo guardan; en ese caso se
+ * cancela igual pero sin reintegrar (se advierte en log).
+ */
+export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
+  const folio = (req.params as Record<string, string>).folio
+  const { estado, motivo } = (req.body ?? {}) as { estado?: string; motivo?: string }
+  if (!folio) {
+    res.status(400).json({ error: "Folio requerido" })
+    return
+  }
+  // Este endpoint solo implementa la cancelación. Rechazar otros estados de forma
+  // explícita evita cancelar por accidente ante un PATCH con otra intención.
+  if (estado !== "cancelada") {
+    res.status(400).json({ error: 'Solo se admite estado: "cancelada"' })
+    return
+  }
+  if (!motivo?.trim()) {
+    res.status(400).json({ error: "Se requiere un motivo de cancelación" })
+    return
+  }
+
+  const inventoryModule = req.scope.resolve(Modules.INVENTORY)
+
+  try {
+    const resultado = await withFileLock(VENTAS_FILE, async () => {
+      const ventas = cargarVentas()
+      const idx = ventas.findIndex((v) => v.folio === folio)
+      if (idx === -1) return { error: "Venta no encontrada", status: 404 } as const
+      if (ventas[idx].estado === "cancelada") {
+        return { error: "La venta ya está cancelada", status: 400 } as const
+      }
+
+      // Reintegrar inventario de los items que tengan sku.
+      const itemsConSku = (ventas[idx].items ?? []).filter((i) => i.sku)
+      if (itemsConSku.length) {
+        const skus = itemsConSku.map((i) => i.sku as string)
+        const inventoryItems = await inventoryModule.listInventoryItems(
+          { sku: skus },
+          { select: ["id", "sku"], take: skus.length + 10 }
+        )
+        const itemPorSku = new Map(inventoryItems.map((i) => [i.sku, i.id]))
+        const niveles = await inventoryModule.listInventoryLevels(
+          { inventory_item_id: inventoryItems.map((i) => i.id) },
+          { select: ["inventory_item_id", "location_id"], take: inventoryItems.length + 10 }
+        )
+        const locPorItemId = new Map(niveles.map((n) => [n.inventory_item_id, n.location_id]))
+        for (const it of itemsConSku) {
+          const invId = itemPorSku.get(it.sku as string)
+          const locId = invId ? locPorItemId.get(invId) : undefined
+          if (invId && locId) {
+            await inventoryModule.adjustInventory(invId, locId, +it.cantidad)
+          }
+        }
+      } else {
+        console.warn(`[caja/ventas PATCH] Venta ${folio} sin sku en items: no se reintegra inventario`)
+      }
+
+      ventas[idx] = {
+        ...ventas[idx],
+        estado: "cancelada",
+        motivo_cancelacion: motivo.trim(),
+        fecha_cancelacion: new Date().toISOString(),
+      }
+      writeJsonAtomic(VENTAS_FILE, ventas)
+      return { venta: ventas[idx] } as const
+    })
+
+    if ("error" in resultado) {
+      res.status(resultado.status ?? 400).json({ error: resultado.error })
+      return
+    }
+    res.json(resultado.venta)
+  } catch (err) {
+    console.error("[caja/ventas PATCH] Error cancelando venta:", err)
+    res.status(500).json({ error: "No se pudo cancelar la venta" })
+  }
+}

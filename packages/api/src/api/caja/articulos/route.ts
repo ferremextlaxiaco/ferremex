@@ -1,5 +1,6 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
+import { slugify as slugifyText, normalizarFonetico } from "../../../lib/text"
 
 // ---------------------------------------------------------------------------
 // Helper — existencias por SKU (misma lógica que /caja/productos)
@@ -33,14 +34,9 @@ async function existenciasPorSku(
 // Helpers
 // ---------------------------------------------------------------------------
 
+// slugify canónico de lib/text con la longitud histórica de esta ruta (100).
 function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 100)
+  return slugifyText(text, 100)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -128,29 +124,34 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
 }
 
 // ---------------------------------------------------------------------------
-// Búsqueda fonética (igual que /caja/productos)
+// Búsqueda fonética (normalizarFonetico canónico desde lib/text)
 // ---------------------------------------------------------------------------
-
-function normalizarFonetico(texto: string): string {
-  return texto
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/ll/g, "y")
-    .replace(/qu/g, "k")
-    .replace(/c(?=[ei])/g, "s")
-    .replace(/z/g, "s")
-    .replace(/v/g, "b")
-    .replace(/h/g, "")
-    .replace(/[^a-z0-9]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-}
 
 function palabrasQuery(q: string): string[] {
   return normalizarFonetico(q)
     .split(" ")
     .filter((w) => w.length >= 2)
+}
+
+/**
+ * Valida los campos críticos de un artículo en POST/PUT. Devuelve un mensaje de
+ * error o null si es válido.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function validarArticulo(body: any): string | null {
+  const clave = typeof body?.clave === "string" ? body.clave.trim() : ""
+  if (!clave) return "La clave (SKU) es obligatoria"
+  if (/[\/\\]|\.\./.test(clave)) return "La clave no puede contener '/', '\\' ni '..'"
+  if (typeof body?.descripcion !== "string" || !body.descripcion.trim()) {
+    return "La descripción es obligatoria"
+  }
+  for (const campo of ["precio1", "precio2", "precio3", "precio4", "precioCompra"]) {
+    const v = body?.[campo]
+    if (v != null && (typeof v !== "number" || v < 0 || Number.isNaN(v))) {
+      return `El campo ${campo} no puede ser negativo`
+    }
+  }
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -471,6 +472,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = req.body as any
 
+  // Validación de campos críticos (API-I6): sin esto se podían crear productos
+  // sin SKU (inencontrables por inventario), sin título, o con precio negativo.
+  const errorVal = validarArticulo(body)
+  if (errorVal) {
+    res.status(400).json({ error: errorVal })
+    return
+  }
+
   // Buscar o crear categoría
   let categoryId: string | null = null
   if (body.categoria) {
@@ -561,6 +570,24 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
 
   if (!body.id) {
     res.status(400).json({ error: "Se requiere id" })
+    return
+  }
+  if (typeof body.id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(body.id)) {
+    res.status(400).json({ error: "id inválido" })
+    return
+  }
+  // Validar el artículo (el PUT envía el objeto completo desde el Drawer).
+  const errorVal = validarArticulo(body)
+  if (errorVal) {
+    res.status(400).json({ error: errorVal })
+    return
+  }
+  // Verificar existencia antes de actualizar (API-I7): updateProducts sobre un id
+  // inexistente lanza un error poco claro; un 404 explícito es más útil.
+  try {
+    await productModule.retrieveProduct(body.id)
+  } catch {
+    res.status(404).json({ error: "Artículo no encontrado" })
     return
   }
 
@@ -691,6 +718,18 @@ export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
 
   if (!id) {
     res.status(400).json({ error: "Se requiere ?id=" })
+    return
+  }
+  // Validar formato del id y existencia antes de borrar (API-I7): deleteProducts
+  // sobre un id inexistente puede devolver ok silenciosamente.
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    res.status(400).json({ error: "id inválido" })
+    return
+  }
+  try {
+    await productModule.retrieveProduct(id)
+  } catch {
+    res.status(404).json({ error: "Artículo no encontrado" })
     return
   }
 

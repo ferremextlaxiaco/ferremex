@@ -11,9 +11,11 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   ShoppingCart, Banknote, Search, X, Plus, ChevronUp, ChevronDown,
-  TriangleAlert, Printer, FileText, Edit, Check,
+  TriangleAlert, Printer, FileText, Edit, Check, Trash2,
 } from "lucide-react"
-import { loadClientes, saveClientes } from "../lib/clientes"
+import { loadClientes, saveClientes, loadCartera, saveCartera } from "../lib/clientes"
+import { obtenerUsuarios, obtenerVenta } from "../lib/client"
+import { formatMXN as fmtPeso } from "../lib/format"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -29,10 +31,6 @@ function daysFromNow(n) {
   const d = new Date()
   d.setDate(d.getDate() + n)
   return d.toISOString().slice(0, 10)
-}
-
-function fmtPeso(n) {
-  return "$" + Number(n).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function fmtFecha(iso) {
@@ -149,6 +147,34 @@ function semaforoCliente(movimientosConEstado, balance) {
     if (SEMAFORO_PRIORITY[s] < SEMAFORO_PRIORITY[best]) best = s
   })
   return best
+}
+
+// Returns which compras a specific pago covered (FIFO order).
+// { aplicaciones: [{ compra, aplicado }], excedente }
+function calcularAplicacionAbono(movimientos, pagoId) {
+  const sorted = [...movimientos].sort((a, b) => a.fecha.localeCompare(b.fecha))
+  const compras = sorted.filter(m => m.tipo === "compra")
+  const pagos   = sorted.filter(m => m.tipo === "pago")
+
+  const remaining = {}
+  compras.forEach(c => { remaining[c.id] = c.monto })
+
+  for (const pago of pagos) {
+    let pool = pago.monto
+    const aplicaciones = []
+    for (const compra of compras) {
+      if ((remaining[compra.id] ?? 0) <= 0) continue
+      const aplicado = Math.min(pool, remaining[compra.id])
+      if (aplicado > 0) {
+        remaining[compra.id] -= aplicado
+        pool -= aplicado
+        if (pago.id === pagoId) aplicaciones.push({ compra, aplicado })
+      }
+      if (pool <= 0) break
+    }
+    if (pago.id === pagoId) return { aplicaciones, excedente: pool > 0 ? pool : 0 }
+  }
+  return { aplicaciones: [], excedente: 0 }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -339,6 +365,42 @@ const MOCK_PORTFOLIO = [
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Helpers: build portfolios from localStorage; persist changes back
+// ─────────────────────────────────────────────────────────────────────────────
+
+function buildPortfolios(clientes, cartera) {
+  return clientes
+    .filter(c => (c.limite_credito ?? 0) > 0 || (c.dias_credito ?? 0) > 0)
+    .map(c => {
+      const entry = cartera[c.id]
+      const mock  = MOCK_PORTFOLIO.find(p => p.clienteId === c.id)
+      return {
+        id:             c.id,
+        clienteId:      c.id,
+        nombre:         c.nombre,
+        telefono:       c.telefono,
+        limite:         c.limite_credito,
+        plazo:          c.dias_credito,
+        movimientos:    entry?.movimientos    ?? mock?.movimientos    ?? [],
+        notas:          entry?.notas          ?? mock?.notas          ?? [],
+        historialLimite:entry?.historialLimite ?? mock?.historialLimite ?? [],
+      }
+    })
+}
+
+function savePortfolioData(portfolios) {
+  const cartera = loadCartera()
+  portfolios.forEach(p => {
+    cartera[p.clienteId] = {
+      movimientos:     p.movimientos     ?? [],
+      notas:           p.notas           ?? [],
+      historialLimite: p.historialLimite ?? [],
+    }
+  })
+  saveCartera(cartera)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Inline style constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -420,13 +482,13 @@ const S = {
     marginBottom: -1,
   }),
   th: {
-    textAlign: "left", padding: "8px 10px", fontSize: 11, fontWeight: 700,
+    textAlign: "left", padding: "10px 12px", fontSize: 12, fontWeight: 700,
     textTransform: "uppercase", letterSpacing: "0.05em", color: "#71717a",
     borderBottom: "1px solid #e4e4e7", background: "#fafafa", whiteSpace: "nowrap",
     userSelect: "none",
   },
   td: {
-    padding: "8px 10px", fontSize: 13, borderBottom: "1px solid #f4f4f5",
+    padding: "10px 12px", fontSize: 14, borderBottom: "1px solid #f4f4f5",
     verticalAlign: "middle", color: "#18181b",
   },
   badge: (bg, fg) => ({
@@ -735,6 +797,485 @@ function EditarLimiteModal({ open, portfolio, onClose, onGuardar }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// BuscarClienteModal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function BuscarClienteModal({ open, onClose, onSelect, portfolios, clientesLS }) {
+  const [q, setQ]       = useState("")
+  const inputRef        = useRef(null)
+
+  useEffect(() => {
+    if (open) {
+      setQ("")
+      setTimeout(() => inputRef.current?.focus(), 60)
+    }
+  }, [open])
+
+  if (!open) return null
+
+  const filtrados = portfolios.filter(p => {
+    if (!q.trim()) return true
+    const low = q.toLowerCase()
+    if (p.nombre.toLowerCase().includes(low)) return true
+    const cli = clientesLS.find(c => c.id === p.clienteId)
+    if (cli?.num_cliente?.toString().includes(q)) return true
+    return false
+  })
+
+  return (
+    <div style={S.overlay} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ ...S.modal, width: 480 }}>
+        <div style={S.modalHeader}>
+          <span style={{ fontSize: 15, fontWeight: 700 }}>Buscar cliente</span>
+          <button style={S.btnGhost} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div style={{ padding: "12px 20px 10px" }}>
+          <div style={{ position: "relative" }}>
+            <Search size={14} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#71717a" }} />
+            <input
+              ref={inputRef}
+              style={{ ...S.input, paddingLeft: 30 }}
+              placeholder="Nombre o número de cliente…"
+              value={q}
+              onChange={e => setQ(e.target.value)}
+            />
+            {q && (
+              <button
+                style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#71717a", padding: 2 }}
+                onClick={() => setQ("")}
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ overflowY: "auto", maxHeight: 420, borderTop: "1px solid #e4e4e7" }}>
+          {filtrados.length === 0 ? (
+            <div style={{ padding: 24, textAlign: "center", color: "#a1a1aa", fontSize: 13 }}>Sin coincidencias</div>
+          ) : filtrados.map(p => {
+            const cli = clientesLS.find(c => c.id === p.clienteId)
+            const numCli = cli?.num_cliente ?? "—"
+            return (
+              <div
+                key={p.id}
+                onClick={() => { onSelect(p.id); onClose() }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 10,
+                  padding: "10px 20px", cursor: "pointer",
+                  borderBottom: "1px solid #f4f4f5", transition: "background 0.1s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "#f9f9fa"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+              >
+                <SemaforoDot color={p.semaforo} size={10} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: "#18181b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {p.nombre}
+                  </div>
+                  <div style={{ fontSize: 12, color: "#71717a" }}>Cliente #{numCli}</div>
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: p.balance > 0 ? "#18181b" : "#16a34a", whiteSpace: "nowrap" }}>
+                  {fmtPeso(p.balance)}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EliminarCuentaModal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function EliminarCuentaModal({ open, portfolio, onClose, onConfirm }) {
+  const [step,       setStep]       = useState(1)
+  const [pin,        setPin]        = useState("")
+  const [authError,  setAuthError]  = useState("")
+  const [verifying,  setVerifying]  = useState(false)
+  const pinRef = useRef(null)
+
+  useEffect(() => {
+    if (open) { setStep(1); setPin(""); setAuthError("") }
+  }, [open])
+
+  useEffect(() => {
+    if (step === 2) setTimeout(() => pinRef.current?.focus(), 60)
+  }, [step])
+
+  if (!open || !portfolio) return null
+
+  async function handleAuth() {
+    if (!pin.trim() || verifying) return
+    setVerifying(true)
+    setAuthError("")
+    try {
+      const usuarios = await obtenerUsuarios()
+      const match = usuarios.find(
+        u => u.activo && (u.rol === "admin" || u.rol === "supervisor") && u.pin === pin
+      )
+      if (match) {
+        onConfirm()
+      } else {
+        setAuthError("PIN incorrecto o sin permisos de administrador.")
+        setPin("")
+        setTimeout(() => pinRef.current?.focus(), 60)
+      }
+    } catch {
+      setAuthError("Error al verificar. Intenta de nuevo.")
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  return (
+    <div style={S.overlay} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ ...S.modal, width: 420 }}>
+        <div style={S.modalHeader}>
+          <span style={{ fontSize: 15, fontWeight: 700, color: "#dc2626" }}>Eliminar cuenta de crédito</span>
+          <button style={S.btnGhost} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        {step === 1 ? (
+          <>
+            <div style={S.modalBody}>
+              <div style={{
+                background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)",
+                borderRadius: 8, padding: "12px 14px", marginBottom: 14,
+                display: "flex", gap: 10, alignItems: "flex-start",
+              }}>
+                <TriangleAlert size={16} style={{ color: "#dc2626", flexShrink: 0, marginTop: 1 }} />
+                <div style={{ fontSize: 13, color: "#7f1d1d" }}>
+                  Esta acción es <strong>irreversible</strong>. Se eliminarán todos los movimientos,
+                  notas e historial de límite de este cliente.
+                </div>
+              </div>
+              <div style={{
+                background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 6,
+                padding: "10px 12px", marginBottom: 14, fontSize: 13,
+              }}>
+                <div style={{ fontWeight: 700, color: "#18181b", marginBottom: 4 }}>{portfolio.nombre}</div>
+                <div style={{ display: "flex", gap: 16 }}>
+                  <span style={{ color: "#71717a" }}>
+                    Saldo: <strong style={{ color: portfolio.balance > 0 ? "#ef4444" : "#16a34a" }}>
+                      {fmtPeso(portfolio.balance)}
+                    </strong>
+                  </span>
+                  <span style={{ color: "#71717a" }}>Límite: <strong>{fmtPeso(portfolio.limite)}</strong></span>
+                </div>
+              </div>
+              {portfolio.balance > 0 && (
+                <div style={{
+                  background: "rgba(234,179,8,0.1)", border: "1px solid rgba(234,179,8,0.3)",
+                  borderRadius: 6, padding: "8px 12px", fontSize: 12, color: "#92400e",
+                }}>
+                  <strong>Advertencia:</strong> El cliente tiene un saldo pendiente de {fmtPeso(portfolio.balance)}.
+                  Asegúrate de haber liquidado la deuda antes de eliminar la cuenta.
+                </div>
+              )}
+            </div>
+            <div style={S.modalFooter}>
+              <button style={S.btnSecondary} onClick={onClose}>Cancelar</button>
+              <button
+                style={{ ...S.btnPrimary, background: "#dc2626" }}
+                onClick={() => setStep(2)}
+              >
+                Continuar →
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={S.modalBody}>
+              <div style={{ fontSize: 13, color: "#18181b", marginBottom: 14 }}>
+                Ingresa el PIN de un <strong>administrador</strong> para confirmar la eliminación
+                de la cuenta de <strong>{portfolio.nombre}</strong>.
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>PIN de administrador *</label>
+                <input
+                  ref={pinRef}
+                  type="password"
+                  inputMode="numeric"
+                  style={{ ...S.input, letterSpacing: "0.3em", fontSize: 18, textAlign: "center" }}
+                  placeholder="••••"
+                  value={pin}
+                  onChange={e => { setPin(e.target.value); setAuthError("") }}
+                  onKeyDown={e => { if (e.key === "Enter") handleAuth() }}
+                  maxLength={8}
+                />
+              </div>
+              {authError && (
+                <div style={{ fontSize: 13, color: "#dc2626", marginTop: -6 }}>{authError}</div>
+              )}
+            </div>
+            <div style={S.modalFooter}>
+              <button style={S.btnSecondary} onClick={() => { setStep(1); setPin(""); setAuthError("") }}>
+                ← Atrás
+              </button>
+              <button
+                style={{ ...S.btnPrimary, background: "#dc2626", opacity: pin.trim() && !verifying ? 1 : 0.45 }}
+                disabled={!pin.trim() || verifying}
+                onClick={handleAuth}
+              >
+                <Trash2 size={13} /> {verifying ? "Verificando…" : "Eliminar cuenta"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetalleAbonoModal — FIFO allocation when clicking a pago movement
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DetalleAbonoModal({ mov, portfolio, onClose }) {
+  if (!mov || !portfolio) return null
+
+  const { aplicaciones, excedente } = calcularAplicacionAbono(portfolio.movimientos, mov.id)
+
+  // Parse "Abono — Efectivo — referencia" from descripcion
+  const partes = (mov.descripcion ?? "").split(" — ")
+  const metodo = partes[1] ?? ""
+  const refNota = partes.slice(2).join(" — ")
+
+  return (
+    <div style={{ ...S.overlay, zIndex: 1100 }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ ...S.modal, width: 480 }}>
+        <div style={S.modalHeader}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#18181b" }}>
+              Abono — {fmtPeso(mov.monto)}
+            </div>
+            <div style={{ fontSize: 12, color: "#71717a", marginTop: 2 }}>
+              {fmtFecha(mov.fecha)}{metodo ? ` · ${metodo}` : ""}
+            </div>
+          </div>
+          <button style={S.btnGhost} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div style={S.modalBody}>
+          {refNota && (
+            <div style={{ background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 6, padding: "8px 12px", marginBottom: 14, fontSize: 13, color: "#71717a" }}>
+              Referencia: {refNota}
+            </div>
+          )}
+
+          <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#71717a", marginBottom: 8 }}>
+            Aplicado a
+          </div>
+
+          {aplicaciones.length === 0 ? (
+            <div style={{ padding: "12px 0", color: "#a1a1aa", fontSize: 13 }}>
+              Este abono no cubrió ninguna compra pendiente al momento de registrarse.
+            </div>
+          ) : (
+            <div style={{ border: "1px solid #e4e4e7", borderRadius: 8, overflow: "hidden", marginBottom: excedente > 0 ? 12 : 0 }}>
+              {aplicaciones.map(({ compra, aplicado }, i) => {
+                const cubrioTotal = Math.abs(aplicado - compra.monto) < 0.01
+                const pct = Math.round((aplicado / compra.monto) * 100)
+                return (
+                  <div key={compra.id} style={{ padding: "10px 14px", borderBottom: i < aplicaciones.length - 1 ? "1px solid #f4f4f5" : "none" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: cubrioTotal ? 0 : 6 }}>
+                      <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#18181b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          {compra.descripcion || "Compra"}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#a1a1aa", marginTop: 2 }}>
+                          {fmtFecha(compra.fecha)}{compra.folio ? ` · ${compra.folio}` : ""}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: "#16a34a" }}>
+                          {fmtPeso(aplicado)}
+                        </div>
+                        {!cubrioTotal && (
+                          <div style={{ fontSize: 11, color: "#71717a" }}>
+                            de {fmtPeso(compra.monto)} ({pct}%)
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {!cubrioTotal && <ProgressBar used={aplicado} total={compra.monto} height={3} />}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {excedente > 0 && (
+            <div style={{ background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.2)", borderRadius: 6, padding: "8px 12px", fontSize: 13 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ color: "#71717a" }}>Excedente sin deuda que cubrir</span>
+                <strong style={{ color: "#16a34a" }}>{fmtPeso(excedente)}</strong>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={S.modalFooter}>
+          <button style={S.btnSecondary} onClick={onClose}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DetalleVentaModal — ticket detail when clicking a compra movement
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DetalleVentaModal({ mov, onClose }) {
+  const [venta,   setVenta]   = useState(null)   // full ticket from backend
+  const [loading, setLoading] = useState(false)
+  const [error,   setError]   = useState(null)
+
+  useEffect(() => {
+    if (!mov) return
+    if (!mov.folio) { setVenta(null); setError(null); return }
+    setLoading(true)
+    setVenta(null)
+    setError(null)
+    obtenerVenta(mov.folio).then(v => {
+      setVenta(v)
+      if (!v) setError("No se encontró el ticket en el sistema.")
+    }).catch(() => setError("Error al cargar el ticket.")).finally(() => setLoading(false))
+  }, [mov?.id])
+
+  if (!mov) return null
+
+  function metodoLabel(v) {
+    if (!v) return null
+    const partes = []
+    if ((v.pago_efectivo ?? 0) > 0)       partes.push(`Efectivo ${fmtPeso(v.pago_efectivo)}`)
+    if ((v.pago_transferencia ?? 0) > 0)  partes.push(`Transferencia ${fmtPeso(v.pago_transferencia)}`)
+    if ((v.pago_credito ?? 0) > 0)        partes.push(`Crédito ${fmtPeso(v.pago_credito)}`)
+    return partes.join(" + ") || "—"
+  }
+
+  return (
+    <div style={{ ...S.overlay, zIndex: 1100 }} onClick={e => { if (e.target === e.currentTarget) onClose() }}>
+      <div style={{ ...S.modal, width: 540, maxHeight: "88vh" }}>
+        {/* Header */}
+        <div style={S.modalHeader}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: "#18181b" }}>
+              {mov.folio ?? "Compra"} &mdash; {fmtPeso(mov.monto)}
+            </div>
+            <div style={{ fontSize: 12, color: "#71717a", marginTop: 2 }}>
+              {fmtFecha(mov.fecha)}
+              {venta?.fecha && ` · ${new Date(venta.fecha).toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`}
+              {venta?.cajero && ` · Cajero: ${venta.cajero}`}
+            </div>
+          </div>
+          <button style={S.btnGhost} onClick={onClose}><X size={16} /></button>
+        </div>
+
+        <div style={S.modalBody}>
+          {loading && (
+            <div style={{ textAlign: "center", padding: 32, color: "#71717a", fontSize: 14 }}>
+              Cargando ticket…
+            </div>
+          )}
+
+          {!loading && error && (
+            <>
+              <div style={{ background: "rgba(234,179,8,0.08)", border: "1px solid rgba(234,179,8,0.3)", borderRadius: 8, padding: "10px 14px", marginBottom: 14, fontSize: 13, color: "#92400e" }}>
+                {error}
+              </div>
+              {/* Show what we have from the movement itself */}
+              <div style={{ fontSize: 13, color: "#71717a", marginBottom: 6 }}>Datos del movimiento:</div>
+              <div style={{ background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ fontWeight: 600, fontSize: 14, color: "#18181b", marginBottom: 4 }}>{mov.descripcion}</div>
+                <div style={{ fontSize: 13, color: "#71717a" }}>Monto: <strong style={{ color: "#18181b" }}>{fmtPeso(mov.monto)}</strong></div>
+                <div style={{ fontSize: 13, color: "#71717a", marginTop: 2 }}>Fecha: {fmtFecha(mov.fecha)}</div>
+                {mov.folio && <div style={{ fontSize: 12, color: "#a1a1aa", marginTop: 2 }}>Folio: {mov.folio}</div>}
+              </div>
+            </>
+          )}
+
+          {!loading && venta && (
+            <>
+              {/* Items table */}
+              <div style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#71717a", marginBottom: 8 }}>
+                Artículos
+              </div>
+              <div style={{ border: "1px solid #e4e4e7", borderRadius: 8, overflow: "hidden", marginBottom: 16 }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: "#fafafa" }}>
+                      <th style={{ ...S.th, borderBottom: "1px solid #e4e4e7", fontWeight: 700, fontSize: 11, padding: "8px 12px" }}>Descripción</th>
+                      <th style={{ ...S.th, textAlign: "right", borderBottom: "1px solid #e4e4e7", fontWeight: 700, fontSize: 11, padding: "8px 12px", width: 60 }}>Cant.</th>
+                      <th style={{ ...S.th, textAlign: "right", borderBottom: "1px solid #e4e4e7", fontWeight: 700, fontSize: 11, padding: "8px 12px", width: 90 }}>P. Unit</th>
+                      <th style={{ ...S.th, textAlign: "right", borderBottom: "1px solid #e4e4e7", fontWeight: 700, fontSize: 11, padding: "8px 12px", width: 90 }}>Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(venta.items ?? []).map((item, i) => (
+                      <tr key={i} style={{ borderBottom: i < venta.items.length - 1 ? "1px solid #f4f4f5" : "none" }}>
+                        <td style={{ padding: "9px 12px", fontSize: 13, color: "#18181b" }}>{item.descripcion}</td>
+                        <td style={{ padding: "9px 12px", fontSize: 13, textAlign: "right", color: "#71717a" }}>{item.cantidad}</td>
+                        <td style={{ padding: "9px 12px", fontSize: 13, textAlign: "right", color: "#71717a" }}>{fmtPeso(item.precio_unitario)}</td>
+                        <td style={{ padding: "9px 12px", fontSize: 13, fontWeight: 600, textAlign: "right", color: "#18181b" }}>{fmtPeso(item.subtotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Totals */}
+              <div style={{ background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 14 }}>
+                  <span style={{ color: "#71717a" }}>Total</span>
+                  <strong style={{ color: "#18181b", fontSize: 16 }}>{fmtPeso(venta.total)}</strong>
+                </div>
+                <div style={{ borderTop: "1px solid #e4e4e7", paddingTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                  {(venta.pago_efectivo ?? 0) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                      <span style={{ color: "#71717a" }}>Efectivo</span>
+                      <span style={{ color: "#18181b" }}>{fmtPeso(venta.pago_efectivo)}</span>
+                    </div>
+                  )}
+                  {(venta.pago_transferencia ?? 0) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                      <span style={{ color: "#71717a" }}>Transferencia</span>
+                      <span style={{ color: "#18181b" }}>{fmtPeso(venta.pago_transferencia)}</span>
+                    </div>
+                  )}
+                  {(venta.pago_credito ?? 0) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                      <span style={{ color: "#71717a" }}>Crédito</span>
+                      <span style={{ color: "#ef4444", fontWeight: 600 }}>{fmtPeso(venta.pago_credito)}</span>
+                    </div>
+                  )}
+                  {(venta.cambio ?? 0) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, borderTop: "1px solid #e4e4e7", paddingTop: 4, marginTop: 4 }}>
+                      <span style={{ color: "#71717a" }}>Cambio</span>
+                      <span style={{ color: "#16a34a", fontWeight: 600 }}>{fmtPeso(venta.cambio)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div style={S.modalFooter}>
+          <button style={S.btnSecondary} onClick={onClose}>Cerrar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ProgressBar
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -756,15 +1297,15 @@ export default function CarteraCredito() {
   // ── Clientes reales (localStorage) ────────────────────────────────────────
   const [clientesLS, setClientesLS] = useState(() => loadClientes())
 
-  // ── Portfolio state (mock + dinamically added) ────────────────────────────
-  const [portfolios, setPortfolios] = useState(MOCK_PORTFOLIO)
+  // ── Portfolio state — built from localStorage clientes + cartera ─────────
+  const [portfolios, setPortfolios] = useState(() => buildPortfolios(loadClientes(), loadCartera()))
 
   // ── UI state ──────────────────────────────────────────────────────────────
-  const [selId,           setSelId]           = useState(null)
-  const [tab,             setTab]             = useState("resumen")   // resumen|movimientos|abono|notas
-  const [tabCartera,      setTabCartera]      = useState("activa")    // activa|saldo_cero|inhabilitados
-  const [search,          setSearch]          = useState("")
-  const [filtroEstado,    setFiltroEstado]    = useState("")
+  const [selId,              setSelId]              = useState(null)
+  const [tab,                setTab]                = useState("resumen")   // resumen|movimientos|abono|notas
+  const [tabCartera,         setTabCartera]         = useState("activa")    // activa|saldo_cero|inhabilitados
+  const [showBuscarCliente,  setShowBuscarCliente]  = useState(false)
+  const [filtroEstado,       setFiltroEstado]       = useState("")
   const [filtroPlazo,     setFiltroPlazo]     = useState("")
   const [filtroAntig,     setFiltroAntig]     = useState("")
   const [sortCol,         setSortCol]         = useState("semaforo")
@@ -775,6 +1316,8 @@ export default function CarteraCredito() {
   const [showHabilitar,    setShowHabilitar]    = useState(false)
   const [showEditarLimite, setShowEditarLimite] = useState(false)
   const [showAbonoConfirm, setShowAbonoConfirm] = useState(false)
+  const [showEliminar,     setShowEliminar]     = useState(false)
+  const [movDetalle,       setMovDetalle]       = useState(null)
 
   // ── Abono form ────────────────────────────────────────────────────────────
   const [abonoForm, setAbonoForm] = useState({
@@ -800,14 +1343,17 @@ export default function CarteraCredito() {
   useEffect(() => {
     function onKey(e) {
       if (e.key !== "Escape") return
-      if (showAbonoConfirm) { setShowAbonoConfirm(false); return }
-      if (showEditarLimite) { setShowEditarLimite(false); return }
-      if (showHabilitar)    { setShowHabilitar(false); return }
-      if (selId)            { setSelId(null) }
+      if (movDetalle)         { setMovDetalle(null); return }
+      if (showAbonoConfirm)   { setShowAbonoConfirm(false); return }
+      if (showEliminar)       { setShowEliminar(false); return }
+      if (showEditarLimite)   { setShowEditarLimite(false); return }
+      if (showHabilitar)      { setShowHabilitar(false); return }
+      if (showBuscarCliente)  { setShowBuscarCliente(false); return }
+      if (selId)              { setSelId(null) }
     }
     document.addEventListener("keydown", onKey)
     return () => document.removeEventListener("keydown", onKey)
-  }, [showAbonoConfirm, showEditarLimite, showHabilitar, selId])
+  }, [movDetalle, showAbonoConfirm, showEliminar, showEditarLimite, showHabilitar, showBuscarCliente, selId])
 
   // ── Computed portfolio with saldos ────────────────────────────────────────
   const portfoliosComputados = useMemo(() =>
@@ -864,14 +1410,6 @@ export default function CarteraCredito() {
     // inhabilitados: not in mock (future feature) — show empty for now
     if (tabCartera === "inhabilitados") lista = []
 
-    // Search
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      lista = lista.filter(p =>
-        p.nombre.toLowerCase().includes(q) || p.telefono.includes(q)
-      )
-    }
-
     // Estado filter
     if (filtroEstado === "al_dia")    lista = lista.filter(p => ["green","blue"].includes(p.semaforo))
     if (filtroEstado === "por_vencer") lista = lista.filter(p => p.semaforo === "yellow")
@@ -907,7 +1445,7 @@ export default function CarteraCredito() {
     })
 
     return lista
-  }, [portfoliosComputados, tabCartera, search, filtroEstado, filtroPlazo, filtroAntig, sortCol, sortDir])
+  }, [portfoliosComputados, tabCartera, filtroEstado, filtroPlazo, filtroAntig, sortCol, sortDir])
 
   // ── Sort handler ──────────────────────────────────────────────────────────
   function handleSort(col) {
@@ -922,36 +1460,38 @@ export default function CarteraCredito() {
 
   // ── Habilitar cliente ─────────────────────────────────────────────────────
   function handleHabilitar(cliente, limite, plazo, nota) {
-    // Update real clientes in localStorage
-    const actualizados = clientesLS.map(c => {
-      if (c.id !== cliente.id) return c
-      return { ...c, limite_credito: limite, dias_credito: plazo }
-    })
+    const actualizados = clientesLS.map(c =>
+      c.id !== cliente.id ? c : { ...c, limite_credito: limite, dias_credito: plazo }
+    )
     saveClientes(actualizados)
     setClientesLS(actualizados)
 
-    // Add to portfolios
+    const cartera = loadCartera()
+    const existing = cartera[cliente.id] ?? { movimientos: [], notas: [], historialLimite: [] }
     const nuevaEntrada = {
-      id: `port-${uuid()}`,
-      clienteId: cliente.id,
-      nombre: cliente.nombre,
-      telefono: cliente.telefono,
+      id:          cliente.id,
+      clienteId:   cliente.id,
+      nombre:      cliente.nombre,
+      telefono:    cliente.telefono,
       limite,
       plazo,
-      movimientos: [],
-      notas: nota ? [{
-        id: uuid(), fecha: todayISO(), hora: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
-        autor: "Andrés", texto: nota,
-      }] : [],
-      historialLimite: [{
-        id: uuid(), fecha: todayISO(), usuario: "Andrés",
-        anterior: 0, nuevo: limite,
-        nota: nota || "Alta de crédito",
-      }],
+      movimientos: existing.movimientos,
+      notas: [
+        ...(existing.notas ?? []),
+        ...(nota ? [{ id: uuid(), fecha: todayISO(), hora: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }), autor: "Andrés", texto: nota }] : []),
+      ],
+      historialLimite: [
+        ...(existing.historialLimite ?? []),
+        { id: uuid(), fecha: todayISO(), usuario: "Andrés", anterior: 0, nuevo: limite, nota: nota || "Alta de crédito" },
+      ],
     }
-    setPortfolios(prev => [nuevaEntrada, ...prev])
+    const updated = portfolios.some(p => p.clienteId === cliente.id)
+      ? portfolios.map(p => p.clienteId === cliente.id ? nuevaEntrada : p)
+      : [nuevaEntrada, ...portfolios]
+    savePortfolioData(updated)
+    setPortfolios(updated)
     setShowHabilitar(false)
-    setSelId(nuevaEntrada.id)
+    setSelId(cliente.id)
     setTab("resumen")
     showToast(`Crédito habilitado para ${cliente.nombre} — límite ${fmtPeso(limite)}`)
   }
@@ -973,12 +1513,14 @@ export default function CarteraCredito() {
       id: uuid(), fecha: todayISO(), usuario: "Andrés",
       anterior: selPortfolio.limite, nuevo: nuevoLimite, nota: razon,
     }
-    setPortfolios(prev => prev.map(p =>
+    const updated = portfolios.map(p =>
       p.id !== selPortfolio.id ? p : {
         ...p, limite: nuevoLimite,
         historialLimite: [...(p.historialLimite ?? []), nuevoHistorial],
       }
-    ))
+    )
+    savePortfolioData(updated)
+    setPortfolios(updated)
     setShowEditarLimite(false)
     showToast(`Límite actualizado a ${fmtPeso(nuevoLimite)}`)
   }
@@ -997,11 +1539,11 @@ export default function CarteraCredito() {
       descripcion: `Abono — ${abonoForm.metodo}${abonoForm.nota ? ` — ${abonoForm.nota}` : ""}`,
       nota: abonoForm.nota,
     }
-    setPortfolios(prev => prev.map(p =>
-      p.id !== selPortfolio.id ? p : {
-        ...p, movimientos: [...p.movimientos, nuevoPago],
-      }
-    ))
+    const updated = portfolios.map(p =>
+      p.id !== selPortfolio.id ? p : { ...p, movimientos: [...p.movimientos, nuevoPago] }
+    )
+    savePortfolioData(updated)
+    setPortfolios(updated)
     setShowAbonoConfirm(false)
     setAbonoForm({ monto: "", metodo: "Efectivo", fecha: todayISO(), nota: "", aplicarA: "fifo", movEspecifico: "" })
     setTab("movimientos")
@@ -1018,11 +1560,31 @@ export default function CarteraCredito() {
       autor: "Andrés",
       texto: nuevaNota.trim(),
     }
-    setPortfolios(prev => prev.map(p =>
+    const updated = portfolios.map(p =>
       p.id !== selPortfolio.id ? p : { ...p, notas: [...(p.notas ?? []), nota] }
-    ))
+    )
+    savePortfolioData(updated)
+    setPortfolios(updated)
     setNuevaNota("")
     setAddingNota(false)
+  }
+
+  // ── Eliminar cuenta ───────────────────────────────────────────────────────
+  function handleEliminarCuenta() {
+    if (!selPortfolio) return
+    const cartera = loadCartera()
+    delete cartera[selPortfolio.clienteId]
+    saveCartera(cartera)
+    const actualizados = clientesLS.map(c =>
+      c.id !== selPortfolio.clienteId ? c : { ...c, limite_credito: 0, dias_credito: 0 }
+    )
+    saveClientes(actualizados)
+    setClientesLS(actualizados)
+    const nombre = selPortfolio.nombre
+    setPortfolios(ps => ps.filter(p => p.id !== selPortfolio.id))
+    setSelId(null)
+    setShowEliminar(false)
+    showToast(`Cuenta de crédito de ${nombre} eliminada`, "#dc2626")
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -1078,19 +1640,22 @@ export default function CarteraCredito() {
       <div style={{ padding: "12px 14px", overflowY: "auto", flex: 1 }}>
         {/* Credit summary */}
         <div style={{ background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-            <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <div style={{ background: balance > 0 ? "rgba(239,68,68,0.07)" : "rgba(22,163,74,0.07)", border: `1px solid ${balance > 0 ? "rgba(239,68,68,0.2)" : "rgba(22,163,74,0.2)"}`, borderRadius: 6, padding: "6px 10px" }}>
+              <div style={{ fontSize: 11, color: "#71717a", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>Saldo</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: balance === 0 ? "#16a34a" : "#ef4444" }}>{fmtPeso(balance)}</div>
+            </div>
+            <div style={{ background: "#fafafa", border: "1px solid #e4e4e7", borderRadius: 6, padding: "6px 10px" }}>
               <div style={{ fontSize: 11, color: "#71717a", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>Límite</div>
               <div style={{ fontSize: 18, fontWeight: 700 }}>{fmtPeso(limite)}</div>
             </div>
-            <div>
+            <div style={{ background: "rgba(22,163,74,0.07)", border: "1px solid rgba(22,163,74,0.2)", borderRadius: 6, padding: "6px 10px" }}>
               <div style={{ fontSize: 11, color: "#71717a", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>Disponible</div>
               <div style={{ fontSize: 18, fontWeight: 700, color: "#16a34a" }}>{fmtPeso(available)}</div>
             </div>
           </div>
           <div style={{ marginBottom: 6 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#71717a", marginBottom: 4 }}>
-              <span>Saldo: <strong style={{ color: "#18181b" }}>{fmtPeso(balance)}</strong></span>
+            <div style={{ display: "flex", justifyContent: "flex-end", fontSize: 12, color: "#71717a", marginBottom: 4 }}>
               <span>{limite > 0 ? Math.round((balance / limite) * 100) : 0}% usado</span>
             </div>
             <ProgressBar used={balance} total={limite} height={7} />
@@ -1138,6 +1703,19 @@ export default function CarteraCredito() {
             onClick={() => showToast("Próximamente disponible — configura las terminales primero ⚙", "#F96302")}
           >
             <FileText size={13} /> Exportar PDF
+          </button>
+        </div>
+
+        {/* Danger zone */}
+        <div style={{ borderTop: "1px solid #f4f4f5", paddingTop: 12, marginBottom: 14 }}>
+          <button
+            style={{
+              ...S.btnGhost, border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6,
+              width: "100%", justifyContent: "center", color: "#dc2626", gap: 6,
+            }}
+            onClick={() => setShowEliminar(true)}
+          >
+            <Trash2 size={13} /> Eliminar cuenta de crédito
           </button>
         </div>
 
@@ -1197,33 +1775,50 @@ export default function CarteraCredito() {
           }
 
           return (
-            <div key={m.id} style={{
-              display: "flex", alignItems: "flex-start", gap: 10,
-              padding: "10px 14px", borderBottom: "1px solid #f4f4f5",
-            }}>
-              <div style={{ marginTop: 2 }}>
+            <div
+              key={m.id}
+              onClick={() => setMovDetalle(m)}
+              style={{
+                display: "flex", alignItems: "flex-start", gap: 12,
+                padding: "12px 16px", borderBottom: "1px solid #f4f4f5",
+                cursor: "pointer", transition: "background 0.1s",
+              }}
+              onMouseEnter={e => e.currentTarget.style.background = "#f9f9fa"}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+            >
+              <div style={{ marginTop: 3 }}>
                 {isPago
-                  ? <Banknote size={15} style={{ color: "#16a34a" }} />
-                  : <ShoppingCart size={15} style={{ color: semColor }} />
+                  ? <Banknote size={17} style={{ color: "#16a34a" }} />
+                  : <ShoppingCart size={17} style={{ color: semColor }} />
                 }
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 13, fontWeight: 600, color: "#18181b" }}>
-                    {isPago ? fmtPeso(m.monto) : `${fmtPeso(m.monto)}`}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "#18181b" }}>
+                    {fmtPeso(m.monto)}
                   </span>
-                  {badge}
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
+                    background: isPago ? "rgba(22,163,74,0.1)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.1)" : "rgba(249,99,2,0.1)",
+                    color:      isPago ? "#16a34a"              : m.tipo === "cancelacion" ? "#dc2626"             : "#c75000",
+                    border: `1px solid ${isPago ? "rgba(22,163,74,0.25)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.25)" : "rgba(249,99,2,0.25)"}`,
+                  }}>
+                    {isPago ? "Abono" : m.tipo === "cancelacion" ? "Cancelación" : "Compra"}
+                  </span>
                 </div>
-                <div style={{ fontSize: 12, color: "#71717a", marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 13, color: "#71717a", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {m.descripcion}
                 </div>
-                <div style={{ display: "flex", gap: 10, marginTop: 2, fontSize: 11, color: "#a1a1aa" }}>
+                <div style={{ display: "flex", gap: 10, marginTop: 3, fontSize: 12, color: "#a1a1aa" }}>
                   <span>{fmtFecha(m.fecha)}</span>
                   {m.folio && <span>{m.folio}</span>}
+                  <span style={{ color: "#F96302", fontSize: 11 }}>
+                    {isPago ? "Ver aplicación →" : "Ver ticket →"}
+                  </span>
                 </div>
               </div>
               {!isPago && (
-                <SemaforoDot color={m._semaforo} size={9} />
+                <SemaforoDot color={m._semaforo} size={10} />
               )}
             </div>
           )
@@ -1470,21 +2065,13 @@ export default function CarteraCredito() {
 
         {/* LEFT COLUMN ─────────────────────────────────────────────────── */}
         <div style={S.leftCol}>
-          {/* Search */}
-          <div style={{ position: "relative" }}>
-            <Search size={14} style={{ position: "absolute", left: 9, top: "50%", transform: "translateY(-50%)", color: "#71717a" }} />
-            <input
-              style={{ ...S.input, paddingLeft: 30 }}
-              placeholder="Buscar cliente…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-            {search && (
-              <button style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#71717a", padding: 2 }} onClick={() => setSearch("")}>
-                <X size={13} />
-              </button>
-            )}
-          </div>
+          {/* Buscar cliente */}
+          <button
+            style={{ ...S.btnSecondary, justifyContent: "center", gap: 6, width: "100%" }}
+            onClick={() => setShowBuscarCliente(true)}
+          >
+            <Search size={14} /> Buscar cliente
+          </button>
 
           {/* Filters */}
           <div style={S.card}>
@@ -1555,14 +2142,13 @@ export default function CarteraCredito() {
             <thead>
               <tr>
                 {[
-                  { col: "semaforo", label: "", width: 32 },
-                  { col: "nombre",   label: "Cliente",      width: "auto" },
-                  { col: "limite",   label: "Límite",       width: 88 },
-                  { col: "balance",  label: "Saldo",        width: 88 },
-                  { col: null,       label: "Disponible",   width: 96 },
-                  { col: "diasVence",label: "Vence en",     width: 100 },
-                  { col: null,       label: "Plazo",        width: 60 },
-                  { col: null,       label: "Último abono", width: 96 },
+                  { col: "semaforo",  label: "",             width: 36 },
+                  { col: "nombre",    label: "Cliente",      width: "auto" },
+                  { col: "limite",    label: "Límite",       width: 110 },
+                  { col: "balance",   label: "Saldo",        width: 110 },
+                  { col: null,        label: "Disponible",   width: 120 },
+                  { col: "diasVence", label: "Vence en",     width: 130 },
+                  { col: null,        label: "Último abono", width: 130 },
                 ].map(({ col, label, width }, i) => (
                   <th
                     key={i}
@@ -1582,19 +2168,18 @@ export default function CarteraCredito() {
           <div style={{ overflowY: "auto", flex: 1 }}>
             <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
               <colgroup>
-                <col style={{ width: 32 }} />
+                <col style={{ width: 36 }} />
                 <col />
-                <col style={{ width: 88 }} />
-                <col style={{ width: 88 }} />
-                <col style={{ width: 96 }} />
-                <col style={{ width: 100 }} />
-                <col style={{ width: 60 }} />
-                <col style={{ width: 96 }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 110 }} />
+                <col style={{ width: 120 }} />
+                <col style={{ width: 130 }} />
+                <col style={{ width: 130 }} />
               </colgroup>
               <tbody>
                 {listaFiltrada.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "#a1a1aa", fontSize: 13 }}>
+                    <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "#a1a1aa", fontSize: 14 }}>
                       {tabCartera === "inhabilitados" ? "Módulo de inhabilitados próximamente" : "Sin clientes que coincidan con los filtros"}
                     </td>
                   </tr>
@@ -1605,28 +2190,27 @@ export default function CarteraCredito() {
                     onClick={() => { setSelId(p.id); setTab("resumen") }}
                     style={{ borderLeft: "3px solid transparent", transition: "background 0.1s" }}
                   >
-                    <td style={{ ...S.td, width: 32, paddingLeft: 10 }}>
-                      <SemaforoDot color={p.semaforo} />
+                    <td style={{ ...S.td, width: 36, paddingLeft: 12 }}>
+                      <SemaforoDot color={p.semaforo} size={11} />
                     </td>
                     <td style={{ ...S.td, overflow: "hidden" }}>
-                      <div style={{ fontWeight: 600, color: "#18181b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.nombre}</div>
-                      <div style={{ fontSize: 11, color: "#a1a1aa" }}>{p.telefono}</div>
+                      <div style={{ fontWeight: 600, fontSize: 15, color: "#18181b", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{p.nombre}</div>
+                      <div style={{ fontSize: 12, color: "#a1a1aa", marginTop: 2 }}>{p.telefono}</div>
                     </td>
-                    <td style={{ ...S.td, fontSize: 12 }}>{fmtPeso(p.limite)}</td>
-                    <td style={{ ...S.td, fontWeight: 700, fontSize: 13, color: p.balance > 0 ? "#18181b" : "#16a34a" }}>
+                    <td style={{ ...S.td }}>{fmtPeso(p.limite)}</td>
+                    <td style={{ ...S.td, fontWeight: 700, fontSize: 15, color: p.balance > 0 ? "#ef4444" : "#16a34a" }}>
                       {fmtPeso(p.balance)}
                     </td>
                     <td style={{ ...S.td }}>
-                      <div style={{ fontSize: 11, color: "#71717a", marginBottom: 3 }}>
+                      <div style={{ fontSize: 13, color: "#71717a", marginBottom: 4 }}>
                         {fmtPeso(p.available)}
                       </div>
-                      <ProgressBar used={p.balance} total={p.limite} height={4} />
+                      <ProgressBar used={p.balance} total={p.limite} height={5} />
                     </td>
-                    <td style={{ ...S.td, fontSize: 12 }}>
+                    <td style={{ ...S.td }}>
                       {diasVenceLabel(p.diasVence)}
                     </td>
-                    <td style={{ ...S.td, fontSize: 12, color: "#71717a" }}>{p.plazo}d</td>
-                    <td style={{ ...S.td, fontSize: 11, color: "#71717a" }}>
+                    <td style={{ ...S.td, color: "#71717a" }}>
                       {p.ultimoPago ? fmtFecha(p.ultimoPago.fecha) : "—"}
                     </td>
                   </tr>
@@ -1648,32 +2232,40 @@ export default function CarteraCredito() {
           </div>
         </div>
 
-        {/* RIGHT PANEL ──────────────────────────────────────────────────── */}
-        {selPortfolio ? (
-          <div style={S.rightPanel}>
+      </div>
+
+      {/* ── PANEL CLIENTE (modal) ───────────────────────────────────────── */}
+      {selPortfolio && (
+        <div style={S.overlay} onClick={e => { if (e.target === e.currentTarget) setSelId(null) }}>
+          <div style={{
+            background: "#fff", borderRadius: 12, width: 740, maxWidth: "96vw",
+            height: "92vh", display: "flex", flexDirection: "column",
+            boxShadow: "0 20px 60px rgba(0,0,0,0.18)", overflow: "hidden",
+            animation: "slideInRight 0.18s ease",
+          }}>
             {/* Header */}
-            <div style={{ padding: "12px 14px 10px", borderBottom: "1px solid #e4e4e7", flexShrink: 0 }}>
+            <div style={{ padding: "14px 18px 12px", borderBottom: "1px solid #e4e4e7", flexShrink: 0 }}>
               <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between" }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 2 }}>
-                    <SemaforoDot color={selPortfolio.semaforo} size={10} />
-                    <span style={{ fontSize: 14, fontWeight: 700, color: "#18181b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                    <SemaforoDot color={selPortfolio.semaforo} size={11} />
+                    <span style={{ fontSize: 16, fontWeight: 700, color: "#18181b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {selPortfolio.nombre}
                     </span>
                   </div>
                   <div style={{ fontSize: 12, color: "#71717a" }}>{selPortfolio.telefono} · {selPortfolio.plazo}d plazo</div>
                 </div>
-                <button style={S.btnGhost} onClick={() => setSelId(null)}><X size={15} /></button>
+                <button style={S.btnGhost} onClick={() => setSelId(null)}><X size={16} /></button>
               </div>
             </div>
 
             {/* Tab bar */}
             <div style={S.tabBar}>
               {[
-                { key: "resumen",      label: "Resumen" },
-                { key: "movimientos",  label: "Movimientos" },
-                { key: "abono",        label: "Abono" },
-                { key: "notas",        label: `Notas (${(selPortfolio.notas ?? []).length})` },
+                { key: "resumen",     label: "Resumen" },
+                { key: "movimientos", label: "Movimientos" },
+                { key: "abono",       label: "Abono" },
+                { key: "notas",       label: `Notas (${(selPortfolio.notas ?? []).length})` },
               ].map(t => (
                 <button key={t.key} style={S.tab(tab === t.key)} onClick={() => setTab(t.key)}>
                   {t.label}
@@ -1689,21 +2281,36 @@ export default function CarteraCredito() {
               {tab === "notas"       && renderNotas()}
             </div>
           </div>
-        ) : (
-          <div style={{
-            ...S.rightPanel,
-            alignItems: "center", justifyContent: "center",
-            color: "#a1a1aa", fontSize: 13,
-          }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 32, marginBottom: 8 }}>💳</div>
-              <div>Selecciona un cliente para ver su cartera</div>
-            </div>
-          </div>
-        )}
-      </div>
+        </div>
+      )}
+
+      {/* ── DETALLE MOVIMIENTO MODALS ───────────────────────────────────── */}
+      <DetalleVentaModal
+        mov={movDetalle?.tipo !== "pago" ? movDetalle : null}
+        onClose={() => setMovDetalle(null)}
+      />
+      <DetalleAbonoModal
+        mov={movDetalle?.tipo === "pago" ? movDetalle : null}
+        portfolio={selPortfolio}
+        onClose={() => setMovDetalle(null)}
+      />
 
       {/* ── MODALS ──────────────────────────────────────────────────────── */}
+
+      <BuscarClienteModal
+        open={showBuscarCliente}
+        onClose={() => setShowBuscarCliente(false)}
+        onSelect={id => { setSelId(id); setTab("resumen") }}
+        portfolios={portfoliosComputados}
+        clientesLS={clientesLS}
+      />
+
+      <EliminarCuentaModal
+        open={showEliminar}
+        portfolio={selPortfolio}
+        onClose={() => setShowEliminar(false)}
+        onConfirm={handleEliminarCuenta}
+      />
 
       <HabilitarClienteModal
         open={showHabilitar}

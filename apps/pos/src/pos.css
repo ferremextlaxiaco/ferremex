@@ -1,3 +1,10 @@
+@import "tailwindcss";
+
+@theme {
+  --color-orange-500: #F96302;
+  --color-orange-600: #F96302;
+  --color-orange-700: #d95500;
+}
 /* ============================================================
    FERREMEX POS — Light mode, estilo profesional
    ============================================================ */

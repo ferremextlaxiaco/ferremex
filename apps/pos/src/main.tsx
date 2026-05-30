@@ -7,7 +7,7 @@ import { Venta } from "./pages/Venta"
 import { Corte } from "./pages/Corte"
 import { Admin } from "./pages/Admin"
 import { AdminTickets } from "./pages/AdminTickets"
-import { AdminUsuarios } from "./pages/AdminUsuarios"
+import { AdminFormatos } from "./pages/AdminFormatos"
 import { AdminClientes } from "./pages/AdminClientes"
 import { AdminClientesLista } from "./pages/AdminClientesLista"
 import CarteraCredito from "./pages/CarteraCredito"
@@ -19,7 +19,11 @@ import { AdminComprasNueva } from "./pages/AdminComprasNueva"
 import { AdminConsultarCompras } from "./pages/AdminConsultarCompras"
 import { AdminPedidos } from "./pages/AdminPedidos"
 import { AdminCatalogos } from "./pages/AdminCatalogos"
+import { AdminConsultaVentas } from "./pages/AdminConsultaVentas"
+import { AdminPerifericos } from "./pages/AdminPerifericos"
 import { GeneradorTickets } from "./pages/GeneradorTickets"
+import { AdminEmpleados } from "./pages/AdminEmpleados"
+import { AdminCaja } from "./pages/AdminCaja"
 import "./pos.css"
 
 createRoot(document.getElementById("root")!).render(
@@ -31,9 +35,11 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/venta" element={<Venta />} />
           <Route path="/corte" element={<Corte />} />
           <Route path="/admin" element={<Admin />}>
-            <Route index element={<Navigate to="/admin/tickets" replace />} />
+            <Route index element={<Navigate to="/admin/consulta-ventas" replace />} />
+            <Route path="consulta-ventas" element={<AdminConsultaVentas />} />
+            <Route path="formatos" element={<AdminFormatos />} />
             <Route path="tickets" element={<AdminTickets />} />
-            <Route path="usuarios" element={<AdminUsuarios />} />
+            <Route path="usuarios" element={<Navigate to="/admin/empleados" replace />} />
             <Route path="clientes" element={<AdminClientes />} />
             <Route path="clientes-lista" element={<AdminClientesLista />} />
             <Route path="cartera-credito" element={<CarteraCredito />} />
@@ -45,6 +51,9 @@ createRoot(document.getElementById("root")!).render(
             <Route path="consultar-compras" element={<AdminConsultarCompras />} />
             <Route path="pedidos" element={<AdminPedidos />} />
           <Route path="catalogos" element={<AdminCatalogos />} />
+          <Route path="perifericos" element={<AdminPerifericos />} />
+          <Route path="empleados" element={<AdminEmpleados />} />
+          <Route path="caja" element={<AdminCaja />} />
           </Route>
           <Route path="/admin/generador" element={<GeneradorTickets />} />
           <Route path="*" element={<Navigate to="/" replace />} />

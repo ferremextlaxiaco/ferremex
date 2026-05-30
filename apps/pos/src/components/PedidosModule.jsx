@@ -5,66 +5,24 @@ import PedidosTabla    from "./PedidosTabla"
 import PedidosPreview  from "./PedidosPreview"
 import OCConfirmModal  from "./OCConfirmModal"
 import OCViewModal     from "./OCViewModal"
-import { listarFaltantes, generarOCPdf } from "../lib/client"
+import ConfirmDialog   from "./ConfirmDialog"
+import { listarFaltantes, generarOCPdf, listarPedidos, crearPedido, eliminarPedido } from "../lib/client"
 import { loadProveedores } from "../lib/proveedores"
-
-
-const HISTORIAL_MOCK = [
-  {
-    id: "ped-h1",
-    folio: "PED-20260501-001",
-    fecha: "2026-05-01",
-    proveedor: "Truper",
-    proveedorId: "prov-1",
-    status: "recibido",
-    articulos: [
-      { clave: "MT001", descripcion: "Martillo de Carpintero 16 oz", cantidad: 12 },
-      { clave: "DS002", descripcion: "Desarmador Phillips #2", cantidad: 20 },
-      { clave: "TQ005", descripcion: "Taquetes Fischer #10", cantidad: 30 },
-    ],
-  },
-  {
-    id: "ped-h2",
-    folio: "PED-20260508-001",
-    fecha: "2026-05-08",
-    proveedor: "Urrea Herramientas",
-    proveedorId: "prov-2",
-    status: "confirmado",
-    articulos: [
-      { clave: "CM003", descripcion: "Cinta Métrica 5m", cantidad: 8 },
-      { clave: "LL006", descripcion: 'Llave Stilson 14"', cantidad: 6 },
-    ],
-  },
-  {
-    id: "ped-h3",
-    folio: "PED-20260515-001",
-    fecha: "2026-05-15",
-    proveedor: "Volteck",
-    proveedorId: "prov-3",
-    status: "enviado",
-    articulos: [
-      { clave: "EX004", descripcion: "Extensión Eléctrica 10m", cantidad: 10 },
-      { clave: "FO007", descripcion: "Foco LED 9W E27", cantidad: 36 },
-    ],
-  },
-]
+import { uuid as uid } from "../lib/utils"
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-let _folioCount = 0
-function genFolio() {
-  _folioCount++
-  const d   = new Date()
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
-  return `PED-${ymd}-${String(_folioCount).padStart(3, "0")}`
-}
-
-function uid() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36)
-}
-
 function todayISO() {
   return new Date().toISOString().slice(0, 10)
+}
+
+// Folio provisional del borrador en curso (solo para mostrar en UI). El folio
+// definitivo lo asigna el backend al registrar el pedido (crearPedido).
+function genFolioBorrador() {
+  const d = new Date()
+  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`
+  const rand = Math.random().toString(36).slice(2, 5).toUpperCase()
+  return `PED-${ymd}-${rand}`
 }
 
 // ── OC number counter (localStorage, resets daily) ────────────────────────────
@@ -306,14 +264,13 @@ export default function PedidosModule() {
   const [proveedor,   setProveedor]   = useState(() => loadDraft()?.proveedor ?? null)
   const [fecha,       setFecha]       = useState(() => loadDraft()?.fecha     ?? todayISO())
   const [status,      setStatus]      = useState(() => loadDraft()?.status    ?? "borrador")
-  const [folio,       setFolio]       = useState(() => loadDraft()?.folio     ?? genFolio())
+  const [folio,       setFolio]       = useState(() => loadDraft()?.folio     ?? genFolioBorrador())
   const [espera,      setEspera]      = useState(() => {
     try { return JSON.parse(localStorage.getItem("ferremex_pedidos_espera")) ?? [] } catch { return [] }
   })
   const [showEspera,  setShowEspera]  = useState(false)
-  const [pedidos,     setPedidos]     = useState(() => {
-    try { return JSON.parse(localStorage.getItem("ferremex_mis_pedidos")) ?? [] } catch { return [] }
-  })
+  // "Mis Pedidos" se persiste server-side (/caja/pedidos). Se carga al montar.
+  const [pedidos,     setPedidos]     = useState([])
   const [verOC,       setVerOC]       = useState(null)
   const [showPreview, setShowPreview] = useState(false)
   const [showFalt,       setShowFalt]       = useState(false)
@@ -326,15 +283,20 @@ export default function PedidosModule() {
   })
   const [searchQ,  setSearchQ]  = useState("")
   const [toast,    setToast]    = useState(null)
+  const [confirmDialog, setConfirmDialog] = useState(null) // { title, message, danger, onConfirm }
   const toastRef = useRef(null)
 
   useEffect(() => {
     localStorage.setItem("ferremex_pedidos_espera", JSON.stringify(espera))
   }, [espera])
 
+  // Cargar "Mis Pedidos" desde el backend al montar.
   useEffect(() => {
-    localStorage.setItem("ferremex_mis_pedidos", JSON.stringify(pedidos))
-  }, [pedidos])
+    listarPedidos()
+      .then(setPedidos)
+      .catch(() => showToast("Error al cargar pedidos", "error"))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({ rows, freeItems, proveedor, fecha, folio, status }))
@@ -353,7 +315,7 @@ export default function PedidosModule() {
     setProveedor(null)
     setFecha(todayISO())
     setStatus("borrador")
-    setFolio(genFolio())
+    setFolio(genFolioBorrador())
   }
 
   function addArticulo(art) {
@@ -424,22 +386,32 @@ export default function PedidosModule() {
       mostrarImagenes: prefs.mostrarImagenes,
     })
 
-    // Guardar en Mis Pedidos
-    const registro = {
-      id:              uid(),
-      folio:           oc,
-      fecha:           todayISO(),
-      fechaEmision,
-      proveedor:       prefs.proveedor?.nombre ?? "—",
-      proveedorData:   prefs.proveedor,
-      articulos:       [...rows, ...freeItems],
-      rows,
-      freeItems,
-      status:          "enviado",
-      mostrarPrecios:  prefs.mostrarPrecios,
-      mostrarImagenes: prefs.mostrarImagenes,
+    // Guardar en Mis Pedidos (server-side). El backend asigna su propio id/folio;
+    // conservamos el número de OC en el campo `oc` para referencia del PDF.
+    try {
+      const creado = await crearPedido({
+        fecha:           todayISO(),
+        proveedor:       prefs.proveedor?.nombre ?? "—",
+        proveedorId:     prefs.proveedor?.id ?? null,
+        status:          "enviado",
+        articulos:       [...rows, ...freeItems].map(a => ({
+          clave:       a.clave,
+          descripcion: a.descripcion,
+          cantidad:    a.cantidad,
+        })),
+        // metadatos extra que el backend conserva tal cual
+        oc,
+        fechaEmision,
+        proveedorData:   prefs.proveedor,
+        rows,
+        freeItems,
+        mostrarPrecios:  prefs.mostrarPrecios,
+        mostrarImagenes: prefs.mostrarImagenes,
+      })
+      setPedidos(prev => [creado, ...prev])
+    } catch {
+      showToast("El OC se generó pero no se pudo guardar el pedido", "error")
     }
-    setPedidos(prev => [registro, ...prev])
 
     return { oc, blobUrl }
   }
@@ -471,9 +443,17 @@ export default function PedidosModule() {
 
 
   function handleCancelar() {
-    if (!window.confirm("¿Cancelar este pedido? Los datos no guardados se perderán.")) return
-    resetOrder()
-    showToast("Pedido cancelado")
+    setConfirmDialog({
+      title: "Cancelar pedido",
+      message: "¿Cancelar este pedido? Los datos no guardados se perderán.",
+      confirmLabel: "Sí, cancelar",
+      danger: true,
+      onConfirm: () => {
+        resetOrder()
+        showToast("Pedido cancelado")
+        setConfirmDialog(null)
+      },
+    })
   }
 
   function handleShared() {
@@ -559,10 +539,16 @@ export default function PedidosModule() {
                         className="ar-btn-action"
                         style={{ padding: "4px 8px", fontSize: 12, color: "var(--at-red, #dc2626)", borderColor: "var(--at-red, #dc2626)" }}
                         title="Eliminar pedido en espera"
-                        onClick={() => {
-                          if (window.confirm(`¿Eliminar el pedido ${e.folio}? Esta acción no se puede deshacer.`))
+                        onClick={() => setConfirmDialog({
+                          title: "Eliminar pedido en espera",
+                          message: `¿Eliminar el pedido ${e.folio}? Esta acción no se puede deshacer.`,
+                          confirmLabel: "Sí, eliminar",
+                          danger: true,
+                          onConfirm: () => {
                             setEspera(prev => prev.filter(x => x.id !== e.id))
-                        }}
+                            setConfirmDialog(null)
+                          },
+                        })}
                       >
                         <Trash2 size={13} />
                       </button>
@@ -701,6 +687,16 @@ export default function PedidosModule() {
           onVerOC={setVerOC}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmDialog}
+        title={confirmDialog?.title}
+        message={confirmDialog?.message}
+        confirmLabel={confirmDialog?.confirmLabel}
+        danger={confirmDialog?.danger}
+        onConfirm={() => confirmDialog?.onConfirm?.()}
+        onClose={() => setConfirmDialog(null)}
+      />
     </div>
   )
 }

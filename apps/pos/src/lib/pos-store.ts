@@ -35,6 +35,7 @@ export interface Permisos {
 export interface Cajero {
   id: string
   nombre: string
+  alias?: string
   rol: "admin" | "supervisor" | "cajero"
   turno_id: string
   permisos: Permisos

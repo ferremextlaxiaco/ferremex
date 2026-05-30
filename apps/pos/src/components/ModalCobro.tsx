@@ -3,6 +3,7 @@ import { registrarVenta, type VentaResponse } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { agregarMovimientoCredito } from "../lib/clientes"
+import { formatMXN as fmt } from "../lib/format"
 
 interface ModalCobroProps {
   onCerrar: () => void
@@ -16,9 +17,6 @@ const METODOS: { id: Metodo; label: string; icon: string }[] = [
   { id: "transferencia", label: "Transferencia",   icon: "📱" },
   { id: "credito",       label: "Crédito",         icon: "📋" },
 ]
-
-const fmt = (n: number) =>
-  new Intl.NumberFormat("es-MX", { style: "currency", currency: "MXN", minimumFractionDigits: 2 }).format(n)
 
 export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const { state, total, dispatch } = usePOS()

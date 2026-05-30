@@ -19,7 +19,11 @@ async function buildImageMap(items: any[]): Promise<Record<string, string>> {
       if (item.articuloId && item.articuloId !== key) map[item.articuloId] = url
     } else if (url.startsWith("/static/")) {
       const filename = url.slice("/static/".length)
-      const filePath = path.join(STATIC_DIR, filename)
+      // Contención de path traversal: normalizar y exigir que el resultado siga
+      // dentro de STATIC_DIR. Sin esto, un thumbnail "/static/../../data/x.json"
+      // permitiría leer archivos arbitrarios del servidor e incrustarlos en el PDF.
+      const filePath = path.normalize(path.join(STATIC_DIR, filename))
+      if (!filePath.startsWith(STATIC_DIR + path.sep)) return
       if (fs.existsSync(filePath)) {
         const buf = fs.readFileSync(filePath)
         const ext = path.extname(filename).slice(1).toLowerCase()
@@ -49,18 +53,26 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  const allItems = [...rows, ...freeItems]
-  const imageMap = mostrarImagenes ? await buildImageMap(allItems) : {}
+  try {
+    const allItems = [...rows, ...freeItems]
+    const imageMap = mostrarImagenes ? await buildImageMap(allItems) : {}
 
-  const element = React.createElement(OCDocument, {
-    rows, freeItems, imageMap, proveedor,
-    ocNumber, fechaEmision,
-    mostrarPrecios, mostrarImagenes,
-  })
+    const element = React.createElement(OCDocument, {
+      rows, freeItems, imageMap, proveedor,
+      ocNumber, fechaEmision,
+      mostrarPrecios, mostrarImagenes,
+    })
 
-  const buffer = await renderToBuffer(element)
+    const buffer = await renderToBuffer(element)
 
-  res.setHeader("Content-Type", "application/pdf")
-  res.setHeader("Content-Disposition", `inline; filename="${ocNumber}.pdf"`)
-  res.send(buffer)
+    // Sanitizar ocNumber antes de interpolarlo en el header para evitar
+    // header injection (comillas / saltos de línea malformarían el response).
+    const safeOc = String(ocNumber).replace(/[^a-zA-Z0-9_\-]/g, "_")
+    res.setHeader("Content-Type", "application/pdf")
+    res.setHeader("Content-Disposition", `inline; filename="${safeOc}.pdf"`)
+    res.send(buffer)
+  } catch (err) {
+    console.error("[caja/generar-oc] Error generando PDF:", err)
+    res.status(500).json({ error: "No se pudo generar el PDF de la orden de compra" })
+  }
 }

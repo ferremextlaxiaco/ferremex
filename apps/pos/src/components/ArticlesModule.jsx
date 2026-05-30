@@ -9,6 +9,7 @@ import {
 } from "../lib/client"
 import ArticleDrawer from "./ArticleDrawer"
 import ArticleDeleteModal from "./ArticleDeleteModal"
+import { useToasts } from "../hooks/useToasts"
 
 // ── Iconos inline ─────────────────────────────────────────────────────────────
 
@@ -66,6 +67,7 @@ const PAGE_SIZE = 40
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export default function ArticlesModule() {
+  const { toasts, push: pushToast } = useToasts()
   // ── Artículos ────────────────────────────────────────────────────────────────
   const [articles,   setArticles]   = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -236,7 +238,7 @@ export default function ArticlesModule() {
       }
       setDrawerOpen(false)
     } catch (e) {
-      alert("Error al guardar: " + (e.message ?? "Error desconocido"))
+      pushToast("Error al guardar: " + (e.message ?? "Error desconocido"), "error")
     } finally {
       setSaving(false)
     }
@@ -249,7 +251,7 @@ export default function ArticlesModule() {
       setSelectedId(null)
       setDeleteOpen(false)
     } catch (e) {
-      alert("Error al eliminar: " + (e.message ?? "Error desconocido"))
+      pushToast("Error al eliminar: " + (e.message ?? "Error desconocido"), "error")
     }
   }
 
@@ -622,6 +624,21 @@ export default function ArticlesModule() {
           onConfirm={handleDeleteConfirm}
           onCancel={() => setDeleteOpen(false)}
         />
+      )}
+
+      {toasts.length > 0 && (
+        <div style={{ position: "fixed", bottom: 24, right: 24, zIndex: 5000, display: "flex", flexDirection: "column", gap: 8 }}>
+          {toasts.map(t => (
+            <div key={t.id} style={{
+              background: t.type === "error" ? "#dc2626" : "#16a34a",
+              color: "#fff", borderRadius: 8, padding: "10px 18px",
+              fontSize: 13, fontWeight: 500, boxShadow: "0 4px 16px rgba(0,0,0,.2)",
+              minWidth: 200, maxWidth: 360,
+            }}>
+              {t.msg}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   )

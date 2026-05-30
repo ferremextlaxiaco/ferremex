@@ -23,6 +23,11 @@ export interface TicketConfig {
     cancelacion: { titulo: string; activo: boolean }
     nota_credito: { titulo: string; activo: boolean }
   }
+  formato_folio?: {
+    modo: "secuencial" | "fecha"
+    prefijo: string
+    digitos: number
+  }
 }
 
 const DEFAULT_CONFIG: TicketConfig = {
@@ -44,6 +49,7 @@ const DEFAULT_CONFIG: TicketConfig = {
     cancelacion: { titulo: "CANCELACIÓN", activo: true },
     nota_credito: { titulo: "NOTA DE CRÉDITO", activo: true },
   },
+  formato_folio: { modo: "fecha", prefijo: "", digitos: 4 },
 }
 
 function cargarConfig(): TicketConfig {
@@ -84,6 +90,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
     opciones: { ...DEFAULT_CONFIG.opciones, ...body.opciones },
     tipos: { ...DEFAULT_CONFIG.tipos, ...body.tipos },
     pie: body.pie ?? DEFAULT_CONFIG.pie,
+    formato_folio: body.formato_folio
+      ? { ...DEFAULT_CONFIG.formato_folio!, ...body.formato_folio }
+      : DEFAULT_CONFIG.formato_folio,
   }
   guardarConfig(config)
   res.json(config)

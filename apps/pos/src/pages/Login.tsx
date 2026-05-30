@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { obtenerUsuarios, obtenerTicketConfig, type PosUsuario } from "../lib/client"
+import { obtenerUsuarios, obtenerTicketConfig, login, type PosUsuario } from "../lib/client"
 import { usePOS, buildTurnoId } from "../lib/pos-store"
 
 export function Login() {
@@ -12,6 +12,7 @@ export function Login() {
   const [pinUsuario, setPinUsuario] = useState<PosUsuario | null>(null)
   const [pinIngresado, setPinIngresado] = useState("")
   const [pinError, setPinError] = useState(false)
+  const [validandoPin, setValidandoPin] = useState(false)
 
   useEffect(() => {
     Promise.all([obtenerUsuarios(), obtenerTicketConfig()])
@@ -23,53 +24,75 @@ export function Login() {
       .finally(() => setCargando(false))
   }, [dispatch])
 
-  function iniciarSesion(usuario: PosUsuario) {
+  const iniciarSesion = useCallback((usuario: PosUsuario) => {
     dispatch({
       type: "SET_CAJERO",
       cajero: {
         id: usuario.id,
         nombre: usuario.nombre,
+        alias: usuario.alias?.trim() || undefined,
         rol: usuario.rol,
         turno_id: buildTurnoId(),
         permisos: usuario.permisos,
       },
     })
-    if (usuario.permisos.puede_ver_admin && usuario.rol === "admin") {
-      navigate("/venta")
-    } else {
-      navigate("/venta")
+    navigate("/venta")
+  }, [dispatch, navigate])
+
+  // Valida el PIN contra el backend (no se compara en el cliente).
+  const validarYEntrar = useCallback(async (usuario: PosUsuario, pin: string) => {
+    setValidandoPin(true)
+    try {
+      const validado = await login(usuario.id, pin)
+      iniciarSesion(validado)
+    } catch {
+      setPinError(true)
+      setPinIngresado("")
+    } finally {
+      setValidandoPin(false)
     }
-  }
+  }, [iniciarSesion])
+
+  const handlePinDigito = useCallback((d: string) => {
+    if (validandoPin) return
+    setPinError(false)
+    setPinIngresado((prev) => {
+      const nuevo = (prev + d).slice(0, 4)
+      if (nuevo.length === 4 && pinUsuario) {
+        // Disparar la validación tras pintar el 4º punto.
+        setTimeout(() => validarYEntrar(pinUsuario, nuevo), 120)
+      }
+      return nuevo
+    })
+  }, [validandoPin, pinUsuario, validarYEntrar])
+
+  const handlePinBorrar = useCallback(() => {
+    setPinIngresado((p) => p.slice(0, -1))
+    setPinError(false)
+  }, [])
+
+  // Listener de teclado estable: depende solo de pinUsuario y de los handlers
+  // memoizados, no se re-suscribe en cada dígito (antes dependía de pinIngresado).
+  useEffect(() => {
+    if (!pinUsuario) return
+    function onKey(e: KeyboardEvent) {
+      if (e.key >= "0" && e.key <= "9") handlePinDigito(e.key)
+      else if (e.key === "Backspace" || e.key === "Delete") handlePinBorrar()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [pinUsuario, handlePinDigito, handlePinBorrar])
 
   function handleSeleccionar(usuario: PosUsuario) {
-    if (usuario.pin) {
+    // El cliente ya no conoce el PIN, solo si existe (tiene_pin). Si no tiene PIN,
+    // validamos con pin vacío server-side y entramos directo; si tiene, pedimos PIN.
+    if (usuario.tiene_pin) {
       setPinUsuario(usuario)
       setPinIngresado("")
       setPinError(false)
     } else {
-      iniciarSesion(usuario)
+      validarYEntrar(usuario, "")
     }
-  }
-
-  function handlePinDigito(d: string) {
-    const nuevo = (pinIngresado + d).slice(0, 4)
-    setPinIngresado(nuevo)
-    setPinError(false)
-    if (nuevo.length === 4) {
-      setTimeout(() => {
-        if (nuevo === pinUsuario?.pin) {
-          iniciarSesion(pinUsuario)
-        } else {
-          setPinError(true)
-          setPinIngresado("")
-        }
-      }, 120)
-    }
-  }
-
-  function handlePinBorrar() {
-    setPinIngresado((p) => p.slice(0, -1))
-    setPinError(false)
   }
 
   if (cargando) {
@@ -89,7 +112,7 @@ export function Login() {
       <div className="login-page">
         <div className="login-card">
           <button className="login-volver" onClick={() => setPinUsuario(null)}>← Volver</button>
-          <h2 className="login-pin-nombre">{pinUsuario.nombre}</h2>
+          <h2 className="login-pin-nombre">{pinUsuario.alias?.trim() || pinUsuario.nombre}</h2>
           <p className="login-sub">Ingresa tu PIN de 4 dígitos</p>
 
           <div className={`pin-dots ${pinError ? "pin-dots-error" : ""}`}>
@@ -139,7 +162,7 @@ export function Login() {
               className="btn-cajero"
               onClick={() => handleSeleccionar(u)}
             >
-              <span className="btn-cajero-nombre">{u.nombre}</span>
+              <span className="btn-cajero-nombre">{u.alias?.trim() || u.nombre}</span>
               <span className={`rol-badge rol-${u.rol}`}>{u.rol}</span>
             </button>
           ))}

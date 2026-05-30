@@ -100,6 +100,81 @@ export function siguienteNumCliente(clientes: Cliente[]): string {
 // Datos de simulación — se usan cuando localStorage no tiene clientes aún
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Cartera de crédito — tipos y persistencia en localStorage
+// ---------------------------------------------------------------------------
+
+export interface Movimiento {
+  id: string
+  tipo: "compra" | "pago"
+  monto: number
+  fecha: string         // YYYY-MM-DD
+  folio?: string
+  plazo?: number
+  descripcion: string
+  nota?: string
+}
+
+export interface NotaCartera {
+  id: string
+  fecha: string
+  hora: string
+  autor: string
+  texto: string
+}
+
+export interface HistorialLimite {
+  id: string
+  fecha: string
+  usuario: string
+  anterior: number
+  nuevo: number
+  nota: string
+}
+
+export interface CartEntrada {
+  movimientos: Movimiento[]
+  notas: NotaCartera[]
+  historialLimite: HistorialLimite[]
+}
+
+export const STORAGE_KEY_CARTERA = "pos_cartera"
+
+export function loadCartera(): Record<string, CartEntrada> {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CARTERA)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+export function saveCartera(cartera: Record<string, CartEntrada>): void {
+  localStorage.setItem(STORAGE_KEY_CARTERA, JSON.stringify(cartera))
+}
+
+function genId(): string {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = Math.random() * 16 | 0
+    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
+  })
+}
+
+export function agregarMovimientoCredito(
+  clienteId: string,
+  mov: Omit<Movimiento, "id">
+): void {
+  const cartera = loadCartera()
+  const entrada = cartera[clienteId] ?? { movimientos: [], notas: [], historialLimite: [] }
+  entrada.movimientos = [...entrada.movimientos, { id: genId(), ...mov }]
+  cartera[clienteId] = entrada
+  saveCartera(cartera)
+}
+
+// ---------------------------------------------------------------------------
+// Datos de simulación — se usan cuando localStorage no tiene clientes aún
+// ---------------------------------------------------------------------------
+
 export const CLIENTES_DEMO: Cliente[] = [
   {
     id: "demo-001",

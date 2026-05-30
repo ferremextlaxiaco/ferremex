@@ -161,7 +161,7 @@ export async function generarOCPdf(data: {
 }): Promise<string> {
   const res = await fetch("/caja/generar-oc", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: posHeaders(),
     body: JSON.stringify(data),
   })
   if (!res.ok) {
@@ -195,7 +195,11 @@ export async function incrementarInventario(
 export interface PosUsuario {
   id: string
   nombre: string
-  pin: string
+  alias?: string
+  /** Solo presente al pedir el listado admin (?admin=1). El GET público lo omite. */
+  pin?: string
+  /** Presente en el listado público: indica si el usuario tiene PIN, sin exponerlo. */
+  tiene_pin?: boolean
   rol: "admin" | "supervisor" | "cajero"
   activo: boolean
   permisos: {
@@ -258,10 +262,23 @@ export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
 
 // ── Fetch base ───────────────────────────────────────────────────────────────
 
+// Token compartido del POS, validado por el middleware del backend en rutas
+// mutantes (/caja/* POST/PUT/PATCH/DELETE). Configurable por terminal vía
+// VITE_POS_TOKEN. Si el backend no tiene POS_TOKEN definido, el header se ignora.
+const POS_TOKEN = import.meta.env.VITE_POS_TOKEN ?? ""
+const POS_ADMIN_TOKEN = import.meta.env.VITE_POS_ADMIN_TOKEN ?? ""
+
+/** Headers base para toda llamada a /caja/* (incluye el token POS si existe). */
+export function posHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" }
+  if (POS_TOKEN) h["X-POS-Token"] = POS_TOKEN
+  return { ...h, ...extra }
+}
+
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const res = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers: { ...posHeaders(), ...(options?.headers as Record<string, string>) },
   })
   if (!res.ok) {
     const body = await res.text()
@@ -323,6 +340,14 @@ export async function obtenerVenta(folio: string): Promise<VentaResponse | null>
   }
 }
 
+/** Cancela una venta en el servidor (persiste estado y reintegra inventario). */
+export async function cancelarVenta(folio: string, motivo: string): Promise<VentaListItem> {
+  return apiFetch<VentaListItem>(`/caja/ventas/${encodeURIComponent(folio)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ estado: "cancelada", motivo }),
+  })
+}
+
 export async function obtenerCorte(cajero: string, turno_id: string): Promise<CorteResponse> {
   const params = new URLSearchParams({ cajero, turno_id })
   return apiFetch<CorteResponse>(`/caja/corte?${params}`)
@@ -337,8 +362,26 @@ export async function cerrarCorte(cajero: string, turno_id: string): Promise<voi
 
 // ── Usuarios ─────────────────────────────────────────────────────────────────
 
-export async function obtenerUsuarios(): Promise<PosUsuario[]> {
+/**
+ * Lista usuarios POS. Por defecto el backend omite el `pin`.
+ * Con `incluirPin=true` pide la vista admin (?admin=1 + token admin), usada por
+ * EmployeesModule para validar PINs duplicados. Requiere VITE_POS_ADMIN_TOKEN.
+ */
+export async function obtenerUsuarios(incluirPin = false): Promise<PosUsuario[]> {
+  if (incluirPin) {
+    return apiFetch<PosUsuario[]>("/caja/usuarios?admin=1", {
+      headers: POS_ADMIN_TOKEN ? { "X-POS-Admin-Token": POS_ADMIN_TOKEN } : undefined,
+    })
+  }
   return apiFetch<PosUsuario[]>("/caja/usuarios")
+}
+
+/** Valida el PIN de un cajero en el servidor. Devuelve el usuario sin pin, o lanza. */
+export async function login(usuario_id: string, pin: string): Promise<PosUsuario> {
+  return apiFetch<PosUsuario>("/caja/login", {
+    method: "POST",
+    body: JSON.stringify({ usuario_id, pin }),
+  })
 }
 
 export async function crearUsuario(usuario: Omit<PosUsuario, "id">): Promise<PosUsuario> {
@@ -395,6 +438,45 @@ export interface CatalogosData {
 
 export async function listarCatalogos(): Promise<CatalogosData> {
   return apiFetch<CatalogosData>("/caja/catalogos")
+}
+
+// ── Pedidos a proveedor ───────────────────────────────────────────────────────
+
+export interface PedidoArticulo { clave?: string; descripcion?: string; cantidad: number }
+
+export interface Pedido {
+  id: string
+  folio: string
+  fecha: string
+  proveedor?: string | null
+  proveedorId?: string | null
+  status: string
+  articulos: PedidoArticulo[]
+}
+
+export async function listarPedidos(): Promise<Pedido[]> {
+  return apiFetch<Pedido[]>("/caja/pedidos")
+}
+
+/** Crea un pedido. El backend genera id y folio. */
+export async function crearPedido(
+  data: Omit<Pedido, "id" | "folio">
+): Promise<Pedido> {
+  return apiFetch<Pedido>("/caja/pedidos", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+}
+
+export async function actualizarPedido(data: Partial<Pedido> & { id: string }): Promise<Pedido> {
+  return apiFetch<Pedido>("/caja/pedidos", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  })
+}
+
+export async function eliminarPedido(id: string): Promise<void> {
+  await apiFetch(`/caja/pedidos?id=${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 export type CatalogosOp =

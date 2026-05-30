@@ -66,3 +66,13 @@ packages/api/data/
 
 # Lanzadores PM2 locales
 launch-pos.js
+
+# Harness Claude — sesiones persistidas (resúmenes locales) y backups
+.claude/sessions/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+CLAUDE.md.bak-*
+
+# Artefactos de diseño y datos pesados (no son código)
+design2/
+ArticulosClaveSat.xlsx

@@ -1,5 +1,6 @@
 import { defineConfig } from "vite"
 import react from "@vitejs/plugin-react"
+import tailwindcss from "@tailwindcss/vite"
 import fs from "fs"
 import path from "path"
 
@@ -7,7 +8,7 @@ const certsDir = path.resolve(__dirname, "../../certs")
 
 export default defineConfig({
   base: "/pos",
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     port: 7002,
     host: "0.0.0.0",

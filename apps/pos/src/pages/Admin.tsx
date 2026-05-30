@@ -1,28 +1,26 @@
 import { useState } from "react"
-import { useNavigate, useLocation, Outlet } from "react-router-dom"
+import { useLocation, Outlet, Navigate } from "react-router-dom"
 import { usePOS } from "../lib/pos-store"
 
 export function Admin() {
   const { state } = usePOS()
-  const navigate = useNavigate()
   const location = useLocation()
   const [sidebarOculto, setSidebarOculto] = useState(false)
 
-  // Solo administradores pueden entrar
-  if (!state.cajero) {
-    navigate("/", { replace: true })
-    return null
-  }
-  if (!state.cajero.permisos.puede_ver_admin) {
-    navigate("/venta", { replace: true })
-    return null
-  }
+  // Solo administradores pueden entrar. Redirección declarativa (no navigate en
+  // render, que viola las reglas de React y se duplica en StrictMode).
+  if (!state.cajero) return <Navigate to="/" replace />
+  if (!state.cajero.permisos.puede_ver_admin) return <Navigate to="/venta" replace />
 
   const path = location.pathname
-  const tab = path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
+  const tab = path.includes("/admin/consulta-ventas")
+    ? "ventas"
+    : path.includes("/admin/formatos") || path.includes("/admin/tickets")
+    ? "formatos"
+    : path.includes("/admin/perifericos")
+    ? "perifericos"
+    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
     ? "clientes"
-    : path.includes("/admin/usuarios")
-    ? "usuarios"
     : path.includes("/admin/articulos")
     ? "articulos"
     : path.includes("/admin/inventario")
@@ -35,7 +33,11 @@ export function Admin() {
     ? "pedidos"
     : path.includes("/admin/catalogos")
     ? "catalogos"
-    : "tickets"
+    : path.includes("/admin/empleados")
+    ? "empleados"
+    : path.includes("/admin/caja")
+    ? "caja"
+    : ""
 
   return (
     <div className="admin-shell">
@@ -58,8 +60,8 @@ export function Admin() {
         </div>
         <div className="admin-topbar-right">
           <span className="admin-user-chip">
-            <span className="admin-avatar">{state.cajero.nombre[0].toUpperCase()}</span>
-            {state.cajero.nombre}
+            <span className="admin-avatar">{(state.cajero.alias || state.cajero.nombre)[0].toUpperCase()}</span>
+            {state.cajero.alias || state.cajero.nombre}
           </span>
         </div>
       </div>
@@ -68,18 +70,25 @@ export function Admin() {
         {/* Sidebar */}
         <aside className={`admin-sidebar${sidebarOculto ? " oculto" : ""}`}>
           <button
-            className={`admin-side-item${tab === "tickets" ? " active" : ""}`}
-            onClick={() => navigate("/admin/tickets")}
+            className={`admin-side-item${tab === "ventas" ? " active" : ""}`}
+            onClick={() => navigate("/admin/consulta-ventas")}
           >
-            <span className="admin-side-icon">📄</span>
-            Formato de tickets
+            <span className="admin-side-icon">🧾</span>
+            Consulta de ventas
           </button>
           <button
-            className={`admin-side-item${tab === "usuarios" ? " active" : ""}`}
-            onClick={() => navigate("/admin/usuarios")}
+            className={`admin-side-item${tab === "formatos" ? " active" : ""}`}
+            onClick={() => navigate("/admin/formatos")}
           >
-            <span className="admin-side-icon">👥</span>
-            Usuarios y permisos
+            <span className="admin-side-icon">📄</span>
+            Formatos
+          </button>
+          <button
+            className={`admin-side-item${tab === "perifericos" ? " active" : ""}`}
+            onClick={() => navigate("/admin/perifericos")}
+          >
+            <span className="admin-side-icon">⚙️</span>
+            Periféricos
           </button>
           <button
             className={`admin-side-item${tab === "clientes" ? " active" : ""}`}
@@ -129,6 +138,20 @@ export function Admin() {
           >
             <span className="admin-side-icon">🗂️</span>
             Catálogos
+          </button>
+          <button
+            className={`admin-side-item${tab === "empleados" ? " active" : ""}`}
+            onClick={() => navigate("/admin/empleados")}
+          >
+            <span className="admin-side-icon">👥</span>
+            Empleados y permisos
+          </button>
+          <button
+            className={`admin-side-item${tab === "caja" ? " active" : ""}`}
+            onClick={() => navigate("/admin/caja")}
+          >
+            <span className="admin-side-icon">💵</span>
+            Movimientos de Caja
           </button>
         </aside>
 
