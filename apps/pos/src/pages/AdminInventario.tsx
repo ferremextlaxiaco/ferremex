@@ -1,14 +1,10 @@
+import { InventarioModule } from "../modules/InventarioModule"
+
+/**
+ * Ajuste de inventario. Antes era un `<iframe>` a un HTML estático fuera de React
+ * (deuda POS-I6); ahora monta el módulo React `InventarioModule`, que consume
+ * `ajustarInventario()` de client.ts y el sistema de toasts del POS.
+ */
 export function AdminInventario() {
-  return (
-    <iframe
-      src="/pos/ajuste-inventario.html"
-      title="Ajuste de Inventario"
-      style={{
-        display: "block",
-        width: "100%",
-        height: "calc(100vh - 56px)",
-        border: "none",
-      }}
-    />
-  )
+  return <InventarioModule />
 }

@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { AdminTickets } from "./AdminTickets"
+import { FormatoConfig } from "./FormatoConfig"
 
 const TABS = [
   { key: "ticket",     label: "Ticket" },
@@ -7,19 +8,6 @@ const TABS = [
   { key: "factura",    label: "Factura" },
   { key: "cupon",      label: "Cupón" },
 ]
-
-function Proximamente({ label }: { label: string }) {
-  return (
-    <div style={{
-      display: "flex", flexDirection: "column", alignItems: "center",
-      justifyContent: "center", height: "60%", gap: 12, color: "#71717a",
-    }}>
-      <span style={{ fontSize: 48 }}>🚧</span>
-      <p style={{ fontSize: 16, fontWeight: 700, margin: 0 }}>{label}</p>
-      <p style={{ fontSize: 13, margin: 0 }}>Módulo en desarrollo — próximamente</p>
-    </div>
-  )
-}
 
 export function AdminFormatos() {
   const [tab, setTab] = useState("ticket")
@@ -54,9 +42,9 @@ export function AdminFormatos() {
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto" }}>
         {tab === "ticket"     && <AdminTickets />}
-        {tab === "nota_venta" && <Proximamente label="Nota de venta" />}
-        {tab === "factura"    && <Proximamente label="Factura" />}
-        {tab === "cupon"      && <Proximamente label="Cupón" />}
+        {tab === "nota_venta" && <FormatoConfig formatoKey="nota_venta" label="Nota de venta" />}
+        {tab === "factura"    && <FormatoConfig formatoKey="factura" label="Factura" />}
+        {tab === "cupon"      && <FormatoConfig formatoKey="cupon" label="Cupón" />}
       </div>
     </div>
   )

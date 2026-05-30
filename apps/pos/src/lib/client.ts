@@ -247,6 +247,44 @@ export interface TicketConfig {
     prefijo: string
     digitos: number
   }
+  formatos?: {
+    nota_venta: FormatoDoc
+    factura: FormatoDoc
+    cupon: FormatoDoc
+  }
+}
+
+export interface FormatoDoc {
+  activo: boolean
+  titulo: string
+  encabezado: string[]
+  pie: string[]
+  mostrar_precios: boolean
+  mostrar_vigencia: boolean
+  vigencia_dias: number
+}
+
+export type FormatoKey = "nota_venta" | "factura" | "cupon"
+
+const FORMATOS_DEFAULT: NonNullable<TicketConfig["formatos"]> = {
+  nota_venta: {
+    activo: true, titulo: "NOTA DE VENTA",
+    encabezado: ["FERREMEX", "Tlaxiaco, Oaxaca"],
+    pie: ["Este documento no es un comprobante fiscal", "¡Gracias por su compra!"],
+    mostrar_precios: true, mostrar_vigencia: false, vigencia_dias: 0,
+  },
+  factura: {
+    activo: false, titulo: "FACTURA",
+    encabezado: ["FERREMEX S.A. DE C.V.", "RFC: XAXX010101000", "Tlaxiaco, Oaxaca"],
+    pie: ["Este documento es una representación impresa de un CFDI"],
+    mostrar_precios: true, mostrar_vigencia: false, vigencia_dias: 0,
+  },
+  cupon: {
+    activo: false, titulo: "CUPÓN DE DESCUENTO",
+    encabezado: ["FERREMEX", "¡Promoción especial!"],
+    pie: ["Presenta este cupón en tu próxima compra"],
+    mostrar_precios: false, mostrar_vigencia: true, vigencia_dias: 30,
+  },
 }
 
 export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
@@ -262,6 +300,11 @@ export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
       rfc: enc.rfc ?? "",
     },
     formato_folio: raw.formato_folio ?? { modo: "fecha", prefijo: "", digitos: 4 },
+    formatos: {
+      nota_venta: { ...FORMATOS_DEFAULT.nota_venta, ...raw.formatos?.nota_venta },
+      factura: { ...FORMATOS_DEFAULT.factura, ...raw.formatos?.factura },
+      cupon: { ...FORMATOS_DEFAULT.cupon, ...raw.formatos?.cupon },
+    },
   }
 }
 
