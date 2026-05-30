@@ -135,7 +135,7 @@ function MethodIcon({ method, size = 14 }) {
     mixto:         { icon: <ArrowLeftRight {...props} />, label: "Mixto" },
   };
   const { icon, label } = map[method] || { icon: null, label: method };
-  return <span className="text-sm text-gray-600 flex items-center">{icon}{label}</span>;
+  return <span className="text-base text-gray-600 flex items-center">{icon}{label}</span>;
 }
 
 // ─── CALENDAR POPOVER ─────────────────────────────────────────────────────────
@@ -854,11 +854,11 @@ export default function CashMovementsModule() {
         <table className="w-full border-collapse">
           <thead className="sticky top-0 z-10">
             <tr className="bg-gray-50 border-b-2 border-gray-200">
-              <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left w-20">Hora</th>
-              <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left w-28">Origen</th>
-              <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left">Descripción</th>
-              <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide text-left w-32">Método</th>
-              <th className="py-3 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide text-right w-28">Monto</th>
+              <th className="py-3 px-4 text-sm font-semibold text-gray-500 uppercase tracking-wide text-left w-20">Hora</th>
+              <th className="py-3 px-4 text-sm font-semibold text-gray-500 uppercase tracking-wide text-left w-28">Origen</th>
+              <th className="py-3 px-4 text-sm font-semibold text-gray-500 uppercase tracking-wide text-left">Descripción</th>
+              <th className="py-3 px-4 text-sm font-semibold text-gray-500 uppercase tracking-wide text-left w-32">Método</th>
+              <th className="py-3 px-4 text-sm font-semibold text-gray-500 uppercase tracking-wide text-right w-28">Monto</th>
               <th className="w-10" />
             </tr>
           </thead>
@@ -892,26 +892,26 @@ export default function CashMovementsModule() {
                   <>
                     <tr key={m.id} onClick={() => setExpandedId(isExpanded ? null : m.id)}
                       className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer">
-                      <td className="py-3.5 px-4 text-sm text-gray-500 font-mono">{m.time}</td>
+                      <td className="py-3.5 px-4 text-base text-gray-500 font-mono">{m.time}</td>
                       <td className="py-3.5 px-4"><OriginBadge origin={m.origin} /></td>
                       <td className="py-3.5 px-4">
-                        <div className="text-sm text-gray-900">{m.desc}</div>
+                        <div className="text-base text-gray-900">{m.desc}</div>
                         {(showCajaInRow || showCajeroInRow || m.supplier) && (
                           <div className="flex flex-wrap gap-x-3 gap-y-0.5 mt-0.5">
                             {showCajaInRow && (
-                              <span className="text-xs text-blue-500 font-medium">{m.cajaName}</span>
+                              <span className="text-sm text-blue-500 font-medium">{m.cajaName}</span>
                             )}
                             {showCajeroInRow && (
-                              <span className="text-xs text-purple-500">{m.cajeroName}</span>
+                              <span className="text-sm text-purple-500">{m.cajeroName}</span>
                             )}
                             {m.supplier && (
-                              <span className="text-xs text-gray-400">Prov: {m.supplier}</span>
+                              <span className="text-sm text-gray-400">Prov: {m.supplier}</span>
                             )}
                           </div>
                         )}
                       </td>
-                      <td className="py-3.5 px-4"><MethodIcon method={m.method} /></td>
-                      <td className={`py-3.5 px-4 text-sm font-semibold text-right ${m.amount > 0 ? "text-green-600" : "text-red-600"}`}>
+                      <td className="py-3.5 px-4"><MethodIcon method={m.method} size={16} /></td>
+                      <td className={`py-3.5 px-4 text-base font-semibold text-right ${m.amount > 0 ? "text-green-600" : "text-red-600"}`}>
                         {m.amount > 0 ? "+" : ""}{formatMXN(m.amount)}
                       </td>
                       <td className="py-3.5 px-4">

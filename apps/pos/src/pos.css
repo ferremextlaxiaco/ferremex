@@ -12,7 +12,17 @@
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
-  padding: 0;
+}
+/* El reset de padding va en @layer base para que las utilidades de Tailwind
+   (px-8, pl-8, py-3 — capa `utilities`, mayor prioridad de capa) SIEMPRE ganen.
+   Antes estaba en un `*{padding:0}` sin capa, que por ser unlayered vencía a
+   Tailwind y dejaba los módulos nuevos con el contenido pegado a la orilla.
+   Los módulos viejos siguen igual: definen su padding en reglas propias sin capa,
+   que vencen a @layer base. */
+@layer base {
+  ul, ol, fieldset, legend, button, input, select, textarea {
+    padding: 0;
+  }
 }
 
 :root {
@@ -2160,19 +2170,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-bottom: 1px solid var(--at-border);
 }
 .admin-topbar-brand { display: flex; align-items: center; gap: 10px; }
-.admin-brand-mark   { font-weight: 800; font-size: 15px; letter-spacing: 0.04em; color: var(--at-orange); }
-.admin-btn-panel-ventas {
-  display: flex; align-items: center; gap: 5px;
-  background: var(--at-orange);
-  color: white;
+.admin-brand-mark {
+  display: flex; align-items: center;
+  font-weight: 800; font-size: 15px; letter-spacing: 0.04em;
+  color: var(--at-orange);
+  background: transparent;
   border: none;
   border-radius: var(--at-radius);
-  padding: 5px 12px;
-  font-size: 13px; font-weight: 600;
+  padding: 5px 8px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
-.admin-btn-panel-ventas:hover { background: #d9520a; }
+.admin-brand-mark:hover { background: rgba(234, 88, 12, 0.10); color: #d9520a; }
 .admin-topbar-right { display: flex; align-items: center; gap: 10px; }
 .admin-user-chip {
   display: flex; align-items: center; gap: 6px;
@@ -2238,7 +2247,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--at-orange);
   font-weight: 600;
 }
-.admin-side-icon { font-size: 16px; }
+.admin-side-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  flex-shrink: 0;
+  color: var(--at-text-muted);
+}
+/* El ícono toma el naranja del item activo (hereda currentColor del SVG lucide) */
+.admin-side-item.active .admin-side-icon { color: var(--at-orange); }
 .admin-sidebar.oculto { width: 0; padding-left: 0; padding-right: 0; border-right-color: transparent; }
 
 /* ---- Botón toggle sidebar (CSS puro, sin SVG) ---- */

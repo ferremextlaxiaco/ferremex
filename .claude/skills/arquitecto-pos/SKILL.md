@@ -262,6 +262,19 @@ Selección activa:  bg-orange-50 border-l-2 border-orange-600
 Disabled:          opacity-40 pointer-events-none
 ```
 Iconos: **siempre `lucide-react`** (`import { Plus, Search, Trash2 } from "lucide-react"`).
+Para íconos en el sidebar admin van dentro de `<span className="admin-side-icon">`
+(hereda `currentColor` → se ponen naranja en el item activo). Tamaño 18 sidebar, 16 inline.
+
+**⚠️ Gotcha Tailwind v4 — capas de CSS (ya resuelto, no reintroducir):**
+`apps/pos/src/pos.css` tenía un reset `* { padding: 0 }` SIN capa. En Tailwind v4
+el CSS sin `@layer` SIEMPRE vence a las utilidades (que viven en `@layer utilities`),
+así que ese reset anulaba `px-8`, `pl-8`, `py-3`… y los módulos Tailwind salían con
+el contenido aplastado contra la orilla. Solución aplicada: el reset de padding vive
+en `@layer base` (`ul, ol, fieldset, button, input, select, textarea { padding: 0 }`),
+de modo que las utilidades de Tailwind ganan y los módulos viejos (reglas propias sin
+capa) no se afectan. **No vuelvas a poner `padding` en el selector `*` global.** Si una
+clase de padding/margin Tailwind "no hace nada" en un módulo nuevo, sospecha de una
+regla sin capa que la está venciendo, no agregues `!important`.
 
 **Librerías opcionales (instalar la 1ª vez que un módulo las necesite — NO están aún):**
 - **TanStack Table** (`@tanstack/react-table`) — para tablas con orden/filtro/

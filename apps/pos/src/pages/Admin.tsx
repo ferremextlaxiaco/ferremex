@@ -1,5 +1,9 @@
 import { useState } from "react"
 import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
+import {
+  ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
+  Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
+} from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
 export function Admin() {
@@ -51,13 +55,13 @@ export function Admin() {
             onClick={() => setSidebarOculto(v => !v)}
             title={sidebarOculto ? "Mostrar panel lateral" : "Ocultar panel lateral"}
           />
-          <span className="admin-brand-mark">FERREMEX</span>
           <button
-            className="admin-btn-panel-ventas"
+            className="admin-brand-mark"
             onClick={() => navigate("/venta")}
             title="Ir al panel de ventas"
           >
-            🛒 Panel de ventas
+            <ShoppingCart size={16} style={{ marginRight: 8, verticalAlign: "-3px" }} />
+            FERREMEX
           </button>
         </div>
         <div className="admin-topbar-right">
@@ -75,84 +79,84 @@ export function Admin() {
             className={`admin-side-item${tab === "ventas" ? " active" : ""}`}
             onClick={() => navigate("/admin/consulta-ventas")}
           >
-            <span className="admin-side-icon">🧾</span>
+            <span className="admin-side-icon"><ReceiptText size={18} /></span>
             Consulta de ventas
           </button>
           <button
             className={`admin-side-item${tab === "formatos" ? " active" : ""}`}
             onClick={() => navigate("/admin/formatos")}
           >
-            <span className="admin-side-icon">📄</span>
+            <span className="admin-side-icon"><FileText size={18} /></span>
             Formatos
           </button>
           <button
             className={`admin-side-item${tab === "perifericos" ? " active" : ""}`}
             onClick={() => navigate("/admin/perifericos")}
           >
-            <span className="admin-side-icon">⚙️</span>
+            <span className="admin-side-icon"><Settings size={18} /></span>
             Periféricos
           </button>
           <button
             className={`admin-side-item${tab === "clientes" ? " active" : ""}`}
             onClick={() => navigate("/admin/clientes")}
           >
-            <span className="admin-side-icon">🧑‍💼</span>
+            <span className="admin-side-icon"><UserRound size={18} /></span>
             Clientes
           </button>
           <button
             className={`admin-side-item${tab === "articulos" ? " active" : ""}`}
             onClick={() => navigate("/admin/articulos")}
           >
-            <span className="admin-side-icon">📦</span>
+            <span className="admin-side-icon"><Package size={18} /></span>
             Artículos
           </button>
           <button
             className={`admin-side-item${tab === "inventario" ? " active" : ""}`}
             onClick={() => navigate("/admin/inventario")}
           >
-            <span className="admin-side-icon">🔢</span>
+            <span className="admin-side-icon"><Boxes size={18} /></span>
             Ajuste de Inventario
           </button>
           <button
             className={`admin-side-item${tab === "proveedores" ? " active" : ""}`}
             onClick={() => navigate("/admin/proveedores")}
           >
-            <span className="admin-side-icon">🏭</span>
+            <span className="admin-side-icon"><Factory size={18} /></span>
             Proveedores
           </button>
           <button
             className={`admin-side-item${tab === "compras" ? " active" : ""}`}
             onClick={() => navigate("/admin/compras")}
           >
-            <span className="admin-side-icon">🛒</span>
+            <span className="admin-side-icon"><ShoppingBag size={18} /></span>
             Compras
           </button>
           <button
             className={`admin-side-item${tab === "pedidos" ? " active" : ""}`}
             onClick={() => navigate("/admin/pedidos")}
           >
-            <span className="admin-side-icon">📋</span>
+            <span className="admin-side-icon"><ClipboardList size={18} /></span>
             Pedidos
           </button>
           <button
             className={`admin-side-item${tab === "catalogos" ? " active" : ""}`}
             onClick={() => navigate("/admin/catalogos")}
           >
-            <span className="admin-side-icon">🗂️</span>
+            <span className="admin-side-icon"><FolderTree size={18} /></span>
             Catálogos
           </button>
           <button
             className={`admin-side-item${tab === "empleados" ? " active" : ""}`}
             onClick={() => navigate("/admin/empleados")}
           >
-            <span className="admin-side-icon">👥</span>
+            <span className="admin-side-icon"><UsersRound size={18} /></span>
             Empleados y permisos
           </button>
           <button
             className={`admin-side-item${tab === "caja" ? " active" : ""}`}
             onClick={() => navigate("/admin/caja")}
           >
-            <span className="admin-side-icon">💵</span>
+            <span className="admin-side-icon"><Banknote size={18} /></span>
             Movimientos de Caja
           </button>
         </aside>
