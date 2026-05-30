@@ -1,16 +1,11 @@
 import { useState, useEffect } from "react"
-
-function uuid(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0
-    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
-  })
-}
 import { useSearchParams } from "react-router-dom"
 import {
   type Cliente,
   loadClientes,
-  saveClientes,
+  crearCliente,
+  actualizarCliente,
+  eliminarCliente,
   loadGrupos,
   saveGrupos,
   siguienteNumCliente,
@@ -39,12 +34,14 @@ const CLIENTE_VACIO: Omit<Cliente, "id"> = {
 
 export function AdminClientesLista() {
   const [searchParams, setSearchParams] = useSearchParams()
-  const [clientes, setClientes] = useState<Cliente[]>(loadClientes)
-  const [grupos, setGrupos] = useState<string[]>(loadGrupos)
+  const [clientes, setClientes] = useState<Cliente[]>([])
+  const [grupos, setGrupos] = useState<string[]>([])
+  const [cargando, setCargando] = useState(true)
   const [seleccionado, setSeleccionado] = useState<string | null>(null)
   const [editando, setEditando] = useState<Cliente | null>(null)
   const [esNuevo, setEsNuevo] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [guardando, setGuardando] = useState(false)
   const [nuevoGrupo, setNuevoGrupo] = useState<string | null>(null)
   const [creditoHabilitado, setCreditoHabilitado] = useState(false)
 
@@ -52,31 +49,47 @@ export function AdminClientesLista() {
     return (c.limite_credito ?? 0) > 0 || (c.dias_credito ?? 0) > 0
   }
 
+  // Carga inicial (clientes + grupos) desde la BD, y abre el editor si la URL lo pide.
   useEffect(() => {
-    const editarId = searchParams.get("editar")
-    const nuevo = searchParams.get("nuevo")
-    if (!editarId && nuevo !== "1") return
+    let activo = true
+    ;(async () => {
+      try {
+        const [lista, grps] = await Promise.all([loadClientes(), loadGrupos()])
+        if (!activo) return
+        setClientes(lista)
+        setGrupos(grps)
 
-    const todos = loadClientes()
-    if (editarId) {
-      const c = todos.find((c) => c.id === editarId)
-      if (c) { setEditando({ ...c }); setEsNuevo(false); setCreditoHabilitado(tieneCredito(c)) }
-    } else {
-      setEditando({ id: uuid(), ...CLIENTE_VACIO, num_cliente: siguienteNumCliente(todos) })
-      setEsNuevo(true)
-      setCreditoHabilitado(false)
-    }
-    setSearchParams({}, { replace: true })
+        const editarId = searchParams.get("editar")
+        const nuevo = searchParams.get("nuevo")
+        if (editarId) {
+          const c = lista.find((c) => c.id === editarId)
+          if (c) { setEditando({ ...c }); setEsNuevo(false); setCreditoHabilitado(tieneCredito(c)) }
+        } else if (nuevo === "1") {
+          const num = await siguienteNumCliente()
+          if (!activo) return
+          setEditando({ id: "", ...CLIENTE_VACIO, num_cliente: num })
+          setEsNuevo(true)
+          setCreditoHabilitado(false)
+        }
+        if (editarId || nuevo === "1") setSearchParams({}, { replace: true })
+      } catch (e) {
+        console.error("Error cargando clientes:", e)
+      } finally {
+        if (activo) setCargando(false)
+      }
+    })()
+    return () => { activo = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function recargar(lista: Cliente[]) {
-    saveClientes(lista)
-    setClientes(lista)
+  /** Recarga la lista de clientes desde la BD (tras crear/editar/borrar). */
+  async function recargarLista() {
+    try { setClientes(await loadClientes()) } catch (e) { console.error(e) }
   }
 
-  function abrirNuevo() {
-    setEditando({ id: uuid(), ...CLIENTE_VACIO, num_cliente: siguienteNumCliente(clientes) })
+  async function abrirNuevo() {
+    const num = await siguienteNumCliente().catch(() => "")
+    setEditando({ id: "", ...CLIENTE_VACIO, num_cliente: num })
     setEsNuevo(true)
     setFormError(null)
     setNuevoGrupo(null)
@@ -108,38 +121,55 @@ export function AdminClientesLista() {
     setCreditoHabilitado(v => !v)
   }
 
-  function eliminar() {
+  async function eliminar() {
     const c = clientes.find((c) => c.id === seleccionado)
     if (!c) return
     if (!confirm(`¿Eliminar a ${c.nombre}? Esta acción no se puede deshacer.`)) return
-    recargar(clientes.filter((x) => x.id !== seleccionado))
-    setSeleccionado(null)
+    try {
+      await eliminarCliente(c.id)
+      setSeleccionado(null)
+      await recargarLista()
+    } catch (e) {
+      alert("No se pudo eliminar el cliente: " + (e instanceof Error ? e.message : ""))
+    }
   }
 
   function setField<K extends keyof Cliente>(k: K, v: Cliente[K]) {
     setEditando((prev) => (prev ? { ...prev, [k]: v } : prev))
   }
 
-  function crearGrupo() {
+  async function crearGrupo() {
     if (nuevoGrupo === null || !nuevoGrupo.trim()) return
     const nombre = nuevoGrupo.trim()
     if (!grupos.includes(nombre)) {
       const nuevos = [...grupos, nombre].sort()
-      saveGrupos(nuevos)
-      setGrupos(nuevos)
+      setGrupos(nuevos)            // optimista
+      try { setGrupos(await saveGrupos(nuevos)) } catch (e) { console.error(e) }
     }
     setField("grupo", nombre)
     setNuevoGrupo(null)
   }
 
-  function guardar() {
+  async function guardar() {
     if (!editando) return
     if (!editando.nombre.trim()) { setFormError("El nombre es requerido"); return }
-    const lista = esNuevo
-      ? [...clientes, editando]
-      : clientes.map((c) => (c.id === editando.id ? editando : c))
-    recargar(lista)
-    setEditando(null)
+    setGuardando(true)
+    setFormError(null)
+    try {
+      // El backend ignora `id` al crear (asigna el customer.id de Medusa).
+      const { id, ...datos } = editando
+      if (esNuevo) {
+        await crearCliente(datos)
+      } else {
+        await actualizarCliente(id, datos)
+      }
+      await recargarLista()
+      setEditando(null)
+    } catch (e) {
+      setFormError("No se pudo guardar: " + (e instanceof Error ? e.message : "error desconocido"))
+    } finally {
+      setGuardando(false)
+    }
   }
 
   if (editando) {
@@ -150,8 +180,10 @@ export function AdminClientesLista() {
             {esNuevo ? "Nuevo cliente" : `Editar — ${editando.nombre || "cliente"}`}
           </h2>
           <div className="ac-editor-actions">
-            <button className="ac-btn-cancel" onClick={cerrar}>Cancelar</button>
-            <button className="ac-btn-save" onClick={guardar} disabled={!editando.nombre.trim()}>Guardar</button>
+            <button className="ac-btn-cancel" onClick={cerrar} disabled={guardando}>Cancelar</button>
+            <button className="ac-btn-save" onClick={guardar} disabled={!editando.nombre.trim() || guardando}>
+              {guardando ? "Guardando…" : "Guardar"}
+            </button>
           </div>
         </div>
 
@@ -343,7 +375,9 @@ export function AdminClientesLista() {
         </div>
       </div>
 
-      {clientes.length === 0 ? (
+      {cargando ? (
+        <p className="ac-vacio">Cargando clientes…</p>
+      ) : clientes.length === 0 ? (
         <p className="ac-vacio">No hay clientes registrados. Haz clic en "Nuevo cliente" para agregar uno.</p>
       ) : (
         <table className="admin-tabla">

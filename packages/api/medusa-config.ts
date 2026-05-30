@@ -29,6 +29,11 @@ module.exports = defineConfig({
       resolve: "@medusajs/medusa/rbac",
     },
     {
+      // Cartera de crédito del POS (movimientos, notas, historial de límite).
+      // Enlazado por customer_id al Customer nativo. Ver src/modules/ferremex-cartera.
+      resolve: "./src/modules/ferremex-cartera",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

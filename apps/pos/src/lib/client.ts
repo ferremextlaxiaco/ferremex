@@ -37,6 +37,11 @@ export interface VentaRequest {
   pago_efectivo: number
   pago_transferencia?: number
   pago_credito?: number
+  // Venta a crédito: el backend registra el cargo en la cartera del cliente de
+  // forma transaccional (dentro del lock de la venta). cliente_id = Customer id.
+  cliente_id?: string
+  cliente_nombre?: string
+  plazo?: number
 }
 
 export interface VentaResponse {
@@ -494,5 +499,128 @@ export async function actualizarCatalogo(
   return apiFetch("/caja/catalogos", {
     method: "PATCH",
     body: JSON.stringify(payload),
+  })
+}
+
+// ── Clientes (BD Medusa, Fase 3) ──────────────────────────────────────────────
+// Reemplazan el viejo localStorage (pos_clientes/pos_grupos). El shape Cliente
+// y los tipos de cartera viven en lib/clientes.ts (origen canónico de tipos).
+
+import type {
+  Cliente,
+  Movimiento,
+  NotaCartera,
+  HistorialLimite,
+  CartEntrada,
+} from "./clientes"
+
+export async function listarClientesAPI(): Promise<Cliente[]> {
+  return apiFetch<Cliente[]>("/caja/clientes")
+}
+
+export async function siguienteNumClienteAPI(): Promise<string> {
+  const r = await apiFetch<{ num_cliente: string }>("/caja/clientes?siguiente-num=1")
+  return r.num_cliente
+}
+
+export async function crearClienteAPI(cliente: Omit<Cliente, "id">): Promise<Cliente> {
+  return apiFetch<Cliente>("/caja/clientes", {
+    method: "POST",
+    body: JSON.stringify(cliente),
+  })
+}
+
+export async function actualizarClienteAPI(id: string, cliente: Partial<Cliente>): Promise<Cliente> {
+  return apiFetch<Cliente>(`/caja/clientes/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(cliente),
+  })
+}
+
+export async function eliminarClienteAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/clientes/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ── Grupos de clientes (customer_group nativo) ────────────────────────────────
+
+export async function listarGruposAPI(): Promise<string[]> {
+  return apiFetch<string[]>("/caja/grupos")
+}
+
+/** Sincroniza la lista de grupos (crea los que falten). Devuelve la lista resultante. */
+export async function guardarGruposAPI(grupos: string[]): Promise<string[]> {
+  return apiFetch<string[]>("/caja/grupos", {
+    method: "PUT",
+    body: JSON.stringify({ grupos }),
+  })
+}
+
+// ── Cartera de crédito (módulo ferremex_cartera) ──────────────────────────────
+
+/** Todas las carteras como Record<customer_id, CartEntrada> (carga masiva). */
+export async function listarCarteraGlobalAPI(): Promise<Record<string, CartEntrada>> {
+  return apiFetch<Record<string, CartEntrada>>("/caja/cartera")
+}
+
+/** Cartera completa de un cliente. */
+export async function obtenerCarteraClienteAPI(customerId: string): Promise<CartEntrada> {
+  const d = await apiFetch<{ movimientos: Movimiento[]; notas: NotaCartera[]; historialLimite: HistorialLimite[] }>(
+    `/caja/cartera/${encodeURIComponent(customerId)}`
+  )
+  return { movimientos: d.movimientos, notas: d.notas, historialLimite: d.historialLimite }
+}
+
+export async function agregarMovimientoCarteraAPI(
+  customerId: string,
+  mov: Omit<Movimiento, "id">
+): Promise<Movimiento> {
+  return apiFetch<Movimiento>(`/caja/cartera/${encodeURIComponent(customerId)}/movimientos`, {
+    method: "POST",
+    body: JSON.stringify(mov),
+  })
+}
+
+export async function agregarNotaCarteraAPI(
+  customerId: string,
+  nota: Omit<NotaCartera, "id">
+): Promise<NotaCartera> {
+  return apiFetch<NotaCartera>(`/caja/cartera/${encodeURIComponent(customerId)}/notas`, {
+    method: "POST",
+    body: JSON.stringify(nota),
+  })
+}
+
+export async function registrarCambioLimiteAPI(
+  customerId: string,
+  cambio: Omit<HistorialLimite, "id">
+): Promise<HistorialLimite> {
+  return apiFetch<HistorialLimite>(`/caja/cartera/${encodeURIComponent(customerId)}/limite`, {
+    method: "POST",
+    body: JSON.stringify(cambio),
+  })
+}
+
+// ── Migración one-shot localStorage → BD ──────────────────────────────────────
+
+export interface MigracionDump {
+  clientes: Cliente[]
+  grupos: string[]
+  cartera: Record<string, CartEntrada>
+}
+
+export interface MigracionResumen {
+  clientes_creados: number
+  clientes_omitidos: number
+  grupos_creados: number
+  carteras_migradas: number
+  carteras_omitidas: number
+  movimientos: number
+  huerfanos: string[]
+}
+
+export async function migrarLocalStorageAPI(dump: MigracionDump): Promise<{ ok: boolean; resumen: MigracionResumen }> {
+  return apiFetch("/caja/migrar-localstorage", {
+    method: "POST",
+    body: JSON.stringify(dump),
   })
 }

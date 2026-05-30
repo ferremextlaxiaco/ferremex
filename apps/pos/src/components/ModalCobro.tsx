@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { registrarVenta, type VentaResponse } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
-import { agregarMovimientoCredito } from "../lib/clientes"
 import { formatMXN as fmt } from "../lib/format"
 
 interface ModalCobroProps {
@@ -54,6 +53,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     try {
       const ventaItems = state.items
       const ventaCliente = state.clienteActivo
+      // El cargo a crédito lo registra el backend de forma TRANSACCIONAL dentro
+      // de POST /caja/ventas (dentro del lock de la venta). Por eso enviamos
+      // cliente_id/plazo y ya NO llamamos a agregarMovimientoCredito por separado:
+      // así nunca queda un cargo huérfano si la venta falla, ni una venta sin cargo.
       const venta = await registrarVenta({
         cajero: state.cajero.nombre,
         turno_id: state.cajero.turno_id,
@@ -66,21 +69,14 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,
         pago_credito: pCredito,
+        ...(pCredito > 0 && ventaCliente
+          ? {
+              cliente_id: ventaCliente.id,
+              cliente_nombre: ventaCliente.nombre,
+              plazo: ventaCliente.dias_credito,
+            }
+          : {}),
       })
-      if (pCredito > 0 && ventaCliente) {
-        const desc = ventaItems
-          .map((i) => `${i.descripcion} ×${i.cantidad}`)
-          .join(", ")
-          .slice(0, 100)
-        agregarMovimientoCredito(ventaCliente.id, {
-          tipo: "compra",
-          monto: pCredito,
-          fecha: new Date().toISOString().slice(0, 10),
-          folio: venta.folio,
-          plazo: ventaCliente.dias_credito,
-          descripcion: desc || "Venta en mostrador",
-        })
-      }
       if (pEfectivo > 0) {
         try { await abrirCajon() } catch { /* sin cajón, continuar */ }
       }

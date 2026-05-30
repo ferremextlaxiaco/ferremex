@@ -3,6 +3,8 @@ import { Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import * as crypto from "crypto"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../lib/json-store"
+import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
+import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
 
 interface ItemVenta {
   sku: string
@@ -18,6 +20,12 @@ interface VentaBody {
   pago_efectivo: number
   pago_transferencia?: number
   pago_credito?: number
+  // Cliente a crédito: si pago_credito > 0, el cargo se registra en su cartera
+  // de forma transaccional (dentro del lock de la venta). `cliente_id` es el id
+  // del Customer nativo de Medusa.
+  cliente_id?: string
+  cliente_nombre?: string
+  plazo?: number
 }
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
@@ -88,6 +96,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(400).json({ error: "Montos de pago inválidos" })
     return
   }
+  // Si hay pago a crédito, se requiere un cliente para cargarlo en su cartera.
+  if (pago_credito > 0 && !body.cliente_id) {
+    res.status(400).json({ error: "Una venta a crédito requiere cliente_id" })
+    return
+  }
 
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
   const total_pagado = pago_efectivo + pago_transferencia + pago_credito
@@ -102,6 +115,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // respecto a otras ventas concurrentes, eliminando: (a) sobreventa por race
   // check→decrement, (b) folios secuenciales duplicados, (c) pérdida de registros
   // por read-modify-write concurrente.
+  const carteraService: FerremexCarteraService | null =
+    pago_credito > 0 ? req.scope.resolve(FERREMEX_CARTERA) : null
+
   try {
     const resultado = await withFileLock(VENTAS_FILE, async () => {
       // Cargar inventario y validar stock
@@ -164,7 +180,30 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           pago_efectivo,
           pago_transferencia,
           pago_credito,
+          // cliente_id se persiste para poder revertir el cargo a crédito si la
+          // venta se cancela (PATCH /caja/ventas/:folio).
+          cliente_id: body.cliente_id ?? null,
+          cliente_nombre: body.cliente_nombre ?? null,
           cambio: Math.max(0, pago_efectivo - Math.max(0, total - pago_transferencia - pago_credito)),
+        }
+
+        // Cargo a crédito: registrar el movimiento en la cartera del cliente.
+        // Se hace ANTES de escribir la venta para que, si el cargo falla, el
+        // catch revierta el inventario y la venta NO se persista (atomicidad
+        // cargo+venta). El orden inverso (venta primero) dejaría como peor caso
+        // un cargo huérfano con folio de una venta inexistente; este orden deja
+        // como peor caso —solo si writeJsonAtomic fallara tras un cargo OK— un
+        // cargo sin venta, detectable y reversible por folio. La escritura JSON
+        // local es prácticamente infalible una vez superada la validación.
+        if (carteraService && pago_credito > 0 && body.cliente_id) {
+          await carteraService.agregarMovimiento(body.cliente_id, {
+            tipo: "compra",
+            monto: pago_credito,
+            fecha: registro.fecha.slice(0, 10),
+            folio: registro.folio,
+            plazo: body.plazo != null ? Number(body.plazo) : null,
+            descripcion: `Venta a crédito ${registro.folio}`,
+          })
         }
 
         const ventas = cargarVentas()

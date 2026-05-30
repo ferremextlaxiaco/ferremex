@@ -699,13 +699,25 @@ export type Routes = {
     caja: {
         ajusteInventario: typeof import("../../src/api/caja/ajuste-inventario/route");
         articulos: typeof import("../../src/api/caja/articulos/route");
+        cartera: typeof import("../../src/api/caja/cartera/route") & {
+            $customerId: typeof import("../../src/api/caja/cartera/[customerId]/route") & {
+                limite: typeof import("../../src/api/caja/cartera/[customerId]/limite/route");
+                movimientos: typeof import("../../src/api/caja/cartera/[customerId]/movimientos/route");
+                notas: typeof import("../../src/api/caja/cartera/[customerId]/notas/route");
+            };
+        };
         catalogos: typeof import("../../src/api/caja/catalogos/route");
         categorias: typeof import("../../src/api/caja/categorias/route");
+        clientes: typeof import("../../src/api/caja/clientes/route") & {
+            $id: typeof import("../../src/api/caja/clientes/[id]/route");
+        };
         corte: typeof import("../../src/api/caja/corte/route");
         folioContador: typeof import("../../src/api/caja/folio-contador/route");
         generarOc: typeof import("../../src/api/caja/generar-oc/route");
+        grupos: typeof import("../../src/api/caja/grupos/route");
         imagen: typeof import("../../src/api/caja/imagen/route");
         login: typeof import("../../src/api/caja/login/route");
+        migrarLocalstorage: typeof import("../../src/api/caja/migrar-localstorage/route");
         pedidos: typeof import("../../src/api/caja/pedidos/route");
         productos: typeof import("../../src/api/caja/productos/route");
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");

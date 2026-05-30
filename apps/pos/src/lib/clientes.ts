@@ -1,5 +1,32 @@
 // ---------------------------------------------------------------------------
-// Tipos
+// Clientes + Cartera de crédito.
+//
+// FASE 3: la persistencia migró de localStorage a la BD de Medusa.
+//   - Clientes  → Customer nativo (+ metadata) vía /caja/clientes.
+//   - Grupos    → customer_group nativo vía /caja/grupos.
+//   - Cartera   → módulo ferremex_cartera vía /caja/cartera.
+//
+// Este archivo es ahora una FACHADA async sobre client.ts. Conserva los TIPOS
+// (origen canónico) para no romper a sus consumidores. Las funciones de lectura
+// de localStorage se conservan como `*Local` SOLO para que el componente de
+// migración (MigracionNube) lea los datos viejos una última vez.
+// ---------------------------------------------------------------------------
+
+import {
+  listarClientesAPI,
+  crearClienteAPI,
+  actualizarClienteAPI,
+  eliminarClienteAPI,
+  siguienteNumClienteAPI,
+  listarGruposAPI,
+  guardarGruposAPI,
+  listarCarteraGlobalAPI,
+  obtenerCarteraClienteAPI,
+  agregarMovimientoCarteraAPI,
+} from "./client"
+
+// ---------------------------------------------------------------------------
+// Tipos (origen canónico — client.ts los importa con `import type`)
 // ---------------------------------------------------------------------------
 
 export interface Cliente {
@@ -25,84 +52,6 @@ export interface Cliente {
   estado: string
   cp: string
 }
-
-// ---------------------------------------------------------------------------
-// Claves de localStorage
-// ---------------------------------------------------------------------------
-
-export const STORAGE_KEY_CLIENTES = "pos_clientes"
-export const STORAGE_KEY_GRUPOS   = "pos_grupos"
-
-const GRUPOS_DEFAULT = ["Familia", "Empresa", "Gobierno", "Constructor", "Distribuidor"]
-
-// ---------------------------------------------------------------------------
-// Grupos
-// ---------------------------------------------------------------------------
-
-export function loadGrupos(): string[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_GRUPOS)
-    return raw ? JSON.parse(raw) : GRUPOS_DEFAULT
-  } catch {
-    return GRUPOS_DEFAULT
-  }
-}
-
-export function saveGrupos(grupos: string[]): void {
-  localStorage.setItem(STORAGE_KEY_GRUPOS, JSON.stringify(grupos))
-}
-
-// ---------------------------------------------------------------------------
-// Clientes
-// ---------------------------------------------------------------------------
-
-export function loadClientes(): Cliente[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_CLIENTES)
-    if (!raw) return CLIENTES_DEMO
-    const lista: unknown[] = JSON.parse(raw)
-    return lista.map((c: any) => ({
-      ...c,
-      // migración: campo monedero era number, ahora es boolean
-      monedero:
-        typeof c.monedero === "boolean"
-          ? c.monedero
-          : Number(c.monedero) > 0,
-      // migración: num_precio máx 4
-      num_precio: Math.min(4, Math.max(1, Number(c.num_precio) || 1)),
-    })) as Cliente[]
-  } catch {
-    return CLIENTES_DEMO
-  }
-}
-
-export function saveClientes(lista: Cliente[]): void {
-  localStorage.setItem(STORAGE_KEY_CLIENTES, JSON.stringify(lista))
-}
-
-// ---------------------------------------------------------------------------
-// Autoincremento: devuelve el siguiente num_cliente disponible en formato 3 dígitos
-// Si hay huecos (se borró el 002), rellena el hueco más bajo.
-// ---------------------------------------------------------------------------
-
-export function siguienteNumCliente(clientes: Cliente[]): string {
-  const usados = new Set(
-    clientes
-      .map((c) => parseInt(c.num_cliente, 10))
-      .filter((n) => !isNaN(n) && n > 0)
-  )
-  let siguiente = 1
-  while (usados.has(siguiente)) siguiente++
-  return String(siguiente).padStart(3, "0")
-}
-
-// ---------------------------------------------------------------------------
-// Datos de simulación — se usan cuando localStorage no tiene clientes aún
-// ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Cartera de crédito — tipos y persistencia en localStorage
-// ---------------------------------------------------------------------------
 
 export interface Movimiento {
   id: string
@@ -138,147 +87,129 @@ export interface CartEntrada {
   historialLimite: HistorialLimite[]
 }
 
-export const STORAGE_KEY_CARTERA = "pos_cartera"
+// ---------------------------------------------------------------------------
+// Clientes (BD)
+// ---------------------------------------------------------------------------
 
-export function loadCartera(): Record<string, CartEntrada> {
+/** Lista los clientes desde la BD. */
+export async function loadClientes(): Promise<Cliente[]> {
+  return listarClientesAPI()
+}
+
+/** Crea un cliente en la BD y devuelve el creado (con su id de Medusa). */
+export async function crearCliente(cliente: Omit<Cliente, "id">): Promise<Cliente> {
+  return crearClienteAPI(cliente)
+}
+
+/** Actualiza un cliente existente. */
+export async function actualizarCliente(id: string, cliente: Partial<Cliente>): Promise<Cliente> {
+  return actualizarClienteAPI(id, cliente)
+}
+
+/** Elimina un cliente. */
+export async function eliminarCliente(id: string): Promise<void> {
+  return eliminarClienteAPI(id)
+}
+
+/** Siguiente num_cliente disponible (calculado server-side). */
+export async function siguienteNumCliente(): Promise<string> {
+  return siguienteNumClienteAPI()
+}
+
+// ---------------------------------------------------------------------------
+// Grupos (customer_group nativo)
+// ---------------------------------------------------------------------------
+
+export async function loadGrupos(): Promise<string[]> {
+  return listarGruposAPI()
+}
+
+export async function saveGrupos(grupos: string[]): Promise<string[]> {
+  return guardarGruposAPI(grupos)
+}
+
+// ---------------------------------------------------------------------------
+// Cartera (módulo ferremex_cartera)
+// ---------------------------------------------------------------------------
+
+/** Todas las carteras como Record<customer_id, CartEntrada>. */
+export async function loadCartera(): Promise<Record<string, CartEntrada>> {
+  return listarCarteraGlobalAPI()
+}
+
+/** Cartera de un cliente. */
+export async function loadCarteraCliente(customerId: string): Promise<CartEntrada> {
+  return obtenerCarteraClienteAPI(customerId)
+}
+
+/**
+ * Registra un movimiento de crédito en la cartera del cliente.
+ *
+ * Nota: los cargos derivados de una VENTA a crédito ya NO se registran aquí —
+ * el backend los crea transaccionalmente dentro de POST /caja/ventas. Esta
+ * función cubre abonos/pagos y cargos manuales desde la pantalla de Cartera.
+ */
+export async function agregarMovimientoCredito(
+  clienteId: string,
+  mov: Omit<Movimiento, "id">
+): Promise<Movimiento> {
+  return agregarMovimientoCarteraAPI(clienteId, mov)
+}
+
+// ---------------------------------------------------------------------------
+// localStorage legacy — SOLO para el componente de migración (MigracionNube).
+// No usar en código nuevo. Lee los datos que cada terminal capturó antes de
+// la Fase 3 para subirlos a la BD una sola vez.
+// ---------------------------------------------------------------------------
+
+export const STORAGE_KEY_CLIENTES = "pos_clientes"
+export const STORAGE_KEY_GRUPOS = "pos_grupos"
+export const STORAGE_KEY_CARTERA = "pos_cartera"
+export const STORAGE_KEY_MIGRADO = "pos_migrado_v1"
+
+/** Lee los clientes guardados en localStorage (datos pre-Fase 3). */
+export function loadClientesLocal(): Cliente[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_CLIENTES)
+    if (!raw) return []
+    const lista: unknown[] = JSON.parse(raw)
+    return lista.map((c: any) => ({
+      ...c,
+      monedero: typeof c.monedero === "boolean" ? c.monedero : Number(c.monedero) > 0,
+      num_precio: Math.min(4, Math.max(1, Number(c.num_precio) || 1)),
+    })) as Cliente[]
+  } catch {
+    return []
+  }
+}
+
+/** Lee los grupos guardados en localStorage (datos pre-Fase 3). */
+export function loadGruposLocal(): string[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_GRUPOS)
+    return raw ? (JSON.parse(raw) as string[]) : []
+  } catch {
+    return []
+  }
+}
+
+/** Lee la cartera guardada en localStorage (datos pre-Fase 3). */
+export function loadCarteraLocal(): Record<string, CartEntrada> {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_CARTERA)
-    return raw ? JSON.parse(raw) : {}
+    return raw ? (JSON.parse(raw) as Record<string, CartEntrada>) : {}
   } catch {
     return {}
   }
 }
 
-export function saveCartera(cartera: Record<string, CartEntrada>): void {
-  localStorage.setItem(STORAGE_KEY_CARTERA, JSON.stringify(cartera))
+/** True si hay datos viejos en localStorage que aún no se han migrado. */
+export function hayDatosLocalesSinMigrar(): boolean {
+  if (localStorage.getItem(STORAGE_KEY_MIGRADO) === "1") return false
+  return loadClientesLocal().length > 0 || Object.keys(loadCarteraLocal()).length > 0
 }
 
-function genId(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0
-    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
-  })
+/** Marca la migración como completada (no borra los datos viejos: red de seguridad). */
+export function marcarMigrado(): void {
+  localStorage.setItem(STORAGE_KEY_MIGRADO, "1")
 }
-
-export function agregarMovimientoCredito(
-  clienteId: string,
-  mov: Omit<Movimiento, "id">
-): void {
-  const cartera = loadCartera()
-  const entrada = cartera[clienteId] ?? { movimientos: [], notas: [], historialLimite: [] }
-  entrada.movimientos = [...entrada.movimientos, { id: genId(), ...mov }]
-  cartera[clienteId] = entrada
-  saveCartera(cartera)
-}
-
-// ---------------------------------------------------------------------------
-// Datos de simulación — se usan cuando localStorage no tiene clientes aún
-// ---------------------------------------------------------------------------
-
-export const CLIENTES_DEMO: Cliente[] = [
-  {
-    id: "demo-001",
-    num_cliente: "001",
-    nombre: "Constructora Martínez S.A.",
-    telefono: "953 104 2231",
-    num_precio: 2,
-    dias_credito: 30,
-    limite_credito: 15000,
-    grupo: "Empresa",
-    monedero: false,
-    rfc: "CMR850312KJ4",
-    razon_social: "Constructora Martínez S.A. de C.V.",
-    regimen_fiscal: "601",
-    cfdi: "G01",
-    calle: "Av. Independencia",
-    numero: "45",
-    colonia: "Centro",
-    ciudad: "Tlaxiaco",
-    estado: "Oaxaca",
-    cp: "69800",
-  },
-  {
-    id: "demo-002",
-    num_cliente: "002",
-    nombre: "Familia García Ruiz",
-    telefono: "953 100 8873",
-    num_precio: 1,
-    dias_credito: 0,
-    limite_credito: 0,
-    grupo: "Familia",
-    monedero: true,
-    rfc: "",
-    razon_social: "",
-    regimen_fiscal: "",
-    cfdi: "",
-    calle: "Calle Hidalgo",
-    numero: "12",
-    colonia: "Col. Reforma",
-    ciudad: "Tlaxiaco",
-    estado: "Oaxaca",
-    cp: "69800",
-  },
-  {
-    id: "demo-003",
-    num_cliente: "003",
-    nombre: "Distribuidora Tlaxiaco",
-    telefono: "953 108 5512",
-    num_precio: 3,
-    dias_credito: 15,
-    limite_credito: 8000,
-    grupo: "Distribuidor",
-    monedero: false,
-    rfc: "DTL920703AAA",
-    razon_social: "Distribuidora Tlaxiaco S. de R.L.",
-    regimen_fiscal: "612",
-    cfdi: "G03",
-    calle: "Blvd. Reforma",
-    numero: "201",
-    colonia: "Col. Niños Héroes",
-    ciudad: "Tlaxiaco",
-    estado: "Oaxaca",
-    cp: "69800",
-  },
-  {
-    id: "demo-004",
-    num_cliente: "004",
-    nombre: "Ayuntamiento de Tlaxiaco",
-    telefono: "953 100 0100",
-    num_precio: 2,
-    dias_credito: 45,
-    limite_credito: 50000,
-    grupo: "Gobierno",
-    monedero: false,
-    rfc: "ATX570401GH9",
-    razon_social: "H. Ayuntamiento de Heroica Ciudad de Tlaxiaco",
-    regimen_fiscal: "603",
-    cfdi: "G03",
-    calle: "Portal Municipal",
-    numero: "S/N",
-    colonia: "Centro",
-    ciudad: "Tlaxiaco",
-    estado: "Oaxaca",
-    cp: "69800",
-  },
-  {
-    id: "demo-005",
-    num_cliente: "005",
-    nombre: "Ing. Roberto Pérez",
-    telefono: "953 107 3344",
-    num_precio: 1,
-    dias_credito: 0,
-    limite_credito: 0,
-    grupo: "Constructor",
-    monedero: true,
-    rfc: "PERR780611HZ2",
-    razon_social: "Roberto Pérez Ramos",
-    regimen_fiscal: "612",
-    cfdi: "I01",
-    calle: "Calle Morelos",
-    numero: "78",
-    colonia: "Col. La Paz",
-    ciudad: "Tlaxiaco",
-    estado: "Oaxaca",
-    cp: "69801",
-  },
-]

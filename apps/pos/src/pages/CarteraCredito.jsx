@@ -1,20 +1,10 @@
-// QA REFERENCE — mock customers and states:
-// 1. Constructora Martínez — darkred, 65d overdue, $8,750 balance of $15,000
-// 2. Distribuidora Tlaxiaco — yellow, expires TODAY, $4,200 balance of $8,000
-// 3. Ayuntamiento Tlaxiaco — blue, $0 balance of $50,000
-// 4. Ana García López — red, 45d overdue, $3,800 of $5,000
-// 5. Materiales Oaxaca — orange, 15d overdue, $6,500 of $12,000
-// 6. Mueblería Central — yellow, 4d remaining, $12,000 of $20,000
-// 7. Ferretería del Sur — green, 15d remaining, $4,500 of $10,000
-// 8. Ing. Carlos Mendoza — yellow, 2d remaining, $3,200 of $6,000
-
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   ShoppingCart, Banknote, Search, X, Plus, ChevronUp, ChevronDown,
   TriangleAlert, Printer, FileText, Edit, Check, Trash2,
 } from "lucide-react"
-import { loadClientes, saveClientes, loadCartera, saveCartera } from "../lib/clientes"
-import { obtenerUsuarios, obtenerVenta } from "../lib/client"
+import { loadClientes, actualizarCliente, loadCartera, agregarMovimientoCredito } from "../lib/clientes"
+import { obtenerUsuarios, obtenerVenta, agregarNotaCarteraAPI, registrarCambioLimiteAPI } from "../lib/client"
 import { formatMXN as fmtPeso } from "../lib/format"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,194 +168,7 @@ function calcularAplicacionAbono(movimientos, pagoId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Mock portfolio data
-// ─────────────────────────────────────────────────────────────────────────────
-
-const MOCK_PORTFOLIO = [
-  {
-    id: "port-001",
-    clienteId: "demo-001",       // matches CLIENTES_DEMO
-    nombre: "Constructora Martínez S.A.",
-    telefono: "953 104 2231",
-    limite: 15000,
-    plazo: 30,
-    movimientos: [
-      { id: "m001a", tipo: "compra", monto: 4500, fecha: daysAgo(95), folio: "POS-20250919-0022", plazo: 30, descripcion: "Materiales de construcción - lote 1" },
-      { id: "m001b", tipo: "pago",   monto: 2000, fecha: daysAgo(88), descripcion: "Abono en efectivo" },
-      { id: "m001c", tipo: "compra", monto: 3800, fecha: daysAgo(75), folio: "POS-20250929-0041", plazo: 30, descripcion: "Herramienta eléctrica Truper" },
-      { id: "m001d", tipo: "pago",   monto: 1550, fecha: daysAgo(60), descripcion: "Abono transferencia SPEI" },
-      { id: "m001e", tipo: "compra", monto: 4000, fecha: daysAgo(50), folio: "POS-20251009-0055", plazo: 30, descripcion: "Varilla corrugada 3/8 × 100 pzas" },
-    ],
-    notas: [
-      { id: "n001a", fecha: daysAgo(10), hora: "10:15", autor: "Andrés", texto: "Se habló con el gerente de obra, prometieron liquidar el saldo esta semana." },
-      { id: "n001b", fecha: daysAgo(5),  hora: "16:42", autor: "Andrés", texto: "No se presentaron. Llamar de nuevo el lunes." },
-      { id: "n001c", fecha: daysAgo(2),  hora: "09:00", autor: "Andrés", texto: "Enviar estado de cuenta por WhatsApp — coordinado con Andrés." },
-    ],
-    historialLimite: [
-      { id: "hl001a", fecha: daysAgo(180), usuario: "Andrés", anterior: 0, nuevo: 10000, nota: "Alta de crédito inicial" },
-      { id: "hl001b", fecha: daysAgo(90),  usuario: "Andrés", anterior: 10000, nuevo: 15000, nota: "Buen historial en primeros 3 meses" },
-    ],
-  },
-  {
-    id: "port-002",
-    clienteId: "demo-003",
-    nombre: "Distribuidora Tlaxiaco",
-    telefono: "953 108 5512",
-    limite: 8000,
-    plazo: 15,
-    movimientos: [
-      { id: "m002a", tipo: "compra", monto: 2800, fecha: daysAgo(30), folio: "POS-20251122-0088", plazo: 15, descripcion: "Tornillería y fijaciones" },
-      { id: "m002b", tipo: "pago",   monto: 2800, fecha: daysAgo(20), descripcion: "Pago completo compra anterior" },
-      { id: "m002c", tipo: "compra", monto: 3200, fecha: daysAgo(15), folio: "POS-20251207-0101", plazo: 15, descripcion: "Pinturas y solventes" },
-      { id: "m002d", tipo: "compra", monto: 1000, fecha: daysAgo(15), folio: "POS-20251207-0102", plazo: 15, descripcion: "Brochas y rodillos" },
-    ],
-    notas: [
-      { id: "n002a", fecha: daysAgo(5), hora: "11:30", autor: "Andrés", texto: "Cliente cumplido históricamente — dar seguimiento hoy." },
-      { id: "n002b", fecha: daysAgo(1), hora: "09:15", autor: "Andrés", texto: "Confirmaron pago para mañana por transferencia." },
-    ],
-    historialLimite: [
-      { id: "hl002a", fecha: daysAgo(120), usuario: "Andrés", anterior: 0,    nuevo: 8000, nota: "Alta de crédito para distribuidor" },
-    ],
-  },
-  {
-    id: "port-003",
-    clienteId: "demo-004",
-    nombre: "Ayuntamiento de Tlaxiaco",
-    telefono: "953 100 0100",
-    limite: 50000,
-    plazo: 45,
-    movimientos: [
-      { id: "m003a", tipo: "compra", monto: 18000, fecha: daysAgo(100), folio: "POS-20250912-0010", plazo: 45, descripcion: "Material eléctrico — planta municipal" },
-      { id: "m003b", tipo: "pago",   monto: 18000, fecha: daysAgo(80),  descripcion: "Pago vía transferencia bancaria" },
-      { id: "m003c", tipo: "compra", monto: 12000, fecha: daysAgo(60),  folio: "POS-20251012-0030", plazo: 45, descripcion: "Tubería PVC y accesorios — red de agua" },
-      { id: "m003d", tipo: "pago",   monto: 12000, fecha: daysAgo(20),  descripcion: "Pago por CLC municipal" },
-    ],
-    notas: [
-      { id: "n003a", fecha: daysAgo(30), hora: "14:00", autor: "Andrés", texto: "Cuenta corriente pagada al día. Excelente cliente institucional." },
-      { id: "n003b", fecha: daysAgo(15), hora: "10:00", autor: "Andrés", texto: "Coordinado con Tesorería para nuevos pedidos de obra pública." },
-      { id: "n003c", fecha: daysAgo(3),  hora: "09:30", autor: "Andrés", texto: "Nuevo proyecto de infraestructura aprobado — posible pedido grande en enero." },
-    ],
-    historialLimite: [
-      { id: "hl003a", fecha: daysAgo(365), usuario: "Andrés", anterior: 0,     nuevo: 30000, nota: "Alta institucional aprobada por gerencia" },
-      { id: "hl003b", fecha: daysAgo(200), usuario: "Andrés", anterior: 30000, nuevo: 50000, nota: "Aumento por historial impecable — obras en curso" },
-    ],
-  },
-  {
-    id: "port-004",
-    clienteId: "port-cli-004",
-    nombre: "Ana García López",
-    telefono: "953 112 4450",
-    limite: 5000,
-    plazo: 30,
-    movimientos: [
-      { id: "m004a", tipo: "compra", monto: 1800, fecha: daysAgo(85), folio: "POS-20250927-0065", plazo: 30, descripcion: "Pinturas vinílicas y lija" },
-      { id: "m004b", tipo: "pago",   monto: 800,  fecha: daysAgo(70), descripcion: "Abono parcial en efectivo" },
-      { id: "m004c", tipo: "compra", monto: 2800, fecha: daysAgo(60), folio: "POS-20251012-0071", plazo: 30, descripcion: "Materiales de plomería — baño" },
-    ],
-    notas: [
-      { id: "n004a", fecha: daysAgo(15), hora: "13:20", autor: "Andrés", texto: "Dejó recado que viene el fin de semana a abonar." },
-      { id: "n004b", fecha: daysAgo(7),  hora: "11:00", autor: "Andrés", texto: "No se presentó. Evaluando suspender crédito si no abona esta semana." },
-    ],
-    historialLimite: [
-      { id: "hl004a", fecha: daysAgo(150), usuario: "Andrés", anterior: 0,    nuevo: 3000, nota: "Alta de crédito para cliente frecuente" },
-      { id: "hl004b", fecha: daysAgo(90),  usuario: "Andrés", anterior: 3000, nuevo: 5000, nota: "Ampliación solicitada para remodelación de casa" },
-    ],
-  },
-  {
-    id: "port-005",
-    clienteId: "port-cli-005",
-    nombre: "Materiales Oaxaca S.A.",
-    telefono: "951 200 3344",
-    limite: 12000,
-    plazo: 30,
-    movimientos: [
-      { id: "m005a", tipo: "compra", monto: 4500, fecha: daysAgo(55), folio: "POS-20251017-0080", plazo: 30, descripcion: "Clavos, alambre y malla" },
-      { id: "m005b", tipo: "pago",   monto: 4500, fecha: daysAgo(40), descripcion: "Pago total — cheque" },
-      { id: "m005c", tipo: "compra", monto: 3200, fecha: daysAgo(45), folio: "POS-20251027-0090", plazo: 30, descripcion: "Cemento Moctezuma 50 sacos" },
-      { id: "m005d", tipo: "compra", monto: 3300, fecha: daysAgo(40), folio: "POS-20251101-0098", plazo: 30, descripcion: "Varilla 1/2 pulgada — 50 pzas" },
-      { id: "m005e", tipo: "pago",   monto: 3000, fecha: daysAgo(20), descripcion: "Abono parcial en efectivo" },
-    ],
-    notas: [
-      { id: "n005a", fecha: daysAgo(10), hora: "15:00", autor: "Andrés", texto: "Cliente de fuera de ciudad — acuerdan pagar cuando bajan a Tlaxiaco." },
-      { id: "n005b", fecha: daysAgo(4),  hora: "10:30", autor: "Andrés", texto: "Confirmaron visita para el viernes próximo." },
-    ],
-    historialLimite: [
-      { id: "hl005a", fecha: daysAgo(200), usuario: "Andrés", anterior: 0,     nuevo: 10000, nota: "Alta distribuidora regional" },
-      { id: "hl005b", fecha: daysAgo(100), usuario: "Andrés", anterior: 10000, nuevo: 12000, nota: "Incremento por volumen de compra mensual" },
-    ],
-  },
-  {
-    id: "port-006",
-    clienteId: "port-cli-006",
-    nombre: "Mueblería Central",
-    telefono: "953 105 7788",
-    limite: 20000,
-    plazo: 30,
-    movimientos: [
-      { id: "m006a", tipo: "compra", monto: 5000, fecha: daysAgo(45), folio: "POS-20251027-0085", plazo: 30, descripcion: "Selladores y barnices" },
-      { id: "m006b", tipo: "pago",   monto: 5000, fecha: daysAgo(30), descripcion: "Pago completo" },
-      { id: "m006c", tipo: "compra", monto: 7000, fecha: daysAgo(26), folio: "POS-20251116-0110", plazo: 30, descripcion: "Chapa y herrajes de mueble" },
-      { id: "m006d", tipo: "compra", monto: 5000, fecha: daysAgo(26), folio: "POS-20251116-0111", plazo: 30, descripcion: "Tornillería especial importada" },
-      { id: "m006e", tipo: "pago",   monto: 0,    fecha: daysAgo(5),  descripcion: "Sin abono registrado aún" },
-    ],
-    notas: [
-      { id: "n006a", fecha: daysAgo(8), hora: "12:00", autor: "Andrés", texto: "Cliente nuevo — primer ciclo de crédito en evaluación." },
-      { id: "n006b", fecha: daysAgo(2), hora: "16:00", autor: "Andrés", texto: "Confirmaron pago la próxima semana." },
-    ],
-    historialLimite: [
-      { id: "hl006a", fecha: daysAgo(60), usuario: "Andrés", anterior: 0,     nuevo: 15000, nota: "Alta cliente nuevo con referencias" },
-      { id: "hl006b", fecha: daysAgo(30), usuario: "Andrés", anterior: 15000, nuevo: 20000, nota: "Ampliación rápida por buen inicio" },
-    ],
-  },
-  {
-    id: "port-007",
-    clienteId: "port-cli-007",
-    nombre: "Ferretería del Sur",
-    telefono: "953 109 2211",
-    limite: 10000,
-    plazo: 30,
-    movimientos: [
-      { id: "m007a", tipo: "compra", monto: 3000, fecha: daysAgo(50), folio: "POS-20251022-0075", plazo: 30, descripcion: "Herramienta manual surtida" },
-      { id: "m007b", tipo: "pago",   monto: 3000, fecha: daysAgo(35), descripcion: "Pago total puntual" },
-      { id: "m007c", tipo: "compra", monto: 2500, fecha: daysAgo(15), folio: "POS-20251207-0120", plazo: 30, descripcion: "Cables y conectores eléctricos" },
-      { id: "m007d", tipo: "compra", monto: 2000, fecha: daysAgo(15), folio: "POS-20251207-0121", plazo: 30, descripcion: "Medidores y interruptores" },
-    ],
-    notas: [
-      { id: "n007a", fecha: daysAgo(20), hora: "09:00", autor: "Andrés", texto: "Reventa — compra cada dos semanas, paga puntual." },
-      { id: "n007b", fecha: daysAgo(7),  hora: "11:30", autor: "Andrés", texto: "Solicitan aumento de límite para fin de año — evaluar en enero." },
-      { id: "n007c", fecha: daysAgo(2),  hora: "14:00", autor: "Andrés", texto: "Pendiente: enviar cotización de cables coaxiales." },
-    ],
-    historialLimite: [
-      { id: "hl007a", fecha: daysAgo(180), usuario: "Andrés", anterior: 0,    nuevo: 8000,  nota: "Alta reventa regional" },
-      { id: "hl007b", fecha: daysAgo(90),  usuario: "Andrés", anterior: 8000, nuevo: 10000, nota: "Excelente historial — aumento aprobado" },
-    ],
-  },
-  {
-    id: "port-008",
-    clienteId: "port-cli-008",
-    nombre: "Ing. Carlos Mendoza",
-    telefono: "953 111 9900",
-    limite: 6000,
-    plazo: 30,
-    movimientos: [
-      { id: "m008a", tipo: "compra", monto: 1500, fecha: daysAgo(55), folio: "POS-20251017-0077", plazo: 30, descripcion: "Plomería de cobre — obra" },
-      { id: "m008b", tipo: "pago",   monto: 1500, fecha: daysAgo(40), descripcion: "Pago completo" },
-      { id: "m008c", tipo: "compra", monto: 2200, fecha: daysAgo(28), folio: "POS-20251124-0115", plazo: 30, descripcion: "Cableado eléctrico casa habitación" },
-      { id: "m008d", tipo: "compra", monto: 1000, fecha: daysAgo(28), folio: "POS-20251124-0116", plazo: 30, descripcion: "Conduit y accesorios eléctricos" },
-    ],
-    notas: [
-      { id: "n008a", fecha: daysAgo(5), hora: "10:45", autor: "Andrés", texto: "Ingeniero de obra — compra por proyecto. Vence pronto." },
-      { id: "n008b", fecha: daysAgo(1), hora: "17:00", autor: "Andrés", texto: "Recordatorio enviado por WhatsApp." },
-    ],
-    historialLimite: [
-      { id: "hl008a", fecha: daysAgo(120), usuario: "Andrés", anterior: 0,    nuevo: 5000, nota: "Alta profesional independiente" },
-      { id: "hl008b", fecha: daysAgo(60),  usuario: "Andrés", anterior: 5000, nuevo: 6000, nota: "Ampliación menor por proyecto grande" },
-    ],
-  },
-]
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers: build portfolios from localStorage; persist changes back
+// Helpers: build portfolios from BD clientes + cartera
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildPortfolios(clientes, cartera) {
@@ -373,7 +176,6 @@ function buildPortfolios(clientes, cartera) {
     .filter(c => (c.limite_credito ?? 0) > 0 || (c.dias_credito ?? 0) > 0)
     .map(c => {
       const entry = cartera[c.id]
-      const mock  = MOCK_PORTFOLIO.find(p => p.clienteId === c.id)
       return {
         id:             c.id,
         clienteId:      c.id,
@@ -381,23 +183,11 @@ function buildPortfolios(clientes, cartera) {
         telefono:       c.telefono,
         limite:         c.limite_credito,
         plazo:          c.dias_credito,
-        movimientos:    entry?.movimientos    ?? mock?.movimientos    ?? [],
-        notas:          entry?.notas          ?? mock?.notas          ?? [],
-        historialLimite:entry?.historialLimite ?? mock?.historialLimite ?? [],
+        movimientos:    entry?.movimientos     ?? [],
+        notas:          entry?.notas           ?? [],
+        historialLimite:entry?.historialLimite ?? [],
       }
     })
-}
-
-function savePortfolioData(portfolios) {
-  const cartera = loadCartera()
-  portfolios.forEach(p => {
-    cartera[p.clienteId] = {
-      movimientos:     p.movimientos     ?? [],
-      notas:           p.notas           ?? [],
-      historialLimite: p.historialLimite ?? [],
-    }
-  })
-  saveCartera(cartera)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -598,13 +388,16 @@ function HabilitarClienteModal({ open, onClose, onHabilitar }) {
 
   useEffect(() => {
     if (open) {
-      const todos = loadClientes()
-      setSinCredito(todos.filter(c => (c.limite_credito ?? 0) === 0))
       setSearch("")
       setSelected(null)
       setLimite("")
       setPlazo("30")
       setNota("")
+      let activo = true
+      loadClientes()
+        .then(todos => { if (activo) setSinCredito(todos.filter(c => (c.limite_credito ?? 0) === 0)) })
+        .catch(() => { if (activo) setSinCredito([]) })
+      return () => { activo = false }
     }
   }, [open])
 
@@ -1294,11 +1087,11 @@ function ProgressBar({ used, total, height = 6 }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function CarteraCredito() {
-  // ── Clientes reales (localStorage) ────────────────────────────────────────
-  const [clientesLS, setClientesLS] = useState(() => loadClientes())
+  // ── Clientes reales (BD) ──────────────────────────────────────────────────
+  const [clientesLS, setClientesLS] = useState([])
 
-  // ── Portfolio state — built from localStorage clientes + cartera ─────────
-  const [portfolios, setPortfolios] = useState(() => buildPortfolios(loadClientes(), loadCartera()))
+  // ── Portfolio state — built from BD clientes + cartera ────────────────────
+  const [portfolios, setPortfolios] = useState([])
 
   // ── UI state ──────────────────────────────────────────────────────────────
   const [selId,              setSelId]              = useState(null)
@@ -1338,6 +1131,22 @@ export default function CarteraCredito() {
     setToast({ msg, color })
     toastTimer.current = setTimeout(() => setToast(null), 3000)
   }
+
+  // ── Carga inicial async desde BD ──────────────────────────────────────────
+  useEffect(() => {
+    let activo = true
+    ;(async () => {
+      try {
+        const [clientes, cartera] = await Promise.all([loadClientes(), loadCartera()])
+        if (!activo) return
+        setClientesLS(clientes)
+        setPortfolios(buildPortfolios(clientes, cartera))
+      } catch (e) {
+        console.error("Error cargando cartera:", e)
+      }
+    })()
+    return () => { activo = false }
+  }, [])
 
   // ── ESC to close ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -1459,36 +1268,17 @@ export default function CarteraCredito() {
   }
 
   // ── Habilitar cliente ─────────────────────────────────────────────────────
-  function handleHabilitar(cliente, limite, plazo, nota) {
+  async function handleHabilitar(cliente, limite, plazo, nota) {
     const actualizados = clientesLS.map(c =>
       c.id !== cliente.id ? c : { ...c, limite_credito: limite, dias_credito: plazo }
     )
-    saveClientes(actualizados)
+    await actualizarCliente(cliente.id, { limite_credito: limite, dias_credito: plazo })
     setClientesLS(actualizados)
 
-    const cartera = loadCartera()
-    const existing = cartera[cliente.id] ?? { movimientos: [], notas: [], historialLimite: [] }
-    const nuevaEntrada = {
-      id:          cliente.id,
-      clienteId:   cliente.id,
-      nombre:      cliente.nombre,
-      telefono:    cliente.telefono,
-      limite,
-      plazo,
-      movimientos: existing.movimientos,
-      notas: [
-        ...(existing.notas ?? []),
-        ...(nota ? [{ id: uuid(), fecha: todayISO(), hora: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }), autor: "Andrés", texto: nota }] : []),
-      ],
-      historialLimite: [
-        ...(existing.historialLimite ?? []),
-        { id: uuid(), fecha: todayISO(), usuario: "Andrés", anterior: 0, nuevo: limite, nota: nota || "Alta de crédito" },
-      ],
-    }
-    const updated = portfolios.some(p => p.clienteId === cliente.id)
-      ? portfolios.map(p => p.clienteId === cliente.id ? nuevaEntrada : p)
-      : [nuevaEntrada, ...portfolios]
-    savePortfolioData(updated)
+    await registrarCambioLimiteAPI(cliente.id, { fecha: todayISO(), usuario: "Andrés", anterior: 0, nuevo: limite, nota: nota || "Alta de crédito" })
+    if (nota) await agregarNotaCarteraAPI(cliente.id, { fecha: todayISO(), hora: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }), autor: "Andrés", texto: nota })
+    const cartera = await loadCartera()
+    const updated = buildPortfolios(actualizados, cartera)
     setPortfolios(updated)
     setShowHabilitar(false)
     setSelId(cliente.id)
@@ -1497,53 +1287,43 @@ export default function CarteraCredito() {
   }
 
   // ── Editar límite ─────────────────────────────────────────────────────────
-  function handleEditarLimite(nuevoLimite, razon) {
+  async function handleEditarLimite(nuevoLimite, razon) {
     if (!selPortfolio) return
-    // Update localStorage if clienteId exists in real clients
+    // Update BD client if clienteId exists in real clients
     const clienteReal = clientesLS.find(c => c.id === selPortfolio.clienteId)
-    if (clienteReal) {
-      const actualizados = clientesLS.map(c =>
-        c.id === clienteReal.id ? { ...c, limite_credito: nuevoLimite } : c
-      )
-      saveClientes(actualizados)
-      setClientesLS(actualizados)
-    }
-    // Update portfolio
-    const nuevoHistorial = {
-      id: uuid(), fecha: todayISO(), usuario: "Andrés",
-      anterior: selPortfolio.limite, nuevo: nuevoLimite, nota: razon,
-    }
-    const updated = portfolios.map(p =>
-      p.id !== selPortfolio.id ? p : {
-        ...p, limite: nuevoLimite,
-        historialLimite: [...(p.historialLimite ?? []), nuevoHistorial],
-      }
+    const clientesActualizados = clientesLS.map(c =>
+      c.id === selPortfolio.clienteId ? { ...c, limite_credito: nuevoLimite } : c
     )
-    savePortfolioData(updated)
-    setPortfolios(updated)
+    if (clienteReal) {
+      await actualizarCliente(clienteReal.id, { limite_credito: nuevoLimite })
+      setClientesLS(clientesActualizados)
+    }
+    // Registrar el cambio de límite en la cartera (también persiste metadata.limite_credito)
+    await registrarCambioLimiteAPI(selPortfolio.clienteId, {
+      fecha: todayISO(), usuario: "Andrés",
+      anterior: selPortfolio.limite, nuevo: nuevoLimite, nota: razon,
+    })
+    const cartera = await loadCartera()
+    setPortfolios(buildPortfolios(clientesActualizados, cartera))
     setShowEditarLimite(false)
     showToast(`Límite actualizado a ${fmtPeso(nuevoLimite)}`)
   }
 
   // ── Registrar abono ───────────────────────────────────────────────────────
-  function handleAbonoConfirm() {
+  async function handleAbonoConfirm() {
     if (!selPortfolio) return
     const monto = Number(abonoForm.monto)
     if (!monto || monto <= 0) return
 
-    const nuevoPago = {
-      id: uuid(),
+    await agregarMovimientoCredito(selPortfolio.clienteId, {
       tipo: "pago",
       monto,
       fecha: abonoForm.fecha,
       descripcion: `Abono — ${abonoForm.metodo}${abonoForm.nota ? ` — ${abonoForm.nota}` : ""}`,
       nota: abonoForm.nota,
-    }
-    const updated = portfolios.map(p =>
-      p.id !== selPortfolio.id ? p : { ...p, movimientos: [...p.movimientos, nuevoPago] }
-    )
-    savePortfolioData(updated)
-    setPortfolios(updated)
+    })
+    const cartera = await loadCartera()
+    setPortfolios(buildPortfolios(clientesLS, cartera))
     setShowAbonoConfirm(false)
     setAbonoForm({ monto: "", metodo: "Efectivo", fecha: todayISO(), nota: "", aplicarA: "fifo", movEspecifico: "" })
     setTab("movimientos")
@@ -1551,34 +1331,27 @@ export default function CarteraCredito() {
   }
 
   // ── Agregar nota ──────────────────────────────────────────────────────────
-  function handleAgregarNota() {
+  async function handleAgregarNota() {
     if (!selPortfolio || !nuevaNota.trim()) return
-    const nota = {
-      id: uuid(),
+    await agregarNotaCarteraAPI(selPortfolio.clienteId, {
       fecha: todayISO(),
       hora: new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" }),
       autor: "Andrés",
       texto: nuevaNota.trim(),
-    }
-    const updated = portfolios.map(p =>
-      p.id !== selPortfolio.id ? p : { ...p, notas: [...(p.notas ?? []), nota] }
-    )
-    savePortfolioData(updated)
-    setPortfolios(updated)
+    })
+    const cartera = await loadCartera()
+    setPortfolios(buildPortfolios(clientesLS, cartera))
     setNuevaNota("")
     setAddingNota(false)
   }
 
   // ── Eliminar cuenta ───────────────────────────────────────────────────────
-  function handleEliminarCuenta() {
+  async function handleEliminarCuenta() {
     if (!selPortfolio) return
-    const cartera = loadCartera()
-    delete cartera[selPortfolio.clienteId]
-    saveCartera(cartera)
+    await actualizarCliente(selPortfolio.clienteId, { limite_credito: 0, dias_credito: 0 })
     const actualizados = clientesLS.map(c =>
       c.id !== selPortfolio.clienteId ? c : { ...c, limite_credito: 0, dias_credito: 0 }
     )
-    saveClientes(actualizados)
     setClientesLS(actualizados)
     const nombre = selPortfolio.nombre
     setPortfolios(ps => ps.filter(p => p.id !== selPortfolio.id))

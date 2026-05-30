@@ -2,6 +2,8 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../../lib/json-store"
+import { FERREMEX_CARTERA } from "../../../../modules/ferremex-cartera"
+import type FerremexCarteraService from "../../../../modules/ferremex-cartera/service"
 
 const VENTAS_FILE = path.join(__dirname, "../../../../../data/ventas-pos.json")
 
@@ -11,6 +13,8 @@ interface VentaRegistro {
   motivo_cancelacion?: string
   fecha_cancelacion?: string
   items?: { sku?: string; cantidad: number; descripcion?: string }[]
+  pago_credito?: number
+  cliente_id?: string | null
   [k: string]: unknown
 }
 
@@ -98,6 +102,28 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
         }
       } else {
         console.warn(`[caja/ventas PATCH] Venta ${folio} sin sku en items: no se reintegra inventario`)
+      }
+
+      // Revertir el cargo a crédito: si la venta fue a crédito y tiene cliente,
+      // registramos un "pago" compensatorio por el mismo monto y folio. Así el
+      // saldo FIFO del cliente vuelve a su estado previo a la venta.
+      const credito = Number(ventas[idx].pago_credito ?? 0)
+      const clienteId = ventas[idx].cliente_id
+      if (credito > 0 && clienteId) {
+        try {
+          const carteraService: FerremexCarteraService = req.scope.resolve(FERREMEX_CARTERA)
+          await carteraService.agregarMovimiento(clienteId, {
+            tipo: "pago",
+            monto: credito,
+            fecha: new Date().toISOString().slice(0, 10),
+            folio,
+            descripcion: `Reverso por cancelación de venta ${folio}`,
+          })
+        } catch (e: any) {
+          // No abortamos la cancelación por esto (el inventario ya se reintegró);
+          // se registra para conciliación manual.
+          console.error(`[caja/ventas PATCH] No se pudo revertir el cargo a crédito de ${folio}:`, e?.message ?? e)
+        }
       }
 
       ventas[idx] = {

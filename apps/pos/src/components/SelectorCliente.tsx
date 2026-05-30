@@ -8,8 +8,9 @@ export function SelectorCliente() {
   const navigate = useNavigate()
   const [abierto, setAbierto] = useState(false)
   const [busqueda, setBusqueda] = useState("")
-  // Cargar clientes frescos desde localStorage cada vez que se abre el panel
+  // Cargar clientes frescos desde la BD cada vez que se abre el panel
   const [clientes, setClientes] = useState<Cliente[]>([])
+  const [cargando, setCargando] = useState(false)
 
   const cliente = state.clienteActivo
 
@@ -24,10 +25,17 @@ export function SelectorCliente() {
       })
     : clientes
 
-  function abrir() {
-    setClientes(loadClientes())   // datos frescos
+  async function abrir() {
     setBusqueda("")
     setAbierto(true)
+    setCargando(true)
+    try {
+      setClientes(await loadClientes())   // datos frescos desde la BD
+    } catch {
+      setClientes([])
+    } finally {
+      setCargando(false)
+    }
   }
 
   function cerrar() {
@@ -131,7 +139,11 @@ export function SelectorCliente() {
                 </button>
               ))}
 
-              {resultados.length === 0 && busqueda.trim() && (
+              {cargando && (
+                <p className="sc-vacio">Cargando clientes…</p>
+              )}
+
+              {!cargando && resultados.length === 0 && busqueda.trim() && (
                 <p className="sc-vacio">Sin resultados para "{busqueda}"</p>
               )}
             </div>
