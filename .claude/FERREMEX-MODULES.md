@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-05-29.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-05-30.
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -17,12 +17,12 @@
 | GridProductos | `components/GridProductos.tsx` | Grid con thumbnail, +/- al carrito |
 | ProductoDetalle | `components/ProductoDetalle.tsx` | Vista expandida, precio según `num_precio`, validación de cantidad |
 | Carrito | `components/Carrito.tsx` | Items con cantidad editable (draft), badge mayoreo |
-| ModalCobro | `components/ModalCobro.tsx` | Pago split (efectivo/transferencia/crédito), cambio, registra venta |
+| ModalCobro | `components/ModalCobro.tsx` | Pago split (efectivo/transferencia/crédito), cambio, registra venta. Cargo a crédito vía `/caja/cartera` (BD) |
 | Ticket | `components/Ticket.tsx` | Impresión ESC/POS directa |
-| SelectorCliente | `components/SelectorCliente.tsx` | Dropdown de clientes → `clienteActivo` |
+| SelectorCliente | `components/SelectorCliente.tsx` | Dropdown de clientes vía `/caja/clientes` (BD) → `clienteActivo` |
 
-**Datos:** productos/stock/precio 🟢 (vía `/caja/productos`); venta 🟡 (`ventas-pos.json`); cartera 🔴 (`pos_cartera`); cliente 🔴 (`pos_clientes`).
-**Conexiones:** `buscarProductos()` → `pos-store` (carrito) → `registrarVenta()` → `agregarMovimientoCredito()` (si crédito) + `abrirCajon()` (si efectivo).
+**Datos:** productos/stock/precio 🟢 (vía `/caja/productos`); venta 🟡 (`ventas-pos.json`); cartera 🟢 (módulo ferremex_cartera BD); cliente 🟢 (Customer Medusa).
+**Conexiones:** `buscarProductos()` → `pos-store` (carrito) → `registrarVenta()` (incluye cargo a cartera si crédito, transaccional) + `abrirCajon()` (si efectivo).
 
 ---
 
@@ -34,16 +34,16 @@
 |---|---|---|---|---|
 | Artículos | `pages/AdminArticulos.tsx` | `components/ArticlesModule.jsx` (+ `ArticleDrawer`, `ArticleDeleteModal`) | CRUD de artículos, búsqueda, paginación, cascada taxonomía. Errores vía toasts (`useToasts`) | 🟢 producto+precio+inventario |
 | Catálogos | `pages/AdminCatalogos.jsx` | `CatalogosModule.jsx` (+ `CatalogosColumnas`, `CatalogosReasignacion`) | Árbol Dept→Cat→Marca, rename/move/reasignar | 🟢 (+ `marcas-extra.json` 🟡) |
-| Inventario | `pages/AdminInventario.tsx` | — (`<iframe>` a `/pos/ajuste-inventario.html`) | Ajuste masivo de stock por SKU. **Deuda:** está fuera de React | 🟢 inventory_level |
+| Inventario | `pages/AdminInventario.tsx` | `modules/InventarioModule.jsx` | Ajuste masivo de stock por SKU. Búsqueda + tabla + confirmar. React puro, sin iframe | 🟢 inventory_level |
 | Consulta de ventas | `pages/AdminConsultaVentas.tsx` | `modules/SalesHistory.jsx` (fat module) | Historial: filtros por rango, KPIs, doble vista, CSV, cancelación 2 pasos (`cancelarVenta` → reintegra inventario) | 🟡 `ventas-pos.json` |
 | Caja / Movimientos | `pages/AdminCaja.tsx` | `modules/CashMovementsModule.jsx` | Movimientos de caja, resumen diario/turno. Movimientos manuales 🔴 por día | 🟡 ventas + 🔴 `pos_movimientos_caja_*` |
 | Empleados / Usuarios | `pages/AdminEmpleados.tsx` (`/admin/usuarios` → redirect aquí) | `modules/EmployeesModule.jsx` | CRUD cajeros, roles/permisos, asignación de cajas. Usa `obtenerUsuarios(true)` (con pin) | 🟡 `usuarios-pos.json` + 🔴 `pos_cajas_*` |
-| Clientes | `pages/AdminClientes.tsx` (landing), `pages/AdminClientesLista.tsx` (CRUD) | — | CRUD clientes, grupos | 🔴 `pos_clientes`, `pos_grupos` |
-| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO, semáforo, notas, historial de límite | 🔴 `pos_cartera` |
+| Clientes | `pages/AdminClientes.tsx` (landing), `pages/AdminClientesLista.tsx` (CRUD) | — | CRUD clientes (Customers Medusa), grupos (customer_groups). Banner de migración de localStorage. | 🟢 Customer + customer_group |
+| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO, semáforo, notas, historial de límite. Async desde módulo ferremex_cartera BD | 🟢 módulo ferremex_cartera |
 | Proveedores | `pages/AdminProveedores.tsx` | — | Gestión de proveedores + facturas a crédito | 🔴 `pos_proveedores` |
 | Compras | `pages/AdminCompras.jsx`, `AdminComprasNueva.jsx`, `AdminConsultarCompras.jsx` | `components/ComprasModule.jsx`, `modules/ConsultarCompras.jsx` (+ `ComprasTable`, `ComprasDetailPanel`, `OC*`) | Alta + historial de compras, generación OC PDF | 🟡/frontend (PDF vía `/caja/generar-oc`) |
 | Pedidos | `pages/AdminPedidos.jsx` | `components/PedidosModule.jsx` (+ `PedidosTabla`, `PedidosPreview`, `PedidosFiltros`, `ConfirmDialog`) | Pedidos a proveedor desde faltantes. **Backend en `/caja/pedidos`** (folio server-side); espera/draft 🔴 | 🟡 `pedidos-pos.json` + 🔴 espera/draft |
-| Tickets / Formatos | `pages/AdminTickets.tsx`, `AdminFormatos.tsx` | — | Config de encabezado/pie/folio; multi-formato | 🟡 `ticket-config.json` |
+| Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón) con preview en vivo | 🟡 `ticket-config.json` |
 | Periféricos | `pages/AdminPerifericos.tsx` | — | Config impresora/huella/escáner (Web Serial) | navegador |
 | Generador | `pages/GeneradorTickets.tsx` (`/admin/generador`, fuera del layout) | — | Probador de tickets/periféricos | — |
 
@@ -53,7 +53,7 @@
 
 - **`lib/pos-store.ts`** — Context + useReducer. Estado: `cajero`, `items`, `ticketConfig`, `clienteActivo`. Helpers: `efectivoPrecio(item)` (aplica mayoreo), `buildTurnoId()`, `usePOS()` (devuelve `{state, dispatch, total}`).
 - **`lib/client.ts`** — única puerta al backend `/caja/*`. **Sistema compartido crítico** (ver tabla de impacto cruzado en `CLAUDE.md`).
-- **`lib/clientes.ts`** — clientes + cartera (localStorage). **Sistema compartido** (CarteraCredito, ModalCobro, SelectorCliente).
+- **`lib/clientes.ts`** — **FACHADA ASYNC** sobre BD (clientes + cartera = `/caja/clientes/*` + `/caja/cartera/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración. **Sistema compartido** (CarteraCredito, ModalCobro, SelectorCliente, AdminClientesLista).
 - **`lib/proveedores.ts`** — proveedores (localStorage) + estado de facturas.
 - **`lib/serial.ts`** — Web Serial (Chrome). Consumido por Ticket, ModalCobro, Periféricos, Generador.
 - **`lib/unidades-sat.ts`** — unidades SAT. Consumido por ArticleDrawer.
@@ -66,6 +66,9 @@
 - **`json-store.ts`** — `readJson` / `writeJsonAtomic` (tmp+rename) / `withFileLock` (mutex en-memoria por archivo) / `updateJson`. Consumido por rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `ventas/[folio]`.
 - **`text.ts`** — `slugify(text, maxLen)` y `normalizarFonetico`. Consumido por rutas `articulos` (slug 100), `catalogos` (slug 80), `productos` (fonético).
 - **`pos-auth.ts`** — `validarPosToken` / `validarPosAdminToken`. Consumido por `middlewares.ts` y `usuarios/route.ts`.
+
+### Backend — módulos de negocio (`packages/api/src/modules/`)
+- **`ferremex_cartera`** — módulo custom de Medusa. Entidades: `CarteraCliente` (raíz única por customer_id), `MovimientoCartera` (compra/pago transaccional), `NotaCartera` (registros textuales), `HistorialLimite` (auditoría de cambios de límite). Registrado en `medusa-config.ts` y migración aplicada. Consumido por rutas `/caja/cartera/*`.
 
 ---
 
@@ -87,22 +90,20 @@ ComprasModule ──generarOCPdf()──► /caja/generar-oc (PDF)
 
 ## Conexiones PENDIENTES (deberían existir y no están)
 
-1. **PedidosModule ⇄ backend.** No hay `/caja/pedidos`. `PROVEEDORES` y `HISTORIAL_MOCK` están inline en `PedidosModule.jsx`. Falta: ruta `packages/api/src/api/caja/pedidos/` + persistencia + reemplazar mocks por `client.ts`.
-2. **Proveedores (Pedidos/Compras) ⇄ `pos_proveedores`.** PedidosModule no lee `lib/proveedores.ts`; usa su mock propio. Deberían compartir el mismo origen (idealmente BD).
-3. **Cartera/Clientes ⇄ Ventas (auditoría real).** La cartera se actualiza desde el navegador (localStorage). No hay vínculo server-side entre una venta a crédito (`ventas-pos.json`) y el movimiento de cartera → inconsistencia posible entre terminales.
-4. **Cancelación de ventas ⇄ inventario/cartera.** SalesHistory tiene UI de cancelación; falta endpoint de reverso que devuelva stock y revierta el movimiento de crédito.
-5. **Compras (recepción) ⇄ inventario.** Recibir una OC debería poder incrementar inventario vía `incrementarInventario()`; hoy no está cableado.
-6. **Empleados/Cajas ⇄ Corte.** Las asignaciones de caja (`pos_cajas_*`, localStorage) no se cruzan con el corte de turno (`/caja/corte`).
+1. **Proveedores/Cajas → BD (Fase 3 continuación).** `pos_proveedores` y `pos_cajas_*` viven en localStorage. Deberían migrar a BD de Medusa como `Proveedor` + `CajaPOS` (custom) o vendedor/atributo de staff.
+2. **Compras (recepción) ⇄ inventario.** Recibir una OC debería poder incrementar inventario vía `incrementarInventario()`; hoy no está cableado en ComprasModule.
+3. **Empleados/Cajas ⇄ Corte.** Las asignaciones de caja (`pos_cajas_*`, localStorage) no se cruzan con el cierre de turno (`/caja/corte`). Corte debería validar contra cajas asignadas.
+4. **Cartera ↔ Ventas (reconciliación).** Aunque ahora transaccional (cargo en `/caja/ventas` incluye movimiento de cartera), la reconciliación de pagos contra cargos requiere consultas cruzadas.
 
 ---
 
 ## Datos que cada módulo podría necesitar de otros
 
-| Módulo | Podría necesitar de… | Para… |
-|---|---|---|
-| PedidosModule | `lib/proveedores.ts`, `/caja/articulos?faltantes=1` | armar pedido real con proveedor y costos |
-| ComprasModule | inventario (`incrementarInventario`) | recibir mercancía y subir stock |
-| CarteraCredito | `/caja/ventas` (ventas a crédito) | conciliar cargos con ventas reales (no solo localStorage) |
-| SalesHistory | inventario + cartera | cancelar venta devolviendo stock y crédito |
-| CashMovementsModule | `/caja/corte` | cuadrar movimientos contra cierre de turno |
-| EmployeesModule | `/caja/corte` | reportar ventas por cajero/caja |
+| Módulo | Podría necesitar de… | Para… | Estado |
+|---|---|---|---|
+| PedidosModule | `/caja/articulos?faltantes=1`, proveedores BD | armar pedido real con proveedor y costos | 🟡 faltantes funciona, proveedores aún localStorage |
+| ComprasModule | `/caja/inventario` (incrementarInventario) | recibir mercancía y subir stock | 🔴 no cableado |
+| CarteraCredito | `/caja/ventas` (consulta) | auditoría: cargos vía venta ↔ movimiento cartera | 🟢 ahora transaccional en `/caja/ventas` |
+| SalesHistory | inventario + cartera | cancelar venta devolviendo stock y crédito | 🟢 reintegro de stock OK, reversión cartera en desarrollo |
+| CashMovementsModule | `/caja/corte` | cuadrar movimientos contra cierre de turno | 🔴 cierre de turno no cableado con caja/asignación |
+| EmployeesModule | `/caja/corte` | reportar ventas por cajero/caja | 🔴 separado, sin integración |

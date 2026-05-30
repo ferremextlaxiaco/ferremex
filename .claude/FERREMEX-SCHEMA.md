@@ -1,8 +1,8 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-05-29.
-> **Medusa no tiene modelos custom propios de Ferremex** — usa módulos nativos + `metadata` en producto.
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-05-30.
+> **Medusa:** módulos nativos + `metadata` en producto + **módulo custom ferremex_cartera** (Fase 3).
 
 ---
 
@@ -20,8 +20,19 @@
 | PriceSet | `price_set` | `id` | Vinculado a variante (link) |
 | Price | `price` | `id`, `price_set_id`, `currency_code`, `amount` | MXN, en **centavos** (entero) |
 | File | `file` | `id`, `filename`, `mime_type`, `url` | Imágenes subidas vía `/caja/imagen` |
+| **Customer** | **`customer`** | `id`, `email`, `first_name`, `last_name`, `phone`, **`metadata` (JSONB)** | **Ahora guarda clientes POS en metadata** (Fase 3). `metadata.pos_cliente = true` marca cliente POS |
+| **CustomerGroup** | **`customer_group`** | `id`, `name`, **`metadata` (JSONB)** | Grupos de clientes. `metadata.pos_grupo = true` marca grupo POS |
 | Store / SalesChannel / Region / Tax | — | — | Config base (seed). Región México, MXN |
 | Seller (Mercur) | `seller` | `id`, `name`, … | Marketplace; no central al POS |
+
+### Módulo custom: `ferremex_cartera` (Fase 3)
+
+| Entidad | Tabla | Campos clave | Notas |
+|---|---|---|---|
+| **CarteraCliente** | `cartera_cliente` | `id` (PK uuid), `customer_id` (UK, FK), `limite_credito`, `creado_en`, `actualizado_en` | Raíz única por customer. Holds movimientos/notas/historial |
+| **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?` | Transaccional. Compras al registrar venta; pagos manuales |
+| **NotaCartera** | `nota_cartera` | `id`, `cartera_cliente_id` (FK), `fecha`, `hora`, `autor`, `texto` | Auditoría textual |
+| **HistorialLimite** | `historial_limite` | `id`, `cartera_cliente_id` (FK), `fecha`, `usuario`, `anterior`, `nuevo`, `nota` | Auditoría de cambios de límite |
 
 ### Relaciones (links Medusa 2.x)
 ```
@@ -37,7 +48,7 @@ inventory_item (1) ──< inventory_level (N) ── stock_location
 
 ---
 
-## 2. `product.metadata` (JSONB) — campos del POS
+## 2. `product.metadata` (JSONB) — campos POS de artículo
 
 El shape `ArticuloPOS` se mapea principalmente a `metadata`:
 ```jsonc
@@ -60,6 +71,42 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
 - **Precios:** `precio1` vive en el price_set (BD); `precio2-4` en metadata. Nivel elegido por venta según `clienteActivo.num_precio` (1–4): Mostrador / Cliente / Distribuidor / Especial.
 - **Taxonomía:** `departamento` y `marca` son metadata; `categoria` es una `product_category` real de Medusa.
 
+## 2b. `customer.metadata` (JSONB) — Cliente POS (Fase 3)
+
+Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
+```jsonc
+{
+  "pos_cliente": true,           // marca este customer como cliente POS
+  "num_cliente": 101,            // ID secuencial único en Ferremex
+  "num_precio": 1,               // nivel de precio (1-4)
+  "dias_credito": 30,            // plazo estándar
+  "limite_credito": 5000.00,     // en MXN
+  "grupo": "Cliente",            // nombre del grupo (referencia)
+  "monedero": 0.00,              // saldo monedero (reservado)
+  "rfc": "ABC123456XYZ",
+  "razon_social": "Empresa ABC",
+  "regimen_fiscal": "601",       // CFDI
+  "cfdi": "G01",                 // uso de CFDI
+  "calle": "Calle Principal",
+  "numero": "123",
+  "colonia": "Centro",
+  "ciudad": "Tlaxiaco",
+  "estado": "Oaxaca",
+  "cp": "69600"
+}
+```
+- **Mapeo:** `first_name` ← `nombre`; `phone` ← `telefono`.
+- **ID único:** `num_cliente` es secuencial incremental por Ferremex (no UUID). Generado server-side en `POST /caja/clientes` con query `?siguiente-num=1`.
+
+## 2c. `customer_group.metadata` (JSONB) — Grupo POS (Fase 3)
+
+```jsonc
+{
+  "pos_grupo": true              // marca grupo POS
+}
+```
+- **Nombres de grupos:** "Familia", "Empresa", "Gobierno", "Constructor", "Distribuidor" (categorizados, no libres).
+
 ---
 
 ## 3. Archivos JSON (`packages/api/data/`) — git-ignored
@@ -68,16 +115,28 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
 
 | Archivo | Forma | Escrito por |
 |---|---|---|
-| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, items[{sku, descripcion, cantidad, precio_unitario, subtotal}], total, pago_*, cambio, estado?, motivo_cancelacion?, fecha_cancelacion? }[]` | `/caja/ventas` POST, PATCH `/caja/ventas/:folio` |
+| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal}], total, pago_*, cambio, estado?, motivo_cancelacion?, fecha_cancelacion? }[]` | `/caja/ventas` POST (con crédito transaccional), PATCH `/caja/ventas/:folio` |
 | `pedidos-pos.json` | `{ id, folio, fecha, proveedor?, proveedorId?, status, articulos[{clave?, descripcion?, cantidad}], ... }[]` | `/caja/pedidos` |
 | `pedido-counter.json` | `{ contador: number }` | `/caja/pedidos` POST (folio secuencial) |
 | `cortes-pos.json` | `{ cajero, turno_id, cerrado_en }[]` | `/caja/corte` POST |
 | `usuarios-pos.json` | `{ id, nombre, alias?, pin, rol, activo, permisos{} }[]` | `/caja/usuarios` |
-| `ticket-config.json` | `{ encabezado{}, pie[], opciones{}, tipos{}, formato_folio{} }` | `/caja/ticket-config` PUT |
+| `ticket-config.json` | `{ encabezado{}, pie[], opciones{}, tipos{}, formato_folio{}, formatos{} }` | `/caja/ticket-config` PUT |
 | `folio-counter.json` | `{ contador: number }` | `/caja/ventas` (secuencial), `/caja/folio-contador` |
 | `marcas-extra.json` | `{ nombre, cat_nombre, dep_nombre }[]` | `/caja/catalogos` PATCH (create_marca) |
 
-> **Nota items de venta:** desde la sesión 2026-05-29 cada item guarda su `sku` (necesario para reintegrar inventario al cancelar). Ventas previas sin `sku` se cancelan sin reintegro (se advierte en log).
+**Sección `formatos` en `ticket-config.json` (Fase 2):**
+```jsonc
+{
+  "formatos": {
+    "nota_venta": { "activo": true, "titulo": "Nota de Venta", "encabezado": [], "pie": [], "mostrar_precios": true, "mostrar_vigencia": false, "vigencia_dias": 0 },
+    "factura": { "activo": false, "titulo": "Factura", "encabezado": [], "pie": [], "mostrar_precios": true, "mostrar_vigencia": false, "vigencia_dias": 0 },
+    "cupon": { "activo": false, "titulo": "Cupón", "encabezado": [], "pie": [], "mostrar_precios": false, "mostrar_vigencia": true, "vigencia_dias": 7 }
+  }
+}
+```
+Configurado vía `FormatoConfig.tsx` con preview en vivo.
+
+> **Nota items de venta:** desde la sesión 2026-05-29 cada item guarda su `sku` (necesario para reintegrar inventario al cancelar). Ventas previas sin `sku` se cancelan sin reintegro (se advierte en log). Desde 2026-05-30: `cliente_id`, `cliente_nombre`, `plazo` registran cartera transaccional.
 
 **Permisos de usuario** (`usuarios-pos.json`): `puede_vender`, `puede_cotizar`, `puede_anular`, `puede_ver_corte`, `puede_ver_admin`.
 Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + ver_corte). La ruta exige ≥1 admin activo.
@@ -92,21 +151,22 @@ Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + v
 
 ## 4. localStorage (navegador) — provisional, por terminal
 
-| Clave | Forma | Usado por |
-|---|---|---|
-| `pos_clientes` | `Cliente[]` | Clientes, SelectorCliente, ModalCobro |
-| `pos_grupos` | `string[]` (Familia, Empresa, Gobierno, Constructor, Distribuidor) | Clientes |
-| `pos_cartera` | `Record<clienteId, CartEntrada>` | CarteraCredito, ModalCobro |
-| `pos_proveedores` | `Proveedor[]` (con `facturas: FacturaCredito[]`) | Proveedores |
-| `pos_cajas_catalogo` | cajas `{ id, nombre, activa }[]` | EmployeesModule |
-| `pos_cajas_asignaciones` | `{ cajero_id → caja_id }` | EmployeesModule |
-| `pos_sales_filters` | filtros persistidos | SalesHistory |
-| `pos_movimientos_caja_YYYY-MM-DD` | movimientos manuales del día | CashMovementsModule |
-| `ferremex_pedidos_espera`, `ferremex_pedido_draft` | borradores locales de pedido | PedidosModule (lo demás va a `/caja/pedidos`) |
+| Clave | Forma | Usado por | Notas |
+|---|---|---|---|
+| `pos_proveedores` | `Proveedor[]` (con `facturas: FacturaCredito[]`) | Proveedores | **Deuda Fase 3:** migrar a BD |
+| `pos_cajas_catalogo` | cajas `{ id, nombre, activa }[]` | EmployeesModule | **Deuda Fase 3:** migrar a BD |
+| `pos_cajas_asignaciones` | `{ cajero_id → caja_id }` | EmployeesModule | **Deuda Fase 3:** migrar a BD |
+| `pos_sales_filters` | filtros persistidos | SalesHistory | Filtros de búsqueda, no datos críticos |
+| `pos_movimientos_caja_YYYY-MM-DD` | movimientos manuales del día | CashMovementsModule | Borradores diarios, reset al cierre |
+| `ferremex_pedidos_espera`, `ferremex_pedido_draft` | borradores locales de pedido | PedidosModule | Borradores locales, persistencia `/caja/pedidos` para historial |
+| ~~`pos_clientes`~~ | **MIGRADO A BD** | **Retirado (Fase 3)** | Reemplazado por `/caja/clientes`, Customer Medusa |
+| ~~`pos_grupos`~~ | **MIGRADO A BD** | **Retirado (Fase 3)** | Reemplazado por `/caja/grupos`, customer_group Medusa |
+| ~~`pos_cartera`~~ | **MIGRADO A BD** | **Retirado (Fase 3)** | Reemplazado por `/caja/cartera`, módulo ferremex_cartera |
+| `pos_migrado_v1` | flag booleano | MigracionNube.tsx | Red de seguridad: marca si se migró localStorage |
 
-### Tipos de cartera (`lib/clientes.ts`)
+### Tipos conservados para API (ahora BD) — en `lib/clientes.ts`
 ```ts
-Cliente { id, num_cliente, nombre, telefono, num_precio (1-4), dias_credito, limite_credito,
+Cliente { id?, num_cliente, nombre, telefono, num_precio (1-4), dias_credito, limite_credito,
           grupo, monedero, rfc, razon_social, regimen_fiscal, cfdi, calle, numero, colonia, ciudad, estado, cp }
 Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota? }
 NotaCartera { id, fecha, hora, autor, texto }
@@ -118,7 +178,15 @@ CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: 
 
 ---
 
-## 5. Migración pendiente (Fase 3)
+## 5. Migración Fase 3 — Completada (Clientes/Cartera) y Pendiente (Proveedores/Cajas)
 
-`pos_clientes`, `pos_cartera`, `pos_grupos`, `pos_proveedores` → módulos de Medusa (Customer / custom module).
-Hoy aislados por navegador. Al migrar, los consumidores listados en la tabla de impacto cruzado de `CLAUDE.md` deben actualizarse en conjunto.
+### Completada (2026-05-29/30)
+- **`pos_clientes`, `pos_grupos`, `pos_cartera`** → Medusa (Customer + customer_group + módulo ferremex_cartera).
+- Rutas `/caja/clientes/*`, `/caja/grupos/*`, `/caja/cartera/*` implementadas.
+- Frontend refactorizado a async en `lib/clientes.ts` (fachada sobre BD).
+- Componente `MigracionNube.tsx` maneja migración idempotente de localStorage viejo.
+
+### Pendiente
+- **`pos_proveedores`** → modelo Proveedor (custom) o atributo de vendor.
+- **`pos_cajas_catalogo`, `pos_cajas_asignaciones`** → entidad CajaPOS (custom) o campo en staff.
+- Al migrar, actualizar consumidores en `CLAUDE.md` tabla de impacto cruzado.

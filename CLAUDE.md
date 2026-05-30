@@ -21,7 +21,7 @@ Brújula de decisión para cada sesión. Ante una duda de diseño, vuelve aquí.
 
 1. **Arquitectura nativa Medusa.** Si Medusa 2.x ya resuelve algo (archivos, precios, inventario), úsalo — aunque cueste más ahora. Cambiar de provider (local→S3, local→Stripe) debe ser solo config, no código. Ver "Arquitectura Robusta".
 2. **Análisis de impacto cruzado.** Antes de tocar un sistema compartido, identifica todos sus consumidores y **pregunta** antes de continuar. Ver "Análisis de impacto cruzado".
-3. **Persistencia correcta según fase.** El orden de preferencia es **BD de Medusa > archivos JSON > localStorage**. Lo que hoy está en localStorage (clientes, cartera) es deuda explícita a migrar, no un patrón a imitar.
+3. **Persistencia correcta según fase.** El orden de preferencia es **BD de Medusa > archivos JSON > localStorage**. Clientes + cartera ya migrados a BD (Fase 3 completa). Lo que aún está en localStorage (proveedores, cajas, borradores) es deuda explícita a migrar, no un patrón a imitar.
 4. **Patrón de composición POS.** Toda funcionalidad de admin sigue `AdminXxx.tsx → XxxModule.jsx → XxxTabla/XxxFiltros/XxxPreview`. Solo el Module tiene estado. Ver "Patrón de composición POS".
 5. **Plan antes de ejecutar.** Cambios complejos se descomponen en fases verificables. Usa el agente `planner`/`architect` para features grandes.
 
@@ -41,7 +41,7 @@ desde terminales de la tienda en la red local (`192.168.1.105`).
 - **Datos:** PostgreSQL 16 + Redis 6379. PDF con `@react-pdf/renderer`. Excel con `xlsx`.
 - **Plataforma:** Windows 11, procesos vía **PM2**.
 
-**Estado de fases:** Fases 0–1 completas; Fase 2 (POS de mostrador) en progreso.
+**Estado de fases:** Fases 0–1 y Fase 3 (Clientes/Cartera BD) completas; Fase 2 (POS de mostrador) mayormente completa.
 Ver `MEMORIA_INSTALACIÓN.md` (estado por fases/infra) y `CLAUDE CONTEXTO FERREMEX.md` (negocio + n8n).
 
 ---
@@ -163,7 +163,7 @@ El POS vive en `apps/pos/` (Vite, puerto 7002, `base: "/pos"`). React 18 + React
   /consultar-compras → Historial de compras (ConsultarCompras)
   /pedidos      → Pedidos a proveedor (PedidosModule — backend en /caja/pedidos)
   /catalogos    → Taxonomía Dept→Cat→Marca (CatalogosModule — Miller Columns)
-  /cartera-credito → Cartera de crédito (CarteraCredito.jsx — localStorage, migración Fase 3 pendiente)
+  /cartera-credito → Cartera de crédito (CarteraCredito.jsx — BD Medusa vía módulo ferremex_cartera; FIFO/semáforo en cliente)
   /caja         → Movimientos de caja / arqueo (CashMovementsModule)
   /perifericos  → Config de hardware: impresora térmica, lector de huella, escáner
 /pos/admin/generador → Generador/probador de tickets (FUERA del layout admin — sin sidebar)
@@ -261,12 +261,14 @@ Sistemas compartidos y sus consumidores actuales:
 | Shape `ArticuloPOS` (campos de artículo) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal` |
 | Búsqueda fonética (backend `/caja/productos`) | `Buscador` |
 | `CatalogosOp` PATCH (`/caja/catalogos`) | `CatalogosModule` |
-| `pos_cartera` localStorage + `agregarMovimientoCredito()` | `CarteraCredito`, `ModalCobro` |
+| **Cartera BD** (`/caja/cartera/*`) + `lib/clientes.ts` (async) | `CarteraCredito`, `ModalCobro`, `SelectorCliente`, `AdminClientesLista` |
+| **Clientes BD** (`/caja/clientes/*`) + `lib/clientes.ts` (async) | `SelectorCliente`, `AdminClientesLista`, `AdminClientes` |
+| **Grupos BD** (`/caja/grupos/*`) | `AdminClientesLista`, `AdminClientes` |
 | `listarVentas()` / `cancelarVenta()` (`/caja/ventas`) | `SalesHistory` (AdminConsultaVentas), `CashMovementsModule` |
-| `folio-counter.json` + `/caja/folio-contador` | `/caja/ventas` POST (modo secuencial), AdminFormatos |
+| `folio-counter.json` + `/caja/folio-contador` | `/caja/ventas` POST (modo secuencial), `FormatoConfig` |
 | `/caja/usuarios` (GET sin pin / `?admin=1` con pin) + `/caja/login` | `Login`, `EmployeesModule`, `CashMovementsModule`, `SalesHistory` |
 | `/caja/pedidos` (CRUD) | `PedidosModule` |
-| `lib/json-store` (persistencia JSON segura) | rutas `ventas`, `usuarios`, `folio-contador`, `pedidos` |
+| `lib/json-store` (persistencia JSON segura) | rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `clientes`, `cartera` |
 | `lib/text` (`slugify` / `normalizarFonetico`) | rutas `articulos`, `catalogos`, `productos` |
 | Token POS (`X-POS-Token`) + `posHeaders()` / `apiFetch` | TODAS las llamadas mutantes desde `client.ts` |
 | `useToasts` (`hooks/useToasts`), `uuid` (`lib/utils`), `formatMXN` (`lib/format`) | módulos POS que los importan |
@@ -287,9 +289,9 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
 `buildTurnoId()` genera IDs de turno con formato `YYYY-MM-DD-m` (mañana, <14h) o `-t` (tarde).
 
 ### Persistencia de datos
-- **Clientes + Cartera de crédito**: `localStorage` (`pos_clientes`, `pos_grupos`, `pos_cartera`) — **aún NO en BD de Medusa**. Cada terminal tiene su copia; migración planeada para Fase 3.
-- **Proveedores / Cajas**: `localStorage` (`pos_proveedores`, `pos_cajas_catalogo`, `pos_cajas_asignaciones`).
-- **Movimientos manuales de caja**: `localStorage` por día (`pos_movimientos_caja_YYYY-MM-DD`) en CashMovementsModule.
+- **Clientes + Cartera de crédito**: BD de Medusa (Fase 3 completada). Customers nativas + módulo custom ferremex_cartera. Acceso vía `/caja/clientes/*` y `/caja/cartera/*`. Terminal-agnostic (datos compartidos).
+- **Proveedores / Cajas**: `localStorage` (`pos_proveedores`, `pos_cajas_catalogo`, `pos_cajas_asignaciones`). **Deuda Fase 3:** migrar a BD.
+- **Movimientos manuales de caja**: `localStorage` por día (`pos_movimientos_caja_YYYY-MM-DD`) en CashMovementsModule. Reset al cierre.
 - **Ventas / cortes / usuarios / ticket-config / folio / pedidos**: archivos JSON en `packages/api/data/*.json` (escritos vía `lib/json-store`).
 - **Productos / inventario / precios / categorías / imágenes**: BD de Medusa (PostgreSQL).
 
@@ -299,10 +301,13 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
   - **Productos/venta:** `buscarProductos`, `buscarCategorias`, `registrarVenta`, `listarVentas(desde?, hasta?)`, `obtenerVenta(folio)`, `cancelarVenta(folio, motivo)`, `obtenerCorte/cerrarCorte`.
   - **Artículos/inventario:** `listarArticulos`, `listarArticulosDeCatalogo`, `listarFaltantes`, `crearArticulo/actualizarArticulo/eliminarArticulo`, `subirImagenArticulo`, `ajustarInventario`/`incrementarInventario`.
   - **Pedidos:** `listarPedidos`, `crearPedido`, `actualizarPedido`, `eliminarPedido`.
+  - **Clientes (Fase 3):** `listarClientesAPI`, `crearClienteAPI`, `actualizarClienteAPI`, `eliminarClienteAPI`, `siguienteNumClienteAPI`. Mapeo async Customer ↔ ClientePOS.
+  - **Cartera (Fase 3):** `listarCarteraGlobalAPI`, `obtenerCarteraClienteAPI`, `agregarMovimientoCarteraAPI`, `agregarNotaCarteraAPI`, `registrarCambioLimiteAPI`. Módulo ferremex_cartera.
+  - **Grupos (Fase 3):** `listarGruposAPI`, `guardarGruposAPI`.
   - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos`, `actualizarCatalogo`.
 - `pos-store.ts` — estado global (Context + useReducer).
-- `clientes.ts` — clientes localStorage (`pos_clientes`, `pos_grupos`) + cartera (`pos_cartera`): `loadCartera()`, `saveCartera()`, `agregarMovimientoCredito()`.
-- `proveedores.ts` — proveedores (`pos_proveedores`).
+- `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO), semáforo.
+- `proveedores.ts` — proveedores (`pos_proveedores`, localStorage).
 - `serial.ts` — impresora ESC/POS + cajón (Chrome/Web Serial).
 - `unidades-sat.ts` — unidades de medida SAT.
 
@@ -312,12 +317,12 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
 
 ---
 
-## Cartera de Crédito (Fase 2 — localStorage)
+## Cartera de Crédito (Fase 3 — BD Medusa, módulo ferremex_cartera)
 
-`apps/pos/src/pages/CarteraCredito.jsx` es la página completa de cartera, montada en `/pos/admin/cartera`.
-Todos los datos están en `localStorage` clave `pos_cartera` (un `Record<clienteId, CartEntrada>`).
+`apps/pos/src/pages/CarteraCredito.jsx` es la página completa de cartera, montada en `/pos/admin/cartera-credito`.
+Datos persistidos en módulo custom `ferremex_cartera` (BD Medusa), accesibles vía `/caja/cartera/*`.
 
-**Tipos en `clientes.ts`:**
+**Tipos en `clientes.ts` (ahora async, antes localStorage):**
 ```ts
 interface Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota? }
 interface NotaCartera { id, fecha, hora, autor, texto }
@@ -325,12 +330,11 @@ interface HistorialLimite { id, fecha, usuario, anterior, nuevo, nota }
 interface CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: HistorialLimite[] }
 ```
 
-**Lógica de negocio clave:**
+**Lógica de negocio clave (intraducible):**
 - **Asignación FIFO de pagos** (`calcularSaldos()`): los pagos se aplican a la compra más antigua primero. Estado por compra: `pagado` / `parcial` / `pendiente`.
 - **Semáforo:** `azul` = al día, `verde` = ≥7 días para vencer, `amarillo` = 1–7 días, `naranja` = 1–30 días vencido, `rojo` = 30–60, `rojo_oscuro` = 60+.
 
-**Flujo de cobro (ModalCobro.tsx):** cuando `pago_credito > 0` y existe `clienteActivo`, tras `registrarVenta()` el modal llama
-`agregarMovimientoCredito(clienteId, { tipo: "compra", monto, folio, ... })` para registrar el cargo en `pos_cartera`.
+**Flujo de cobro (ModalCobro.tsx):** cuando `pago_credito > 0` y existe `clienteActivo`, el backend `/caja/ventas` registra la compra en cartera **transaccional** (dentro del lock de venta). No hay llamada posterior desde el frontend; `registrarVenta()` lo incluye.
 Pagos en efectivo además llaman `abrirCajon()`.
 
 ---
@@ -360,6 +364,15 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 | GET | `/caja/folio-contador` | Contador secuencial actual `{ contador: number }`. |
 | DELETE | `/caja/folio-contador` | Resetea contador a 0 (`packages/api/data/folio-counter.json`). Protegido por token POS. |
 | GET/PATCH | `/caja/catalogos` | Árbol Dept→Cat→Marca (GET) y mutaciones de taxonomía (PATCH: create_marca, rename_*, move_cat, assign_marca, reasignar). |
+| GET/POST/PUT/DELETE | `/caja/clientes` | CRUD de clientes POS (Customers Medusa, metadata.pos_cliente=true). POST con `?siguiente-num=1` genera num_cliente secuencial. Consumido por AdminClientesLista, SelectorCliente. |
+| GET/PUT | `/caja/clientes/[id]` | GET cliente por ID; PUT para actualizar. |
+| GET/PUT | `/caja/grupos` | GET lista de customer_groups (metadata.pos_grupo=true); PUT para actualizar. |
+| GET | `/caja/cartera` | GET global Record<customer_id, CartEntrada> (módulo ferremex_cartera). |
+| GET | `/caja/cartera/[customerId]` | GET cartera completa de un cliente. |
+| POST | `/caja/cartera/[customerId]/movimientos` | Registra movimiento (compra/pago) en cartera. |
+| POST | `/caja/cartera/[customerId]/notas` | Añade nota de auditoría. |
+| POST | `/caja/cartera/[customerId]/limite` | Actualiza límite de crédito + dual-write a customer.metadata. |
+| POST | `/caja/migrar-localstorage` | One-shot idempotente: migra cliente desde localStorage (pos_clientes) a BD si aún no existe (num_cliente). |
 
 ### Seguridad y concurrencia de las rutas `/caja/*`
 - **Token POS:** un middleware (`middlewares.ts` + `lib/pos-auth.ts`) exige el header `X-POS-Token` (= env `POS_TOKEN`) en todos los métodos mutantes (POST/PUT/PATCH/DELETE), **excepto** `/caja/login`. Si `POS_TOKEN` no está definido, la validación se desactiva (dev). El cliente lo envía vía `posHeaders()` en `client.ts` (`VITE_POS_TOKEN`). La vista admin de usuarios usa además `POS_ADMIN_TOKEN` / `VITE_POS_ADMIN_TOKEN`.
@@ -513,12 +526,14 @@ Las skills viven en `.claude/skills/`. Carga la que corresponda antes de trabajo
 - **`/caja/*` no debe importar el paquete `cors`**: el proxy de Vite ya resuelve cross-origin en dev. Agregar `import cors from 'cors'` falla en runtime porque el paquete no está instalado en el workspace de Medusa.
 - **Precios en Medusa 2.x no son relación directa**: `ProductVariant` no tiene propiedad `prices`. Obtén precios vía `query.graph` con `entity: "product_variant"` e ids de variante como query separada.
 - **Web Serial API = solo Chrome**: el cajón y la impresión ESC/POS directa en `serial.ts` requieren Chrome (o Chromium). Las terminales POS deben usar Chrome.
-- **Clientes + cartera en localStorage, no en BD**: `clientes.ts` lee/escribe `localStorage` (`pos_clientes`, `pos_grupos`, `pos_cartera`). Los datos viven en el navegador — cada terminal tiene su copia aislada hasta que Fase 3 lo migre a la BD.
+- **Clientes + cartera → BD (Fase 3 completa)**: `clientes.ts` es ahora una fachada async sobre `/caja/clientes/*` y `/caja/cartera/*` (BD Medusa). Datos compartidos entre terminales. Migración desde localStorage vía componente `MigracionNube.tsx` + ruta `/caja/migrar-localstorage`.
+- **Proveedores/cajas aún en localStorage**: `pos_proveedores`, `pos_cajas_catalogo`, `pos_cajas_asignaciones` siguen locales. **Deuda Fase 3:** migrar a BD.
 - **POS montado como módulo `vendor-ui`** en `medusa-config.ts` con `viteDevServerPort: 7002` (`@ts-expect-error` suprime la opción no estándar). El puerto debe coincidir con el flag `--port 7002` del script `dev` de `apps/pos/package.json`.
 - **Orden de arranque PM2 importa**: `ferremex-admin` y `ferremex-pos` (Vite) deben estar corriendo antes que `ferremex-api`. El API proxea ambos — si Vite está caído al arrancar, `/dashboard` y `/pos` dan errores.
 - **Alias de blocks.json** controlan dónde el CLI de Mercur coloca los bloques instalados: `api` → `packages/api/src`, `vendor` → `apps/vendor/src`, `admin` → `apps/admin/src`. Actualízalos si cambia la estructura de directorios.
 - **PedidosModule ya tiene backend**: "Mis Pedidos" se persiste vía `/caja/pedidos` (GET/POST/PUT/DELETE) con folio secuencial server-side. `HISTORIAL_MOCK` y `_folioCount` fueron removidos. Los "pedidos en espera" y el borrador en curso siguen en `localStorage` (`ferremex_pedidos_espera`, `ferremex_pedido_draft`) por ser borradores locales por terminal. Los `window.confirm` se reemplazaron por `ConfirmDialog.jsx`.
 - **`listProducts({ category_id })` no funciona en Medusa 2.x**: pasar `{ category_id: [uuid] }` a `productModule.listProducts()` lanza error ("Trying to query by not existing property"). La solución es el patrón de dos pasos: `listProductCategories({ id: [uuid] }, { relations: ["products"] })` para obtener los product IDs, luego `listProducts({ id: productIds })`. Ya implementado en `/caja/productos` y `/caja/articulos`.
+- **CLI de Medusa (`db:generate`, `db:migrate`) fallando vía bun**: `bun x medusa db:generate` y afines fallan por PATH de PostgreSQL no resuelto. Workaround: usar `node "../../node_modules/.bun/@medusajs+cli@<version>/.../cli.js" db:generate <module>` directo desde `packages/api`, donde `launch-api.js` ya ha resuelto el PATH de PostgreSQL.
 
 ---
 
