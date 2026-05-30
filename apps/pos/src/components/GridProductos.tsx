@@ -6,6 +6,8 @@ interface GridProductosProps {
   cartMap?: Map<string, number>
   onAgregar?: (p: ProductoPOS) => void
   onQuitar?: (sku: string) => void
+  /** SKUs que son componentes de algún paquete (para mostrar el badge 📦). */
+  skusEnPaquete?: Set<string>
 }
 
 function stockLabel(existencia: number) {
@@ -14,7 +16,7 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, skusEnPaquete }: GridProductosProps) {
   if (productos.length === 0) return null
 
   return (
@@ -40,6 +42,9 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                 </div>
               )}
               <span className={`badge-stock ${stock.clase}`}>{stock.texto}</span>
+              {skusEnPaquete?.has(p.sku) && (
+                <span className="badge-en-paquete" title="Este artículo forma parte de un paquete">📦 Paquete</span>
+              )}
             </div>
             <div className="tarjeta-info">
               <p className="tarjeta-nombre">{p.descripcion}</p>

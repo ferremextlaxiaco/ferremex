@@ -1,5 +1,7 @@
 import { useRef, useState } from "react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { SugerenciaPaquete } from "./SugerenciaPaquete"
+import { formatMXN } from "../lib/format"
 
 interface CarritoProps {
   onCobrar: () => void
@@ -56,9 +58,23 @@ export function Carrito({ onCobrar }: CarritoProps) {
     }
   }
 
+  // Agrupar: items sueltos vs items de paquete (por paquete_id).
+  const sueltos = items.filter((i) => !i.paquete_id)
+  const gruposPaquete = new Map<string, typeof items>()
+  for (const i of items) {
+    if (i.paquete_id) {
+      const arr = gruposPaquete.get(i.paquete_id) ?? []
+      arr.push(i)
+      gruposPaquete.set(i.paquete_id, arr)
+    }
+  }
+
   return (
     <div className="carrito">
       <div className="carrito-header">Carrito ({items.length} productos)</div>
+
+      {/* Sugerencia de paquete (si aplica) */}
+      <SugerenciaPaquete />
 
       {items.length === 0 ? (
         <div className="carrito-vacio">
@@ -68,7 +84,40 @@ export function Carrito({ onCobrar }: CarritoProps) {
         </div>
       ) : (
         <div className="carrito-items">
-          {items.map((item) => {
+          {/* Bloques de paquete */}
+          {[...gruposPaquete.entries()].map(([pkgId, lineas]) => {
+            const nombre = lineas[0]?.paquete_nombre ?? "Paquete"
+            const totalPkg = lineas.reduce((s, l) => s + efectivoPrecio(l) * l.cantidad, 0)
+            return (
+              <div key={pkgId} className="carrito-paquete">
+                <div className="carrito-paquete-head">
+                  <span className="carrito-paquete-nombre">📦 {nombre}</span>
+                  <div className="carrito-paquete-right">
+                    <span className="carrito-paquete-total">{formatMXN(totalPkg)}</span>
+                    <button
+                      className="carrito-paquete-deshacer"
+                      onClick={() => dispatch({ type: "REMOVE_PAQUETE", paqueteId: pkgId })}
+                      title="Deshacer paquete"
+                    >
+                      Deshacer
+                    </button>
+                  </div>
+                </div>
+                <div className="carrito-paquete-comps">
+                  {lineas.map((l) => (
+                    <div key={l.sku} className="carrito-paquete-comp">
+                      <span className="carrito-paquete-comp-nombre">{l.descripcion}</span>
+                      <span className="carrito-paquete-comp-cant">×{l.cantidad}</span>
+                      <span className="carrito-paquete-comp-sub">{formatMXN(efectivoPrecio(l) * l.cantidad)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
+
+          {/* Items sueltos */}
+          {sueltos.map((item) => {
             const draft = drafts[item.sku]
             const displayValue = draft !== undefined ? draft : String(item.cantidad)
 

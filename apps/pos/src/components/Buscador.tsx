@@ -1,8 +1,10 @@
-import { useRef, useState, useMemo } from "react"
-import { buscarProductos, type FiltrosBusqueda, type ProductoPOS } from "../lib/client"
+import { useRef, useState, useMemo, useEffect } from "react"
+import { buscarProductos, listarPaquetes, type FiltrosBusqueda, type ProductoPOS, type Paquete } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
+import { prepararLineasPaquete } from "../lib/paquetes"
 import { FiltroBar, type FiltroStock } from "./FiltroBar"
 import { GridProductos } from "./GridProductos"
+import { GridPaquetes } from "./GridPaquetes"
 import { ProductoDetalle } from "./ProductoDetalle"
 
 export function Buscador() {
@@ -19,6 +21,53 @@ export function Buscador() {
   const [error, setError] = useState<string | null>(null)
   const [seleccionado, setSeleccionado] = useState<ProductoPOS | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Paquetes: para el badge 📦 en el grid y para mostrarlos como resultados
+  // vendibles. Carga única al montar.
+  const [paquetes, setPaquetes] = useState<Paquete[]>([])
+  const [aplicandoPkg, setAplicandoPkg] = useState<string | null>(null)
+  useEffect(() => {
+    let on = true
+    listarPaquetes()
+      .then((p) => { if (on) setPaquetes(p) })
+      .catch(() => {})
+    return () => { on = false }
+  }, [])
+
+  const skusEnPaquete = useMemo(
+    () => new Set(paquetes.flatMap((p) => p.componentes.map((c) => c.sku))),
+    [paquetes]
+  )
+
+  // Paquetes que coinciden con el texto buscado (por nombre). Solo cuando hay
+  // texto, para no saturar el grid con filtros de taxonomía.
+  const paquetesCoincidentes = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return []
+    return paquetes.filter((p) => p.nombre.toLowerCase().includes(q))
+  }, [query, paquetes])
+
+  const paquetesAplicados = useMemo(
+    () => new Set(state.items.map((i) => i.paquete_id).filter(Boolean) as string[]),
+    [state.items]
+  )
+
+  async function aplicarPaquete(p: Paquete) {
+    setAplicandoPkg(p.id)
+    setError(null)
+    try {
+      const res = await prepararLineasPaquete(p)
+      if (!res.ok) {
+        setError(res.motivo === "sin_stock"
+          ? `No se puede armar «${p.nombre}»: sin existencia de ${res.faltantes.join(", ")}.`
+          : "No se pudo verificar el inventario del paquete.")
+        return
+      }
+      dispatch({ type: "ADD_PAQUETE", paqueteId: p.id, paqueteNombre: p.nombre, lineas: res.lineas })
+    } finally {
+      setAplicandoPkg(null)
+    }
+  }
 
   async function buscar(q: string, filtrosExtra?: FiltrosBusqueda) {
     const filtrosEfectivos = filtrosExtra ?? filtros
@@ -119,6 +168,16 @@ export function Buscador() {
         />
       )}
 
+      {/* Paquetes que coinciden con la búsqueda (se venden como combo) */}
+      {!seleccionado && paquetesCoincidentes.length > 0 && (
+        <GridPaquetes
+          paquetes={paquetesCoincidentes}
+          aplicados={paquetesAplicados}
+          aplicando={aplicandoPkg}
+          onAplicar={aplicarPaquete}
+        />
+      )}
+
       {/* Grid de resultados (oculto cuando hay producto seleccionado) */}
       {!seleccionado && tieneResultados && (
         <>
@@ -127,6 +186,7 @@ export function Buscador() {
             productos={resultadosFiltrados}
             onSeleccionar={setSeleccionado}
             cartMap={cartMap}
+            skusEnPaquete={skusEnPaquete}
             onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
           />

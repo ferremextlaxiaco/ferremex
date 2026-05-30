@@ -9,6 +9,7 @@ import {
 } from "../lib/client"
 import ArticleDrawer from "./ArticleDrawer"
 import ArticleDeleteModal from "./ArticleDeleteModal"
+import PaquetesPanel from "./PaquetesPanel"
 import { useToasts } from "../hooks/useToasts"
 
 // ── Iconos inline ─────────────────────────────────────────────────────────────
@@ -66,8 +67,11 @@ const PAGE_SIZE = 40
 
 // ── Componente principal ──────────────────────────────────────────────────────
 
-export default function ArticlesModule() {
+export default function ArticlesModule({ vista = "articulos" }) {
   const { toasts, push: pushToast } = useToasts()
+  // La vista activa (articulos | paquetes) la determina la ruta; las pestañas
+  // viven en el topbar del panel (Admin.tsx), no aquí.
+  const tab = vista
   // ── Artículos ────────────────────────────────────────────────────────────────
   const [articles,   setArticles]   = useState([])
   const [selectedId, setSelectedId] = useState(null)
@@ -279,6 +283,11 @@ export default function ArticlesModule() {
 
   return (
     <div className="ar-root">
+
+      {tab === "paquetes" ? (
+        <PaquetesPanel taxonomy={taxonomy} taxLoading={taxLoading} pushToast={pushToast} />
+      ) : (
+      <>
 
       {/* Encabezado */}
       <div className="ar-header">
@@ -597,6 +606,9 @@ export default function ArticlesModule() {
           )}
         </div>
       </div>
+
+      </>
+      )}
 
       {refreshing && (
         <div className="ar-spinner">

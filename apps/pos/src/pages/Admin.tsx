@@ -3,6 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
+  Coins,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -27,7 +28,7 @@ export function Admin() {
     ? "perifericos"
     : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
     ? "clientes"
-    : path.includes("/admin/articulos")
+    : path.includes("/admin/articulos") || path.includes("/admin/paquetes")
     ? "articulos"
     : path.includes("/admin/inventario")
     ? "inventario"
@@ -43,6 +44,8 @@ export function Admin() {
     ? "empleados"
     : path.includes("/admin/caja")
     ? "caja"
+    : path.includes("/admin/corte")
+    ? "corte"
     : ""
 
   return (
@@ -64,6 +67,25 @@ export function Admin() {
             FERREMEX
           </button>
         </div>
+
+        {/* Pestañas Artículos | Paquetes — solo visibles en esas secciones */}
+        {tab === "articulos" && (
+          <div className="admin-topbar-tabs">
+            <button
+              className={`admin-topbar-tab${path.includes("/admin/paquetes") ? "" : " active"}`}
+              onClick={() => navigate("/admin/articulos")}
+            >
+              Artículos
+            </button>
+            <button
+              className={`admin-topbar-tab${path.includes("/admin/paquetes") ? " active" : ""}`}
+              onClick={() => navigate("/admin/paquetes")}
+            >
+              Paquetes
+            </button>
+          </div>
+        )}
+
         <div className="admin-topbar-right">
           <span className="admin-user-chip">
             <span className="admin-avatar">{(state.cajero.alias || state.cajero.nombre)[0].toUpperCase()}</span>
@@ -159,6 +181,15 @@ export function Admin() {
             <span className="admin-side-icon"><Banknote size={18} /></span>
             Movimientos de Caja
           </button>
+          {state.cajero.permisos.puede_ver_corte && (
+            <button
+              className={`admin-side-item${tab === "corte" ? " active" : ""}`}
+              onClick={() => navigate("/admin/corte")}
+            >
+              <span className="admin-side-icon"><Coins size={18} /></span>
+              Corte de caja
+            </button>
+          )}
         </aside>
 
         {/* Contenido */}

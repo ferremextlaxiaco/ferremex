@@ -12,6 +12,7 @@ import { AdminClientes } from "./pages/AdminClientes"
 import { AdminClientesLista } from "./pages/AdminClientesLista"
 import CarteraCredito from "./pages/CarteraCredito"
 import { AdminArticulos } from "./pages/AdminArticulos"
+import { AdminPaquetes } from "./pages/AdminPaquetes"
 import { AdminInventario } from "./pages/AdminInventario"
 import { AdminProveedores } from "./pages/AdminProveedores"
 import { AdminCompras } from "./pages/AdminCompras"
@@ -24,6 +25,7 @@ import { AdminPerifericos } from "./pages/AdminPerifericos"
 import { GeneradorTickets } from "./pages/GeneradorTickets"
 import { AdminEmpleados } from "./pages/AdminEmpleados"
 import { AdminCaja } from "./pages/AdminCaja"
+import { AdminCorte } from "./pages/AdminCorte"
 import "./pos.css"
 
 createRoot(document.getElementById("root")!).render(
@@ -44,6 +46,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="clientes-lista" element={<AdminClientesLista />} />
             <Route path="cartera-credito" element={<CarteraCredito />} />
             <Route path="articulos" element={<AdminArticulos />} />
+            <Route path="paquetes" element={<AdminPaquetes />} />
             <Route path="inventario" element={<AdminInventario />} />
             <Route path="proveedores" element={<AdminProveedores />} />
             <Route path="compras" element={<AdminCompras />} />
@@ -54,6 +57,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="perifericos" element={<AdminPerifericos />} />
           <Route path="empleados" element={<AdminEmpleados />} />
           <Route path="caja" element={<AdminCaja />} />
+          <Route path="corte" element={<AdminCorte />} />
           </Route>
           <Route path="/admin/generador" element={<GeneradorTickets />} />
           <Route path="*" element={<Navigate to="/" replace />} />

@@ -11,6 +11,10 @@ interface ItemVenta {
   descripcion: string
   cantidad: number
   precio_unitario: number
+  // Si el item forma parte de un paquete vendido, lo marcan (el precio_unitario
+  // ya viene prorrateado desde el front). Opcionales y retrocompatibles.
+  paquete_id?: string
+  paquete_nombre?: string
 }
 
 interface VentaBody {
@@ -175,6 +179,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             cantidad: i.cantidad,
             precio_unitario: i.precio_unitario,
             subtotal: i.precio_unitario * i.cantidad,
+            // Traza del paquete (si aplica) para ticket / historial / corte.
+            ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre ?? null } : {}),
           })),
           total,
           pago_efectivo,

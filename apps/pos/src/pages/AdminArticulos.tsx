@@ -1,5 +1,5 @@
 import ArticlesModule from "../components/ArticlesModule"
 
 export function AdminArticulos() {
-  return <ArticlesModule />
+  return <ArticlesModule vista="articulos" />
 }

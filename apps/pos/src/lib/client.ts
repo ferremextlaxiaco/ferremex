@@ -33,7 +33,10 @@ export interface CategoriasPOS {
 export interface VentaRequest {
   cajero: string
   turno_id: string
-  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number }[]
+  // paquete_id/paquete_nombre marcan que el item forma parte de un paquete
+  // vendido (el precio_unitario ya viene prorrateado). Opcionales y
+  // retrocompatibles: una venta normal no los envía.
+  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
   pago_credito?: number
@@ -64,12 +67,114 @@ export interface VentaRegistro {
   total: number
 }
 
+// ── Movimientos de caja (manuales: entradas / salidas / fondo inicial) ─────────
+
+export type MovimientoOrigin = "MOVIM_E" | "MOVIM_S" | "FONDO"
+
+export interface MovimientoCaja {
+  id: string
+  date: string // YYYY-MM-DD
+  time: string // HH:MM
+  fecha: string // ISO
+  origin: MovimientoOrigin
+  desc: string
+  method: string
+  amount: number // con signo: salidas negativas
+  category?: string
+  cajaId?: string | null
+  cajaName?: string | null
+  cajeroId?: string
+  cajeroName?: string
+  turnoId?: string | null
+  supplier?: string
+  notes?: string
+  auto?: boolean
+}
+
+// El POST no necesita id/fecha/time (los pone el servidor).
+export type MovimientoCajaInput = Omit<MovimientoCaja, "id" | "fecha"> & {
+  date?: string
+  time?: string
+}
+
+// ── Corte de caja / arqueo ─────────────────────────────────────────────────────
+
+export interface CorteVentaItem {
+  folio: string
+  fecha: string
+  cajero: string
+  turno_id: string
+  total: number
+  pago_efectivo: number
+  pago_transferencia: number
+  pago_credito: number
+}
+
+export interface CorteMovItem {
+  id: string
+  origin: MovimientoOrigin
+  desc: string
+  amount: number
+  time: string
+  category?: string
+}
+
+/** Snapshot persistido de un corte ya cerrado. */
+export interface CorteCerrado {
+  cajero: string
+  turno_id: string
+  cerrado_en: string
+  num_ventas: number
+  total_ventas: number
+  ventas_efectivo: number
+  ventas_transferencia: number
+  ventas_credito: number
+  fondo_inicial: number
+  entradas_manuales: number
+  salidas_manuales: number
+  efectivo_esperado: number
+  efectivo_contado: number
+  diferencia: number
+  fondo_dejado: number
+  motivo?: string
+  denominaciones?: Record<string, number> | null
+}
+
 export interface CorteResponse {
   cajero: string
   turno_id: string
   num_ventas: number
-  total: number
-  ventas: VentaRegistro[]
+  total_ventas: number
+  ventas_efectivo: number
+  ventas_transferencia: number
+  ventas_credito: number
+  fondo_inicial: number
+  entradas_manuales: number
+  salidas_manuales: number
+  efectivo_esperado: number
+  ventas: CorteVentaItem[]
+  movimientos: CorteMovItem[]
+  /** Si el turno ya fue cerrado, el snapshot del arqueo; null si sigue abierto. */
+  cerrado: CorteCerrado | null
+}
+
+export interface CerrarCorteInput {
+  cajero: string
+  turno_id: string
+  efectivo_contado: number
+  fondo_dejado?: number
+  motivo?: string
+  denominaciones?: Record<string, number> | null
+  siguiente_turno_id?: string | null
+  cajero_id?: string
+  caja_id?: string | null
+  caja_name?: string | null
+}
+
+export interface CerrarCorteResult {
+  ok: boolean
+  yaCerrado?: boolean
+  corte: CorteCerrado
 }
 
 // ── Artículos (admin CRUD) ────────────────────────────────────────────────────
@@ -153,6 +258,51 @@ export async function actualizarArticulo(data: ArticuloPOS): Promise<ArticuloPOS
 
 export async function eliminarArticulo(id: string): Promise<void> {
   await apiFetch(`/caja/articulos?id=${id}`, { method: "DELETE" })
+}
+
+// ── Paquetes / Kits ────────────────────────────────────────────────────────────
+
+export interface ComponentePaquete {
+  sku: string
+  descripcion: string
+  cantidad: number
+}
+
+export interface Paquete {
+  id: string
+  nombre: string
+  componentes: ComponentePaquete[]
+  precio_paquete: number
+  nivel_base: number // 1-4, nivel de precio usado como base de la sugerencia
+  imagenes: string[] // galería; la primera es la principal. [] si no tiene
+  creado_en: string
+  actualizado_en?: string
+}
+
+// El POST/PUT no necesitan id/fechas (el servidor los pone).
+export type PaqueteInput = {
+  id?: string
+  nombre: string
+  componentes: ComponentePaquete[]
+  precio_paquete: number
+  nivel_base: number
+  imagenes?: string[]
+}
+
+export async function listarPaquetes(): Promise<Paquete[]> {
+  return apiFetch<Paquete[]>("/caja/paquetes")
+}
+
+export async function crearPaquete(data: PaqueteInput): Promise<Paquete> {
+  return apiFetch<Paquete>("/caja/paquetes", { method: "POST", body: JSON.stringify(data) })
+}
+
+export async function actualizarPaquete(data: PaqueteInput & { id: string }): Promise<Paquete> {
+  return apiFetch<Paquete>("/caja/paquetes", { method: "PUT", body: JSON.stringify(data) })
+}
+
+export async function eliminarPaquete(id: string): Promise<void> {
+  await apiFetch(`/caja/paquetes?id=${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 export async function generarOCPdf(data: {
@@ -401,11 +551,43 @@ export async function obtenerCorte(cajero: string, turno_id: string): Promise<Co
   return apiFetch<CorteResponse>(`/caja/corte?${params}`)
 }
 
-export async function cerrarCorte(cajero: string, turno_id: string): Promise<void> {
-  await apiFetch("/caja/corte", {
+/** Cierra el turno con el arqueo completo. Devuelve el snapshot persistido. */
+export async function cerrarCorte(input: CerrarCorteInput): Promise<CerrarCorteResult> {
+  return apiFetch<CerrarCorteResult>("/caja/corte", {
     method: "POST",
-    body: JSON.stringify({ cajero, turno_id }),
+    body: JSON.stringify(input),
   })
+}
+
+// ── Movimientos de caja ────────────────────────────────────────────────────────
+
+export interface MovimientosFiltro {
+  desde?: string
+  hasta?: string
+  turno_id?: string
+  caja_id?: string
+  cajero_id?: string
+}
+
+export async function listarMovimientos(filtro: MovimientosFiltro = {}): Promise<MovimientoCaja[]> {
+  const params = new URLSearchParams()
+  if (filtro.desde) params.set("desde", filtro.desde)
+  if (filtro.hasta) params.set("hasta", filtro.hasta)
+  if (filtro.turno_id) params.set("turno_id", filtro.turno_id)
+  if (filtro.caja_id) params.set("caja_id", filtro.caja_id)
+  if (filtro.cajero_id) params.set("cajero_id", filtro.cajero_id)
+  return apiFetch<MovimientoCaja[]>(`/caja/movimientos?${params}`)
+}
+
+export async function crearMovimiento(mov: MovimientoCajaInput): Promise<MovimientoCaja> {
+  return apiFetch<MovimientoCaja>("/caja/movimientos", {
+    method: "POST",
+    body: JSON.stringify(mov),
+  })
+}
+
+export async function eliminarMovimiento(id: string): Promise<void> {
+  await apiFetch(`/caja/movimientos?id=${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 // ── Usuarios ─────────────────────────────────────────────────────────────────

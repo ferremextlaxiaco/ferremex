@@ -718,6 +718,8 @@ export type Routes = {
         imagen: typeof import("../../src/api/caja/imagen/route");
         login: typeof import("../../src/api/caja/login/route");
         migrarLocalstorage: typeof import("../../src/api/caja/migrar-localstorage/route");
+        movimientos: typeof import("../../src/api/caja/movimientos/route");
+        paquetes: typeof import("../../src/api/caja/paquetes/route");
         pedidos: typeof import("../../src/api/caja/pedidos/route");
         productos: typeof import("../../src/api/caja/productos/route");
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");

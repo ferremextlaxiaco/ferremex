@@ -15,9 +15,19 @@ export interface CartItem {
   existencia: number
   mayoreoActivo?: boolean
   mayoreoMin?: number
+  // Cuando el item forma parte de un paquete vendido, `precio` ya es el precio
+  // prorrateado del paquete para esa línea, `paquete_id`/`paquete_nombre` lo
+  // marcan, y `paqueteCantidad` es cuántas unidades aporta el paquete por copia
+  // (para poder recomputar al agregar/quitar el paquete). El mayoreo NO aplica a
+  // items de paquete (el precio del paquete manda).
+  paquete_id?: string
+  paquete_nombre?: string
+  paqueteCantidad?: number
 }
 
 export function efectivoPrecio(item: CartItem): number {
+  // Items de paquete usan su precio prorrateado tal cual (sin mayoreo).
+  if (item.paquete_id) return item.precio
   if (item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin) {
     return item.precio2
   }
@@ -48,6 +58,16 @@ interface PosState {
   clienteActivo: Cliente | null
 }
 
+// Línea de un componente de paquete tal como entra al carrito: trae su precio
+// prorrateado ya calculado y la cantidad que aporta una copia del paquete.
+export interface LineaPaquete {
+  sku: string
+  descripcion: string
+  precioProrrateado: number
+  cantidad: number
+  existencia: number
+}
+
 type PosAction =
   | { type: "SET_CAJERO"; cajero: Cajero }
   | { type: "ADD_ITEM"; item: Omit<CartItem, "cantidad"> }
@@ -55,6 +75,8 @@ type PosAction =
   | { type: "DECREMENT"; sku: string }
   | { type: "SET_CANTIDAD"; sku: string; cantidad: number }
   | { type: "REMOVE"; sku: string }
+  | { type: "ADD_PAQUETE"; paqueteId: string; paqueteNombre: string; lineas: LineaPaquete[] }
+  | { type: "REMOVE_PAQUETE"; paqueteId: string }
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
   | { type: "SET_CLIENTE"; cliente: Cliente | null }
@@ -117,6 +139,46 @@ function posReducer(state: PosState, action: PosAction): PosState {
     case "REMOVE":
       return { ...state, items: state.items.filter((i) => i.sku !== action.sku) }
 
+    case "ADD_PAQUETE": {
+      // Agrega (o incrementa) una copia del paquete: por cada línea suma su
+      // `cantidad` a la línea de carrito de ese paquete+sku. Si el SKU ya está
+      // suelto (sin paquete), lo absorbe al paquete. Respeta existencia.
+      let items = [...state.items]
+      for (const l of action.lineas) {
+        const idx = items.findIndex(
+          (i) => i.sku === l.sku && (i.paquete_id === action.paqueteId || !i.paquete_id)
+        )
+        if (idx >= 0) {
+          const actual = items[idx]
+          const nuevaCant = Math.min(actual.existencia, actual.cantidad + l.cantidad)
+          items[idx] = {
+            ...actual,
+            cantidad: nuevaCant,
+            precio: l.precioProrrateado,
+            paquete_id: action.paqueteId,
+            paquete_nombre: action.paqueteNombre,
+            paqueteCantidad: l.cantidad,
+          }
+        } else {
+          items.push({
+            sku: l.sku,
+            descripcion: l.descripcion,
+            precio: l.precioProrrateado,
+            cantidad: Math.min(l.existencia, l.cantidad),
+            existencia: l.existencia,
+            paquete_id: action.paqueteId,
+            paquete_nombre: action.paqueteNombre,
+            paqueteCantidad: l.cantidad,
+          })
+        }
+      }
+      return { ...state, items }
+    }
+
+    case "REMOVE_PAQUETE":
+      // Quita por completo todas las líneas de ese paquete del carrito.
+      return { ...state, items: state.items.filter((i) => i.paquete_id !== action.paqueteId) }
+
     case "CLEAR":
       // Al vaciar el carrito (o completar una venta) se reinicia el cliente activo
       return { ...state, items: [], clienteActivo: null }
@@ -165,4 +227,22 @@ export function buildTurnoId(): string {
   const hora = now.getHours()
   const turno = hora < 14 ? "m" : "t"
   return `${fecha}-${turno}`
+}
+
+/**
+ * Dado un turno_id `YYYY-MM-DD-m|t`, devuelve el id del turno siguiente:
+ *   - mañana (m) → tarde (t) del mismo día
+ *   - tarde (t)  → mañana (m) del día siguiente
+ * Se usa en el corte para registrar el fondo dejado en el turno entrante.
+ * Si el formato no es reconocible, cae al turno actual (buildTurnoId).
+ */
+export function siguienteTurnoId(turnoId: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})-(m|t)$/.exec(turnoId ?? "")
+  if (!m) return buildTurnoId()
+  const [, y, mes, d, parte] = m
+  if (parte === "m") return `${y}-${mes}-${d}-t`
+  // tarde → mañana del día siguiente
+  const fecha = new Date(Date.UTC(Number(y), Number(mes) - 1, Number(d)))
+  fecha.setUTCDate(fecha.getUTCDate() + 1)
+  return `${fecha.toISOString().slice(0, 10)}-m`
 }

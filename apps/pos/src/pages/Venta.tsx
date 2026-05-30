@@ -36,11 +36,6 @@ export function Venta() {
         </div>
         <div className="pos-header-derecha">
           <span className="pos-cajero">👤 {state.cajero.alias || state.cajero.nombre}</span>
-          {state.cajero.permisos.puede_ver_corte && (
-            <button className="btn-secondary btn-sm" onClick={() => navigate("/corte")}>
-              Corte de caja
-            </button>
-          )}
           {state.cajero.permisos.puede_ver_admin && (
             <button className="btn-secondary btn-sm" onClick={() => navigate("/admin")}>
               ⚙ Admin

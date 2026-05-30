@@ -65,6 +65,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           descripcion: i.descripcion,
           cantidad: i.cantidad,
           precio_unitario: efectivoPrecio(i),
+          // Traza del paquete (si la línea proviene de un paquete vendido).
+          ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
         })),
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,

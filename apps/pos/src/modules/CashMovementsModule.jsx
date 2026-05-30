@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { usePOS } from "../lib/pos-store";
-import { obtenerUsuarios, listarVentas } from "../lib/client";
+import { obtenerUsuarios, listarVentas, listarMovimientos, crearMovimiento } from "../lib/client";
 import { formatMXN } from "../lib/format";
 import {
   PlusCircle, Store, User, Banknote, CreditCard, ArrowLeftRight, Star,
   ChevronDown, TrendingDown, TrendingUp, X, SearchX,
-  ChevronLeft, ChevronRight,
+  ChevronLeft, ChevronRight, Wallet,
 } from "lucide-react";
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
@@ -29,13 +29,10 @@ function getTodayStr() {
 const today = new Date();
 const todayStr = getTodayStr();
 
-// Persistencia de movimientos manuales de caja (POS-I2): viven por día en
-// localStorage para no perderse al navegar fuera de la sección y volver.
-function manualKey(dateStr) { return `pos_movimientos_caja_${dateStr}`; }
-function loadManualMovements(dateStr) {
-  try { const s = localStorage.getItem(manualKey(dateStr)); return s ? JSON.parse(s) : []; }
-  catch { return []; }
-}
+// Persistencia de movimientos manuales de caja: ahora viven en el backend
+// (/caja/movimientos vía lib/json-store), compartidos entre terminales y
+// agrupables por turno para el corte/arqueo. Antes vivían en localStorage por
+// día y por terminal (aislados); esa deuda quedó saldada.
 
 // ─── VENTA → MOVEMENT TRANSFORM ──────────────────────────────────────────────
 
@@ -80,6 +77,7 @@ function ventaToMovement(venta, cajerosList, cajasList) {
 
 const CATEGORIES_SALIDA  = ["Gastos operativos", "Compra sin factura", "Retiro", "Servicio externo", "Otro gasto"];
 const CATEGORIES_ENTRADA = ["Reposición de fondo", "Abono de cliente", "Fondo extra", "Otro ingreso"];
+const CATEGORIES_FONDO   = ["Fondo inicial", "Fondo de apertura"];
 
 const MONTH_NAMES_ES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 const DAY_NAMES_ES   = ["Dom","Lun","Mar","Mié","Jue","Vie","Sáb"];
@@ -119,6 +117,7 @@ function OriginBadge({ origin }) {
     DEVOL:   { label: "DEVOL.",  cls: "bg-red-100 text-red-700" },
     MOVIM_E: { label: "ENTRADA", cls: "bg-blue-100 text-blue-700" },
     MOVIM_S: { label: "SALIDA",  cls: "bg-orange-100 text-orange-700" },
+    FONDO:   { label: "FONDO",   cls: "bg-indigo-100 text-indigo-700" },
   };
   const { label, cls } = map[origin] || { label: origin, cls: "bg-gray-100 text-gray-700" };
   return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${cls}`}>{label}</span>;
@@ -346,13 +345,20 @@ function RegisterModal({ onClose, onSave, cajas, preselectedCajaId, getSaldo, ca
   const [errors, setErrors] = useState({});
   const [showDiscard, setShowDiscard] = useState(false);
   const [showNegativeWarning, setShowNegativeWarning] = useState(false);
+  const [guardando, setGuardando] = useState(false);
 
-  const cats = type === "SALIDA" ? CATEGORIES_SALIDA : CATEGORIES_ENTRADA;
+  function catsForType(t) {
+    return t === "SALIDA" ? CATEGORIES_SALIDA : t === "FONDO" ? CATEGORIES_FONDO : CATEGORIES_ENTRADA;
+  }
+  const cats = catsForType(type);
   const currentEfectivoSaldo = getSaldo(selectedCajaId);
 
   function handleTypeChange(t) {
     setType(t);
-    setCategory((t === "SALIDA" ? CATEGORIES_SALIDA : CATEGORIES_ENTRADA)[0]);
+    const nextCats = catsForType(t);
+    setCategory(nextCats[0]);
+    // Prellenar una descripción útil para el fondo inicial.
+    if (t === "FONDO" && !desc.trim()) setDesc("Fondo inicial de caja");
   }
 
   function hasContent() { return amount !== "" || desc !== "" || supplier !== "" || notes !== ""; }
@@ -379,27 +385,30 @@ function RegisterModal({ onClose, onSave, cajas, preselectedCajaId, getSaldo, ca
     doSave(delta);
   }
 
-  function doSave(delta) {
-    const now = new Date();
-    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  async function doSave(delta) {
     const caja = cajas.find(c => String(c.id) === selectedCajaId);
-    onSave({
-      id: Date.now(),
-      date: todayStr,
-      time,
-      origin: type === "SALIDA" ? "MOVIM_S" : "MOVIM_E",
-      desc: desc.trim(),
-      method: "efectivo",
-      amount: delta,
-      category,
-      cajaId: selectedCajaId,
-      cajaName: caja?.nombre ?? selectedCajaId,
-      cajeroId: "admin",
-      cajeroName: cajeroNombre,
-      ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
-      ...(notes.trim() ? { notes: notes.trim() } : {}),
-    });
+    const origin = type === "SALIDA" ? "MOVIM_S" : type === "FONDO" ? "FONDO" : "MOVIM_E";
     setShowNegativeWarning(false);
+    setGuardando(true);
+    try {
+      // El padre persiste en backend (crearMovimiento) y cierra el modal al
+      // resolverse. El servidor pone id/fecha/time y normaliza el signo.
+      await onSave({
+        date: todayStr,
+        origin,
+        desc: desc.trim(),
+        method: "efectivo",
+        amount: delta,
+        category,
+        cajaId: selectedCajaId,
+        cajaName: caja?.nombre ?? selectedCajaId,
+        cajeroName: cajeroNombre,
+        ...(supplier.trim() ? { supplier: supplier.trim() } : {}),
+        ...(notes.trim() ? { notes: notes.trim() } : {}),
+      });
+    } finally {
+      setGuardando(false);
+    }
   }
 
   const amountVal = parseFloat(amount) || 0;
@@ -457,7 +466,17 @@ function RegisterModal({ onClose, onSave, cajas, preselectedCajaId, getSaldo, ca
                   ${type === "ENTRADA" ? "bg-green-50 border-green-400 text-green-700" : "bg-white border-gray-300 text-gray-500 hover:border-gray-400"}`}>
                 <TrendingUp size={18} /> ENTRADA
               </button>
+              <button onClick={() => handleTypeChange("FONDO")}
+                className={`flex-1 flex items-center justify-center gap-2 py-4 rounded-lg border-2 font-semibold text-sm transition-colors
+                  ${type === "FONDO" ? "bg-indigo-50 border-indigo-400 text-indigo-700" : "bg-white border-gray-300 text-gray-500 hover:border-gray-400"}`}>
+                <Wallet size={18} /> FONDO INICIAL
+              </button>
             </div>
+            {type === "FONDO" && (
+              <p className="-mt-3 text-xs text-indigo-600 bg-indigo-50 rounded-lg px-3 py-2">
+                El fondo inicial es el efectivo con el que abre la caja. Cuenta como entrada y es la base del arqueo en el corte.
+              </p>
+            )}
 
             {/* Categoría */}
             <div>
@@ -519,9 +538,9 @@ function RegisterModal({ onClose, onSave, cajas, preselectedCajaId, getSaldo, ca
           {/* Footer — fijo */}
           <div className="px-8 py-5 border-t border-gray-200 flex justify-end gap-3 flex-shrink-0">
             <button onClick={handleClose} className="px-5 py-2.5 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50">Cancelar</button>
-            <button onClick={handleSubmit} disabled={submitDisabled}
-              className={`px-5 py-2.5 text-sm font-medium bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-opacity ${submitDisabled ? "opacity-40 pointer-events-none" : ""}`}>
-              Registrar movimiento
+            <button onClick={handleSubmit} disabled={submitDisabled || guardando}
+              className={`px-5 py-2.5 text-sm font-medium bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-opacity ${submitDisabled || guardando ? "opacity-40 pointer-events-none" : ""}`}>
+              {guardando ? "Guardando…" : "Registrar movimiento"}
             </button>
           </div>
         </div>
@@ -552,7 +571,7 @@ export default function CashMovementsModule() {
 
   // Hoy recalculado al montar (no anclado al load del módulo).
   const [hoy] = useState(getTodayStr);
-  const [manualMovements, setManualMovements] = useState(() => loadManualMovements(getTodayStr()));
+  const [manualMovements, setManualMovements] = useState([]);
   const [rawVentas, setRawVentas] = useState([]);
   const [dateStart, setDateStart] = useState(hoy);
   const [dateEnd, setDateEnd] = useState(hoy);
@@ -575,24 +594,18 @@ export default function CashMovementsModule() {
       .catch(() => {});
   }, []);
 
-  // Cargar ventas reales cada vez que cambia el rango de fechas
+  // Cargar ventas reales + movimientos manuales cada vez que cambia el rango de
+  // fechas. Ambos vienen del backend; los movimientos ya no viven en localStorage.
   useEffect(() => {
+    let on = true;
     listarVentas(dateStart, dateEnd)
-      .then(ventas => setRawVentas(ventas.filter(v => !v.estado || v.estado === "Vigente")))
-      .catch(() => setRawVentas([]));
+      .then(ventas => { if (on) setRawVentas(ventas.filter(v => !v.estado || v.estado === "Vigente")); })
+      .catch(() => { if (on) setRawVentas([]); });
+    listarMovimientos({ desde: dateStart, hasta: dateEnd })
+      .then(movs => { if (on) setManualMovements(movs); })
+      .catch(() => { if (on) setManualMovements([]); });
+    return () => { on = false; };
   }, [dateStart, dateEnd]);
-
-  // Persistir movimientos manuales por día (POS-I2): así sobreviven al navegar
-  // fuera de la sección. Se agrupan por su fecha y se guardan en localStorage.
-  useEffect(() => {
-    const porFecha = {};
-    for (const m of manualMovements) {
-      (porFecha[m.date] ??= []).push(m);
-    }
-    for (const [fecha, movs] of Object.entries(porFecha)) {
-      localStorage.setItem(manualKey(fecha), JSON.stringify(movs));
-    }
-  }, [manualMovements]);
 
   // Transformar ventas a formato de movimiento (se re-ejecuta cuando cargan cajeros)
   const saleMovements = useMemo(
@@ -624,7 +637,7 @@ export default function CashMovementsModule() {
   // Filtered movements (all filters)
   const filteredMovements = rangeMovements.filter(m => {
     if (clasificacion !== "todos") {
-      const map = { venta: m.origin === "VENTA", devol: m.origin === "DEVOL", movim_e: m.origin === "MOVIM_E", movim_s: m.origin === "MOVIM_S" };
+      const map = { venta: m.origin === "VENTA", devol: m.origin === "DEVOL", movim_e: m.origin === "MOVIM_E", movim_s: m.origin === "MOVIM_S", fondo: m.origin === "FONDO" };
       if (!map[clasificacion]) return false;
     }
     if (metodo !== "todos" && m.method !== metodo) return false;
@@ -660,15 +673,30 @@ export default function CashMovementsModule() {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3000);
   }
 
-  function handleSaveMovement(movement) {
-    const efMovs = movements.filter(m => m.date === todayStr && m.cajaId === movement.cajaId && m.method === "efectivo");
-    const newSaldo = efMovs.reduce((s, m) => s + m.amount, 0) + (movement.method === "efectivo" ? movement.amount : 0);
+  async function handleSaveMovement(movement) {
+    // Asociamos el movimiento al turno y cajero activos para que el corte pueda
+    // agruparlo. El backend normaliza el signo y asigna id/fecha/hora.
+    const payload = {
+      ...movement,
+      turnoId: state.cajero?.turno_id ?? null,
+      cajeroId: movement.cajeroId ?? state.cajero?.id ?? "admin",
+    };
+    try {
+      const creado = await crearMovimiento(payload);
+      setManualMovements(prev => [creado, ...prev]);
+      setShowModal(false);
 
-    setManualMovements(prev => [...prev, movement]);
-    setShowModal(false);
-    addToast("Movimiento registrado ✓", "success");
-    if (newSaldo < 0) setTimeout(() => addToast("🚨 El saldo de efectivo es negativo.", "error"), 150);
-    else if (newSaldo < 100) setTimeout(() => addToast("⚠️ Saldo bajo en caja. Considera reponer el fondo.", "warning"), 150);
+      const efMovs = movements.filter(m => m.date === todayStr && m.cajaId === creado.cajaId && m.method === "efectivo");
+      const newSaldo = efMovs.reduce((s, m) => s + m.amount, 0) + (creado.method === "efectivo" ? creado.amount : 0);
+      const etiqueta = creado.origin === "FONDO" ? "Fondo inicial registrado ✓" : "Movimiento registrado ✓";
+      addToast(etiqueta, "success");
+      if (creado.origin !== "FONDO") {
+        if (newSaldo < 0) setTimeout(() => addToast("🚨 El saldo de efectivo es negativo.", "error"), 150);
+        else if (newSaldo < 100) setTimeout(() => addToast("⚠️ Saldo bajo en caja. Considera reponer el fondo.", "warning"), 150);
+      }
+    } catch {
+      addToast("No se pudo registrar el movimiento", "error");
+    }
   }
 
   function dateButtonLabel() {
@@ -719,6 +747,7 @@ export default function CashMovementsModule() {
     { separator: true },
     { value: "movim_e", label: "Movimientos — Entradas" },
     { value: "movim_s", label: "Movimientos — Salidas" },
+    { value: "fondo",   label: "Fondo inicial" },
   ];
 
   const metodoOptions = [
