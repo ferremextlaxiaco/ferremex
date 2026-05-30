@@ -1,14 +1,16 @@
 import { useState } from "react"
-import { useLocation, Outlet, Navigate } from "react-router-dom"
+import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import { usePOS } from "../lib/pos-store"
 
 export function Admin() {
   const { state } = usePOS()
   const location = useLocation()
+  const navigate = useNavigate()
   const [sidebarOculto, setSidebarOculto] = useState(false)
 
-  // Solo administradores pueden entrar. Redirección declarativa (no navigate en
-  // render, que viola las reglas de React y se duplica en StrictMode).
+  // Solo administradores pueden entrar. La redirección de GUARDIA es declarativa
+  // (<Navigate>, no navigate() en render, que viola las reglas de React y se
+  // duplica en StrictMode). Los onClick del sidebar/topbar sí usan navigate().
   if (!state.cajero) return <Navigate to="/" replace />
   if (!state.cajero.permisos.puede_ver_admin) return <Navigate to="/venta" replace />
 
