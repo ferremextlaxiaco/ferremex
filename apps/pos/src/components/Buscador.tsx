@@ -6,6 +6,7 @@ import { FiltroBar, type FiltroStock } from "./FiltroBar"
 import { GridProductos } from "./GridProductos"
 import { GridPaquetes } from "./GridPaquetes"
 import { ProductoDetalle } from "./ProductoDetalle"
+import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
 
 export function Buscador() {
   const { state, dispatch } = usePOS()
@@ -26,6 +27,7 @@ export function Buscador() {
   // vendibles. Carga única al montar.
   const [paquetes, setPaquetes] = useState<Paquete[]>([])
   const [aplicandoPkg, setAplicandoPkg] = useState<string | null>(null)
+  const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
   useEffect(() => {
     let on = true
     listarPaquetes()
@@ -175,6 +177,7 @@ export function Buscador() {
           aplicados={paquetesAplicados}
           aplicando={aplicandoPkg}
           onAplicar={aplicarPaquete}
+          onVerDesglose={setPaqueteDesglose}
         />
       )}
 
@@ -196,6 +199,9 @@ export function Buscador() {
       {!seleccionado && !tieneResultados && query && !buscando && (
         <p className="sin-resultados">Sin resultados para "{query}"</p>
       )}
+
+      {/* Modal de desglose del paquete (artículos, precios, ahorro) */}
+      <DesglosePaqueteModal paquete={paqueteDesglose} onClose={() => setPaqueteDesglose(null)} />
     </div>
   )
 }

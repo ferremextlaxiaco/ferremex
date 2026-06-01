@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { ShoppingCart, X } from "lucide-react"
 import { useNavigate, Navigate } from "react-router-dom"
 import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
@@ -13,6 +14,17 @@ export function Venta() {
   const navigate = useNavigate()
   const [mostrarCobro, setMostrarCobro] = useState(false)
   const [ventaCompletada, setVentaCompletada] = useState<VentaResponse | null>(null)
+  // El carrito ahora es un panel deslizable (drawer) que se abre con un FAB.
+  const [carritoAbierto, setCarritoAbierto] = useState(false)
+  const numItems = state.items.length
+
+  // Cerrar el drawer con Escape (solo si no hay otro modal encima).
+  useEffect(() => {
+    if (!carritoAbierto) return
+    const fn = (e: KeyboardEvent) => { if (e.key === "Escape") setCarritoAbierto(false) }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [carritoAbierto])
 
   // Redirigir al login si no hay cajero (declarativo, no navigate en render).
   if (!state.cajero) return <Navigate to="/" replace />
@@ -47,15 +59,39 @@ export function Venta() {
         </div>
       </header>
 
-      {/* ---- Cuerpo: Buscador + Carrito ---- */}
+      {/* ---- Cuerpo: Buscador (ancho completo) ---- */}
       <main className="venta-main">
-        <section className="venta-izquierda">
+        <section className="venta-izquierda venta-izquierda--full">
           <Buscador />
         </section>
-        <section className="venta-derecha">
-          <Carrito onCobrar={() => setMostrarCobro(true)} />
-        </section>
       </main>
+
+      {/* ---- Carrito como panel deslizable (drawer) ---- */}
+      {carritoAbierto && (
+        <div className="carrito-overlay" onClick={() => setCarritoAbierto(false)} />
+      )}
+      <aside className={`carrito-drawer${carritoAbierto ? " abierto" : ""}`} aria-hidden={!carritoAbierto}>
+        <button
+          className="carrito-drawer-cerrar"
+          onClick={() => setCarritoAbierto(false)}
+          aria-label="Cerrar carrito"
+        >
+          <X size={18} />
+        </button>
+        <Carrito onCobrar={() => { setCarritoAbierto(false); setMostrarCobro(true) }} />
+      </aside>
+
+      {/* ---- FAB del carrito (esquina inferior derecha) ---- */}
+      {!carritoAbierto && (
+        <button
+          className="carrito-fab"
+          onClick={() => setCarritoAbierto(true)}
+          title="Ver carrito"
+        >
+          <ShoppingCart size={24} />
+          {numItems > 0 && <span className="carrito-fab-badge">{numItems}</span>}
+        </button>
+      )}
 
       {/* ---- Modal de cobro ---- */}
       {mostrarCobro && (

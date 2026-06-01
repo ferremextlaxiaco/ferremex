@@ -1,7 +1,10 @@
 import { useRef, useState } from "react"
+import { List } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
+import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
 import { formatMXN } from "../lib/format"
+import type { Paquete } from "../lib/client"
 
 interface CarritoProps {
   onCobrar: () => void
@@ -14,6 +17,8 @@ export function Carrito({ onCobrar }: CarritoProps) {
   // draft values while the user is typing (sku → string)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
+  // Paquete cuyo desglose se está viendo (reconstruido desde las líneas del carrito)
+  const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
 
   function startDraft(sku: string, current: number) {
     setDrafts((prev) => ({ ...prev, [sku]: String(current) }))
@@ -88,12 +93,38 @@ export function Carrito({ onCobrar }: CarritoProps) {
           {[...gruposPaquete.entries()].map(([pkgId, lineas]) => {
             const nombre = lineas[0]?.paquete_nombre ?? "Paquete"
             const totalPkg = lineas.reduce((s, l) => s + efectivoPrecio(l) * l.cantidad, 0)
+            // Cuántas copias del paquete hay en el carrito (para mostrar la
+            // composición por COPIA en el modal, no el total acumulado).
+            const copias = lineas[0]?.paqueteCantidad
+              ? Math.max(1, Math.round((lineas[0].cantidad ?? 0) / lineas[0].paqueteCantidad))
+              : 1
+            // Reconstruye un Paquete desde las líneas del carrito para el modal.
+            const verDesglose = () => setPaqueteDesglose({
+              id: pkgId,
+              nombre,
+              precio_paquete: totalPkg / copias,
+              componentes: lineas.map((l) => ({
+                sku: l.sku,
+                descripcion: l.descripcion,
+                cantidad: l.paqueteCantidad ?? l.cantidad,
+              })),
+              nivel_base: 1,
+              imagenes: [],
+              creado_en: "",
+            })
             return (
               <div key={pkgId} className="carrito-paquete">
                 <div className="carrito-paquete-head">
                   <span className="carrito-paquete-nombre">📦 {nombre}</span>
                   <div className="carrito-paquete-right">
                     <span className="carrito-paquete-total">{formatMXN(totalPkg)}</span>
+                    <button
+                      className="carrito-paquete-desglose-btn"
+                      onClick={verDesglose}
+                      title="Ver desglose del paquete"
+                    >
+                      <List size={13} /> Desglose
+                    </button>
                     <button
                       className="carrito-paquete-deshacer"
                       onClick={() => dispatch({ type: "REMOVE_PAQUETE", paqueteId: pkgId })}
@@ -102,15 +133,6 @@ export function Carrito({ onCobrar }: CarritoProps) {
                       Deshacer
                     </button>
                   </div>
-                </div>
-                <div className="carrito-paquete-comps">
-                  {lineas.map((l) => (
-                    <div key={l.sku} className="carrito-paquete-comp">
-                      <span className="carrito-paquete-comp-nombre">{l.descripcion}</span>
-                      <span className="carrito-paquete-comp-cant">×{l.cantidad}</span>
-                      <span className="carrito-paquete-comp-sub">{formatMXN(efectivoPrecio(l) * l.cantidad)}</span>
-                    </div>
-                  ))}
                 </div>
               </div>
             )
@@ -209,6 +231,9 @@ export function Carrito({ onCobrar }: CarritoProps) {
           </button>
         </div>
       </div>
+
+      {/* Modal de desglose del paquete */}
+      <DesglosePaqueteModal paquete={paqueteDesglose} onClose={() => setPaqueteDesglose(null)} />
     </div>
   )
 }

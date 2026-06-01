@@ -110,6 +110,63 @@ export function paquetesSugeridos(
   })
 }
 
+// ── Desglose para el modal (precio original vs prorrateado + imagen) ──────────
+
+export interface DesgloseComponente {
+  sku: string
+  descripcion: string
+  cantidad: number
+  thumbnail: string | null
+  precioOriginal: number      // P1 individual del artículo
+  precioProrrateado: number   // precio real que se cobra dentro del paquete
+  existencia: number
+}
+
+export interface DesglosePaquete {
+  componentes: DesgloseComponente[]
+  sumaOriginal: number        // Σ (precioOriginal × cantidad)
+  precioPaquete: number       // precio_paquete
+  ahorro: number              // sumaOriginal − precioPaquete (≥ 0)
+  ahorroPct: number           // % de ahorro sobre la suma original
+}
+
+/**
+ * Carga el desglose completo de un paquete para mostrarlo en el modal: cada
+ * componente con su imagen, cantidad, precio original (P1) y precio prorrateado
+ * (lo que realmente se cobra), más el resumen de ahorro. Reutiliza
+ * `resolverComponentes` + `prorratearPaquete` y agrega thumbnails del catálogo.
+ */
+export async function cargarDesglosePaquete(p: Paquete): Promise<DesglosePaquete> {
+  const arts = await Promise.all(p.componentes.map((c) => listarArticulos(c.sku)))
+  const mapa = new Map<string, ArticuloPOS>()
+  p.componentes.forEach((c, i) => {
+    const lista = arts[i]
+    const art = lista.find((a) => a.clave === c.sku || a.claveAlterna === c.sku) ?? lista[0]
+    if (art) mapa.set(c.sku, art)
+  })
+
+  const comps = resolverComponentes(p, mapa)
+  const lineas = prorratearPaquete(p, comps)
+  const prorrateadoPorSku = new Map(lineas.map((l) => [l.sku, l.precioProrrateado]))
+
+  const componentes: DesgloseComponente[] = comps.map((c) => ({
+    sku: c.sku,
+    descripcion: c.descripcion,
+    cantidad: c.cantidad,
+    thumbnail: mapa.get(c.sku)?.thumbnail ?? null,
+    precioOriginal: c.precioUnitario,
+    precioProrrateado: prorrateadoPorSku.get(c.sku) ?? 0,
+    existencia: c.existencia,
+  }))
+
+  const sumaOriginal = componentes.reduce((s, c) => s + c.precioOriginal * c.cantidad, 0)
+  const precioPaquete = p.precio_paquete
+  const ahorro = Math.max(0, sumaOriginal - precioPaquete)
+  const ahorroPct = sumaOriginal > 0 ? (ahorro / sumaOriginal) * 100 : 0
+
+  return { componentes, sumaOriginal, precioPaquete, ahorro, ahorroPct }
+}
+
 export type PrepararResultado =
   | { ok: true; lineas: LineaPaquete[] }
   | { ok: false; motivo: "sin_stock"; faltantes: string[] }
