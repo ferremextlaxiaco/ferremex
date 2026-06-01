@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react"
 import { listarArticulos, actualizarArticulo, incrementarInventario } from "../lib/client"
-import { loadProveedores, saveProveedores } from "../lib/proveedores"
+import { loadProveedores, agregarFactura } from "../lib/proveedores"
 import ComprasTable from "./ComprasTable"
 import ComprasDetailPanel from "./ComprasDetailPanel"
 
@@ -94,8 +94,6 @@ function articleToRow(art) {
 }
 
 // ── Datos de demostración ─────────────────────────────────────────────────────
-
-const PROVEEDOR_SEED = { id: "prov-001", nombre: "Truper" }
 
 const SEED_ROWS = [
   calcRow({
@@ -204,7 +202,19 @@ export default function ComprasModule() {
 
   const [rows,       setRows]       = useState(_initRows)
   const [selectedId, setSelectedId] = useState(_initRows[0]?._id ?? null)
-  const [proveedor,  setProveedor]  = useState(_primerVez ? PROVEEDOR_SEED : _inicial.proveedor)
+  // El proveedor se elige del catálogo real (BD). Ya no hay seed con id ficticio:
+  // el usuario debe seleccionar un proveedor del catálogo cargado async.
+  const [proveedor,  setProveedor]  = useState(_primerVez ? null : _inicial.proveedor)
+  const [proveedores, setProveedores] = useState([])
+
+  // Catálogo de proveedores desde la BD (módulo ferremex_proveedores).
+  useEffect(() => {
+    let activo = true
+    loadProveedores()
+      .then((lista) => { if (activo) setProveedores(lista) })
+      .catch(() => { if (activo) setProveedores([]) })
+    return () => { activo = false }
+  }, [])
   const [fecha,      setFecha]      = useState(_primerVez ? new Date().toISOString().slice(0, 10) : (_inicial.fecha ?? new Date().toISOString().slice(0, 10)))
   const [status,     setStatus]     = useState(_primerVez ? "borrador" : (_inicial.status ?? "borrador"))
   const [numFactura, setNumFactura] = useState(_primerVez ? "" : (_inicial.numFactura ?? ""))
@@ -458,28 +468,25 @@ export default function ComprasModule() {
     }
 
     if (pagoModal.formaPago === "credito" && proveedor) {
-      const lista = loadProveedores()
-      const nuevaFactura = {
-        id: uuid(),
+      // Registra la cuenta por pagar como factura del proveedor en la BD
+      // (módulo ferremex_proveedores), vía el subrecurso de facturas.
+      await agregarFactura(proveedor.id, {
         numero_factura: numFactura,
         fecha_emision:  fecha,
         dias_credito:   proveedor.dias_credito ?? 30,
         monto:          round2(total),
         descripcion:    `Compra de ${rows.length} artículo${rows.length !== 1 ? "s" : ""}`,
         pagada:         false,
-      }
-      const actualizada = lista.map((p) =>
-        p.id === proveedor.id
-          ? { ...p, facturas: [...(p.facturas ?? []), nuevaFactura] }
-          : p
-      )
-      saveProveedores(actualizada)
+      }).catch((err) => console.error("Error al registrar factura de proveedor:", err))
     }
     // Registrar en historial compartido con Consultar Compras
     const registroCompra = {
       id:       uuid(),
       folio:    numFactura.trim() || `COMP-${fecha}-${Date.now().toString().slice(-4)}`,
       proveedor: proveedor?.nombre ?? "",
+      // Etapa 2: enlace por ID real al catálogo (ferremex_proveedores). El nombre
+      // se conserva para mostrar/compatibilidad; el id es la referencia estable.
+      proveedorId: proveedor?.id ?? null,
       fecha,
       tipo:     "Factura",
       estado:   "Recibida",
@@ -1045,6 +1052,7 @@ export default function ComprasModule() {
           onRowChange={handleRowChange}
           onRowDelete={handleRowDelete}
           proveedor={proveedor}
+          proveedores={proveedores}
           onProveedorChange={setProveedor}
           fecha={fecha}
           onFechaChange={setFecha}

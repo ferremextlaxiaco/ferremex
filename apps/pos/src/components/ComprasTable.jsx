@@ -1,5 +1,4 @@
 import { useState } from "react"
-import { loadProveedores } from "../lib/proveedores"
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -48,9 +47,7 @@ const STATUS_META = {
 
 // ── Header: proveedor + fecha + status ────────────────────────────────────────
 
-function TableHeader({ proveedor, onProveedorChange, fecha, onFechaChange, numFactura, onNumFacturaChange }) {
-  const proveedores = loadProveedores()
-
+function TableHeader({ proveedor, proveedores, onProveedorChange, fecha, onFechaChange, numFactura, onNumFacturaChange }) {
   return (
     <div className="cpx-table-header">
       {/* Proveedor */}
@@ -179,7 +176,7 @@ function ArticleRow({ row, selected, onClick, onChange, onDelete, pendingDelete,
 
 export default function ComprasTable({
   rows, selectedId, onRowClick, onRowChange, onRowDelete,
-  proveedor, onProveedorChange,
+  proveedor, proveedores, onProveedorChange,
   fecha, onFechaChange,
   numFactura, onNumFacturaChange,
   status,
@@ -207,6 +204,7 @@ export default function ComprasTable({
       {/* Header: proveedor + fecha + status */}
       <TableHeader
         proveedor={proveedor}
+        proveedores={proveedores}
         onProveedorChange={onProveedorChange}
         fecha={fecha}
         onFechaChange={onFechaChange}

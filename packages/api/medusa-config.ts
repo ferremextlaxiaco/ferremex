@@ -34,6 +34,16 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-cartera",
     },
     {
+      // Catálogo de cajas físicas del POS (dato maestro compartido entre
+      // terminales). Antes en localStorage. Ver src/modules/ferremex-cajas.
+      resolve: "./src/modules/ferremex-cajas",
+    },
+    {
+      // Proveedores del POS + sus facturas por pagar (cuentas por pagar).
+      // Antes en localStorage. Ver src/modules/ferremex-proveedores.
+      resolve: "./src/modules/ferremex-proveedores",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

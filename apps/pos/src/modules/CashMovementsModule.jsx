@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { usePOS } from "../lib/pos-store";
-import { obtenerUsuarios, listarVentas, listarMovimientos, crearMovimiento } from "../lib/client";
+import { obtenerUsuarios, listarVentas, listarMovimientos, crearMovimiento, listarCajasAPI } from "../lib/client";
 import { formatMXN } from "../lib/format";
 import {
   PlusCircle, Store, User, Banknote, CreditCard, ArrowLeftRight, Star,
@@ -10,15 +10,9 @@ import {
 
 // ─── CONSTANTES ───────────────────────────────────────────────────────────────
 
-const LS_CAJAS = "pos_cajas_catalogo";
-const CAJAS_FALLBACK = [
-  { id: 1, nombre: "Caja Principal", activa: true },
-  { id: 2, nombre: "Caja 1",         activa: true },
-  { id: 3, nombre: "Caja Express",   activa: true },
-];
-function loadCajas() {
-  try { const s = localStorage.getItem(LS_CAJAS); return s ? JSON.parse(s) : CAJAS_FALLBACK; } catch { return CAJAS_FALLBACK; }
-}
+// El catálogo de cajas vive en la BD (módulo ferremex_cajas), compartido entre
+// terminales. Se carga vía listarCajasAPI(). Antes estaba en localStorage
+// (`pos_cajas_catalogo`), aislado por navegador; esa deuda quedó saldada.
 
 // Fecha de "hoy" calculada como función (no constante de módulo) para que una
 // terminal abierta pasada la medianoche no quede anclada al día anterior.
@@ -38,8 +32,12 @@ const todayStr = getTodayStr();
 
 function ventaToMovement(venta, cajerosList, cajasList) {
   const employee = cajerosList.find(u => u.nombre === venta.cajero);
-  const cajaNombre = employee?.caja ?? null;
-  const cajaObj = cajaNombre ? cajasList.find(c => c.nombre === cajaNombre) : null;
+  // La caja asignada al empleado viene como caja_id (BD). Resolvemos el objeto
+  // caja por id para obtener su nombre; si no hay asignación, queda sin caja.
+  const cajaObj = employee?.caja_id
+    ? cajasList.find(c => String(c.id) === String(employee.caja_id)) ?? null
+    : null;
+  const cajaNombre = cajaObj?.nombre ?? null;
 
   const fecha = new Date(venta.fecha);
   const timeStr = `${String(fecha.getHours()).padStart(2, "0")}:${String(fecha.getMinutes()).padStart(2, "0")}`;
@@ -584,14 +582,17 @@ export default function CashMovementsModule() {
   const [expandedId, setExpandedId] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [toasts, setToasts] = useState([]);
-  const [cajas, setCajas] = useState(loadCajas);
+  const [cajas, setCajas] = useState([]);
   const [cajeros, setCajeros] = useState([]);
 
-  // Cargar cajeros una sola vez al montar
+  // Cargar cajeros y catálogo de cajas una sola vez al montar (ambos de la BD).
   useEffect(() => {
     obtenerUsuarios()
       .then(users => setCajeros(users.filter(u => u.activo)))
       .catch(() => {});
+    listarCajasAPI()
+      .then(setCajas)
+      .catch(() => setCajas([]));
   }, []);
 
   // Cargar ventas reales + movimientos manuales cada vez que cambia el rango de

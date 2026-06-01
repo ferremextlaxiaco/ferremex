@@ -22,6 +22,10 @@ export interface PosUsuario {
   pin: string
   rol: "admin" | "supervisor" | "cajero"
   activo: boolean
+  // Caja asignada (id del catálogo ferremex_cajas). 0..1 por empleado.
+  // Reemplaza la vieja key localStorage `pos_cajas_asignaciones`. Opcional:
+  // un usuario sin caja asignada es válido.
+  caja_id?: string | null
   permisos: {
     puede_vender: boolean
     puede_cotizar: boolean
@@ -114,6 +118,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       pin: body.pin ?? "",
       rol: body.rol ?? "cajero",
       activo: body.activo ?? true,
+      caja_id: body.caja_id ?? null,
       permisos: body.permisos ?? {
         puede_vender: true,
         puede_cotizar: false,
@@ -192,3 +197,28 @@ export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
   if (error) { res.status(400).json({ error }); return }
   res.json({ ok: true })
 }
+
+/**
+ * Pone `caja_id = null` en todo usuario que tuviera asignada la caja `cajaId`.
+ * Lo usa DELETE /caja/cajas/:id para no dejar asignaciones colgando al borrar
+ * una caja del catálogo. Idempotente.
+ */
+export async function nulificarCajaEnUsuarios(cajaId: string): Promise<void> {
+  await updateJson<PosUsuario[]>(USUARIOS_FILE, DEFAULTS, (usuarios) =>
+    usuarios.map((u) => (u.caja_id === cajaId ? { ...u, caja_id: null } : u))
+  )
+}
+
+/** Asigna (o limpia con null) la caja de un usuario por id. Usado por el migrador. */
+export async function asignarCajaAUsuario(usuarioId: string, cajaId: string | null): Promise<boolean> {
+  let encontrado = false
+  await updateJson<PosUsuario[]>(USUARIOS_FILE, DEFAULTS, (usuarios) =>
+    usuarios.map((u) => {
+      if (u.id === usuarioId) { encontrado = true; return { ...u, caja_id: cajaId } }
+      return u
+    })
+  )
+  return encontrado
+}
+
+export { USUARIOS_FILE, DEFAULTS, cargarUsuarios }

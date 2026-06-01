@@ -1,5 +1,26 @@
 // ---------------------------------------------------------------------------
-// Tipos
+// FACHADA DE PROVEEDORES — async sobre la BD de Medusa (módulo ferremex_proveedores).
+//
+// FASE 3 (continuación): la persistencia migró de localStorage a la BD. Los
+// tipos y la lógica de negocio pura (vencimiento, semáforo) se conservan aquí;
+// el acceso a datos pasa por /caja/proveedores/* vía client.ts. Las funciones
+// `*Local` se conservan SOLO para el componente de migración
+// (MigracionProveedoresCajas), igual que en lib/clientes.ts.
+// ---------------------------------------------------------------------------
+
+import {
+  listarProveedoresAPI,
+  siguienteNumProveedorAPI,
+  crearProveedorAPI,
+  actualizarProveedorAPI,
+  eliminarProveedorAPI,
+  agregarFacturaAPI,
+  actualizarFacturaAPI,
+  eliminarFacturaAPI,
+} from "./client"
+
+// ---------------------------------------------------------------------------
+// Tipos (origen canónico — no cambian respecto a la versión localStorage)
 // ---------------------------------------------------------------------------
 
 export interface FacturaCredito {
@@ -27,27 +48,63 @@ export interface Proveedor {
 }
 
 // ---------------------------------------------------------------------------
-// Persistencia
+// Acceso a datos (async, BD) — espejo de lib/clientes.ts
 // ---------------------------------------------------------------------------
 
-export const STORAGE_KEY_PROVEEDORES = "pos_proveedores"
-
-export function loadProveedores(): Proveedor[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY_PROVEEDORES)
-    if (!raw) return PROVEEDORES_DEMO
-    return JSON.parse(raw) as Proveedor[]
-  } catch {
-    return PROVEEDORES_DEMO
-  }
+/** Carga todos los proveedores con sus facturas desde la BD. */
+export async function loadProveedores(): Promise<Proveedor[]> {
+  return listarProveedoresAPI()
 }
 
-export function saveProveedores(lista: Proveedor[]): void {
-  localStorage.setItem(STORAGE_KEY_PROVEEDORES, JSON.stringify(lista))
+/** Siguiente num_proveedor disponible (server-side). */
+export async function siguienteNumProveedorAsync(): Promise<string> {
+  return siguienteNumProveedorAPI()
+}
+
+/** Crea un proveedor (sin facturas). Devuelve el creado. */
+export async function crearProveedor(
+  data: Omit<Proveedor, "id" | "facturas">
+): Promise<Proveedor> {
+  return crearProveedorAPI(data)
+}
+
+/** Actualiza los datos generales de un proveedor. */
+export async function actualizarProveedor(
+  id: string,
+  data: Partial<Omit<Proveedor, "id" | "facturas">>
+): Promise<Proveedor> {
+  return actualizarProveedorAPI(id, data)
+}
+
+/** Elimina un proveedor (y sus facturas, en cascada server-side). */
+export async function eliminarProveedor(id: string): Promise<void> {
+  return eliminarProveedorAPI(id)
+}
+
+/** Agrega una factura por pagar a un proveedor. */
+export async function agregarFactura(
+  proveedorId: string,
+  factura: Omit<FacturaCredito, "id">
+): Promise<FacturaCredito> {
+  return agregarFacturaAPI(proveedorId, factura)
+}
+
+/** Actualiza una factura (incluye marcar pagada). */
+export async function actualizarFactura(
+  proveedorId: string,
+  facturaId: string,
+  data: Partial<Omit<FacturaCredito, "id">>
+): Promise<FacturaCredito> {
+  return actualizarFacturaAPI(proveedorId, facturaId, data)
+}
+
+/** Elimina una factura. */
+export async function eliminarFactura(proveedorId: string, facturaId: string): Promise<void> {
+  return eliminarFacturaAPI(proveedorId, facturaId)
 }
 
 // ---------------------------------------------------------------------------
-// Autoincremento
+// Autoincremento (puro — usado por la migración y como utilidad de cálculo)
 // ---------------------------------------------------------------------------
 
 export function siguienteNumProveedor(proveedores: Proveedor[]): string {
@@ -62,7 +119,7 @@ export function siguienteNumProveedor(proveedores: Proveedor[]): string {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers de fechas y estado
+// Helpers de fechas y estado (lógica de negocio PURA — se queda en el cliente)
 // ---------------------------------------------------------------------------
 
 export function diasRestantes(factura: FacturaCredito): number {
@@ -98,114 +155,31 @@ export function fmtFecha(iso: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Datos de demostración
+// localStorage legacy — SOLO para el componente de migración
+// (MigracionProveedoresCajas). Espejo de los helpers *Local de lib/clientes.ts.
 // ---------------------------------------------------------------------------
 
-function resta(days: number): string {
-  const d = new Date()
-  d.setDate(d.getDate() - days)
-  return d.toISOString().slice(0, 10)
+export const STORAGE_KEY_PROVEEDORES = "pos_proveedores"
+export const STORAGE_KEY_MIGRADO_PROV_CAJAS = "pos_migrado_proveedores_cajas_v1"
+
+/** Lee los proveedores guardados en localStorage (datos pre-migración). */
+export function loadProveedoresLocal(): Proveedor[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY_PROVEEDORES)
+    if (!raw) return []
+    return JSON.parse(raw) as Proveedor[]
+  } catch {
+    return []
+  }
 }
 
-export const PROVEEDORES_DEMO: Proveedor[] = [
-  {
-    id: "prov-001",
-    num_proveedor: "001",
-    nombre: "Truper",
-    contacto: "Lic. María González",
-    telefono: "55 1234 5678",
-    email: "ventas@truper.com",
-    dias_credito: 30,
-    limite_credito: 50000,
-    rfc: "TRU850312KJ4",
-    notas: "Línea de herramientas. Pedido mínimo $5,000.",
-    facturas: [
-      {
-        id: "f-001",
-        numero_factura: "TRP-2025-1123",
-        fecha_emision: resta(25),
-        dias_credito: 30,
-        monto: 12500,
-        descripcion: "Herramientas de mano surtidas",
-        pagada: false,
-      },
-      {
-        id: "f-002",
-        numero_factura: "TRP-2025-0998",
-        fecha_emision: resta(55),
-        dias_credito: 30,
-        monto: 8000,
-        descripcion: "Sierras y serruchos",
-        pagada: true,
-      },
-    ],
-  },
-  {
-    id: "prov-002",
-    num_proveedor: "002",
-    nombre: "Urrea Herramientas",
-    contacto: "Ing. Carlos Ramos",
-    telefono: "33 8765 4321",
-    email: "credito@urrea.net",
-    dias_credito: 45,
-    limite_credito: 30000,
-    rfc: "URR920703BBB",
-    notas: "Herramientas de precisión y profesionales.",
-    facturas: [
-      {
-        id: "f-003",
-        numero_factura: "URR-2025-0452",
-        fecha_emision: resta(10),
-        dias_credito: 45,
-        monto: 7200,
-        descripcion: "Llaves y desarmadores profesionales",
-        pagada: false,
-      },
-    ],
-  },
-  {
-    id: "prov-003",
-    num_proveedor: "003",
-    nombre: "Copperpipe S.A.",
-    contacto: "Sr. Juan Pérez",
-    telefono: "55 9900 1122",
-    email: "ventas@copperpipe.mx",
-    dias_credito: 15,
-    limite_credito: 20000,
-    rfc: "CPP011015CCC",
-    notas: "Tubería de cobre y conexiones. Pago puntual requerido.",
-    facturas: [
-      {
-        id: "f-004",
-        numero_factura: "CPP-2025-0301",
-        fecha_emision: resta(14),
-        dias_credito: 15,
-        monto: 4500,
-        descripcion: 'Tubería 1/2" y 3/4"',
-        pagada: false,
-      },
-      {
-        id: "f-005",
-        numero_factura: "CPP-2025-0278",
-        fecha_emision: resta(18),
-        dias_credito: 15,
-        monto: 3200,
-        descripcion: "Conexiones y codos de cobre",
-        pagada: false,
-      },
-    ],
-  },
-  {
-    id: "prov-004",
-    num_proveedor: "004",
-    nombre: "Pretul",
-    contacto: "Sra. Laura Mendoza",
-    telefono: "33 3000 4500",
-    email: "distribuidores@pretul.com",
-    dias_credito: 30,
-    limite_credito: 25000,
-    rfc: "PRE780601DDD",
-    notas: "Ferretería en general, candados y seguridad.",
-    facturas: [],
-  },
-]
+/** True si hay proveedores en localStorage aún no migrados. */
+export function hayProveedoresLocalesSinMigrar(): boolean {
+  if (localStorage.getItem(STORAGE_KEY_MIGRADO_PROV_CAJAS) === "1") return false
+  return loadProveedoresLocal().length > 0
+}
+
+/** Marca la migración de proveedores/cajas como completada. */
+export function marcarMigradoProvCajas(): void {
+  localStorage.setItem(STORAGE_KEY_MIGRADO_PROV_CAJAS, "1")
+}

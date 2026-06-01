@@ -849,3 +849,121 @@ export async function migrarLocalStorageAPI(dump: MigracionDump): Promise<{ ok: 
     body: JSON.stringify(dump),
   })
 }
+
+// ── Cajas (módulo ferremex_cajas) ─────────────────────────────────────────────
+
+import type { Proveedor, FacturaCredito } from "./proveedores"
+
+export interface CajaAPI {
+  id: string
+  nombre: string
+  descripcion: string | null
+  activa: boolean
+}
+
+export async function listarCajasAPI(): Promise<CajaAPI[]> {
+  return apiFetch<CajaAPI[]>("/caja/cajas")
+}
+
+export async function crearCajaAPI(
+  caja: { nombre: string; descripcion?: string | null; activa?: boolean }
+): Promise<CajaAPI> {
+  return apiFetch<CajaAPI>("/caja/cajas", { method: "POST", body: JSON.stringify(caja) })
+}
+
+export async function actualizarCajaAPI(
+  id: string,
+  caja: Partial<{ nombre: string; descripcion: string | null; activa: boolean }>
+): Promise<CajaAPI> {
+  return apiFetch<CajaAPI>(`/caja/cajas/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(caja),
+  })
+}
+
+export async function eliminarCajaAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/cajas/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ── Proveedores + facturas (módulo ferremex_proveedores) ──────────────────────
+
+export async function listarProveedoresAPI(): Promise<Proveedor[]> {
+  return apiFetch<Proveedor[]>("/caja/proveedores")
+}
+
+export async function siguienteNumProveedorAPI(): Promise<string> {
+  const r = await apiFetch<{ num_proveedor: string }>("/caja/proveedores?siguiente-num=1")
+  return r.num_proveedor
+}
+
+/** Crea un proveedor (sin sus facturas; éstas se agregan por separado). */
+export async function crearProveedorAPI(
+  prov: Omit<Proveedor, "id" | "facturas">
+): Promise<Proveedor> {
+  return apiFetch<Proveedor>("/caja/proveedores", { method: "POST", body: JSON.stringify(prov) })
+}
+
+export async function actualizarProveedorAPI(
+  id: string,
+  prov: Partial<Omit<Proveedor, "id" | "facturas">>
+): Promise<Proveedor> {
+  return apiFetch<Proveedor>(`/caja/proveedores/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(prov),
+  })
+}
+
+export async function eliminarProveedorAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/proveedores/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+export async function agregarFacturaAPI(
+  proveedorId: string,
+  factura: Omit<FacturaCredito, "id">
+): Promise<FacturaCredito> {
+  return apiFetch<FacturaCredito>(`/caja/proveedores/${encodeURIComponent(proveedorId)}/facturas`, {
+    method: "POST",
+    body: JSON.stringify(factura),
+  })
+}
+
+export async function actualizarFacturaAPI(
+  proveedorId: string,
+  facturaId: string,
+  factura: Partial<Omit<FacturaCredito, "id">>
+): Promise<FacturaCredito> {
+  return apiFetch<FacturaCredito>(
+    `/caja/proveedores/${encodeURIComponent(proveedorId)}/facturas/${encodeURIComponent(facturaId)}`,
+    { method: "PUT", body: JSON.stringify(factura) }
+  )
+}
+
+export async function eliminarFacturaAPI(proveedorId: string, facturaId: string): Promise<void> {
+  await apiFetch(
+    `/caja/proveedores/${encodeURIComponent(proveedorId)}/facturas/${encodeURIComponent(facturaId)}`,
+    { method: "DELETE" }
+  )
+}
+
+// ── Migración one-shot proveedores + cajas → BD ───────────────────────────────
+
+export interface MigracionProvCajasResumen {
+  proveedores_creados: number
+  proveedores_omitidos: number
+  facturas: number
+  cajas_creadas: number
+  cajas_omitidas: number
+  asignaciones_aplicadas: number
+  huerfanos: string[]
+}
+
+export async function migrarProveedoresCajasAPI(dump: {
+  proveedores?: Proveedor[]
+  cajas?: { id?: string | number; nombre: string; descripcion?: string | null; activa?: boolean }[]
+  asignaciones?: Record<string, string>
+}): Promise<{ ok: boolean; resumen: MigracionProvCajasResumen }> {
+  return apiFetch("/caja/migrar-proveedores-cajas", {
+    method: "POST",
+    body: JSON.stringify(dump),
+  })
+}

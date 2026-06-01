@@ -3,32 +3,23 @@ import {
   UserPlus, Search, ArrowLeftRight, MoreVertical, UserCog,
   Eye, EyeOff, PlusCircle, AlertTriangle,
 } from "lucide-react"
-import { obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario } from "../lib/client"
+import {
+  obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario,
+  listarCajasAPI, crearCajaAPI, actualizarCajaAPI, eliminarCajaAPI,
+} from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const INIT_REGISTERS = [
-  { id: 1, nombre: "Caja Principal", descripcion: "Caja principal del mostrador",       activa: true  },
-  { id: 2, nombre: "Caja 1",         descripcion: "",                                   activa: true  },
-  { id: 3, nombre: "Caja Express",   descripcion: "Para ventas rápidas menores a $500", activa: true  },
-  { id: 4, nombre: "Caja Bodega",    descripcion: "Fuera de servicio",                  activa: false },
-]
-
-const LS_REGISTERS  = "pos_cajas_catalogo"
-const LS_ASIGNACION = "pos_cajas_asignaciones"
-
-function loadRegisters() {
-  try { const s = localStorage.getItem(LS_REGISTERS);  return s ? JSON.parse(s) : INIT_REGISTERS } catch { return INIT_REGISTERS }
-}
-function loadAsignaciones() {
-  try { const s = localStorage.getItem(LS_ASIGNACION); return s ? JSON.parse(s) : {} } catch { return {} }
-}
-function saveAsignaciones(employees) {
-  const map = {}
-  employees.forEach(e => { if (e.caja) map[e.id] = e.caja })
-  localStorage.setItem(LS_ASIGNACION, JSON.stringify(map))
-}
+// El catálogo de cajas (registers) y la asignación caja↔empleado viven en la BD:
+//  - Catálogo: módulo ferremex_cajas, vía /caja/cajas (listarCajasAPI y CRUD).
+//  - Asignación: campo `caja_id` del usuario (/caja/usuarios), persistido con
+//    actualizarUsuario. Antes ambos vivían en localStorage (`pos_cajas_catalogo`,
+//    `pos_cajas_asignaciones`), aislados por terminal; esa deuda quedó saldada.
+//
+// En el estado de este componente, `employee.caja` sigue siendo el NOMBRE de la
+// caja (la UI trabaja con nombres). Al cargar se resuelve caja_id→nombre; al
+// guardar se traduce nombre→caja_id antes de persistir.
 
 const ROL_PERMISOS_DEFAULT = {
   admin:      { puede_vender: true,  puede_cotizar: true,  puede_anular: true,  puede_ver_corte: true,  puede_ver_admin: true  },
@@ -522,7 +513,7 @@ function TabInfo({ form, setForm, employees, original }) {
 
 // ── Tab: Cajas ─────────────────────────────────────────────────────────────────
 
-function TabCajas({ form, setForm, employees, setEmployees, registers, setRegisters }) {
+function TabCajas({ form, setForm, employees, setEmployees, registers, setRegisters, pushToast }) {
   const [editingId, setEditingId]             = useState(null)
   const [editBuf, setEditBuf]                 = useState({})
   const [addingNew, setAddingNew]             = useState(false)
@@ -530,21 +521,32 @@ function TabCajas({ form, setForm, employees, setEmployees, registers, setRegist
   const [deleteConfirmId, setDeleteConfirmId] = useState(null)
 
   function startEdit(reg) { setEditingId(reg.id); setEditBuf({ nombre: reg.nombre, descripcion: reg.descripcion, activa: reg.activa }); setAddingNew(false) }
-  function saveEdit() {
+  async function saveEdit() {
     if (!editBuf.nombre.trim()) return
-    setRegisters(rs => rs.map(r => r.id === editingId ? { ...r, ...editBuf, nombre: editBuf.nombre.trim() } : r))
-    setEditingId(null)
+    const nombre = editBuf.nombre.trim()
+    try {
+      await actualizarCajaAPI(editingId, { nombre, descripcion: editBuf.descripcion ?? "", activa: editBuf.activa })
+      setRegisters(rs => rs.map(r => r.id === editingId ? { ...r, ...editBuf, nombre } : r))
+      setEditingId(null)
+    } catch (err) { pushToast?.(err?.message || "No se pudo guardar la caja", "error") }
   }
-  function saveNew() {
+  async function saveNew() {
     if (!newBuf.nombre.trim()) return
-    setRegisters(rs => [...rs, { id: Date.now(), nombre: newBuf.nombre.trim(), descripcion: newBuf.descripcion.trim(), activa: true }])
-    setAddingNew(false); setNewBuf({ nombre: "", descripcion: "" })
+    try {
+      const creada = await crearCajaAPI({ nombre: newBuf.nombre.trim(), descripcion: newBuf.descripcion.trim() })
+      setRegisters(rs => [...rs, creada])
+      setAddingNew(false); setNewBuf({ nombre: "", descripcion: "" })
+    } catch (err) { pushToast?.(err?.message || "No se pudo crear la caja", "error") }
   }
-  function deleteRegister(reg) {
-    setRegisters(rs => rs.filter(r => r.id !== reg.id))
-    if (form.caja === reg.nombre) setForm(f => ({ ...f, caja: null }))
-    setEmployees(es => es.map(e => e.caja === reg.nombre ? { ...e, caja: null } : e))
-    setDeleteConfirmId(null)
+  async function deleteRegister(reg) {
+    try {
+      // El backend nulifica caja_id en los usuarios que tenían esta caja.
+      await eliminarCajaAPI(reg.id)
+      setRegisters(rs => rs.filter(r => r.id !== reg.id))
+      if (form.caja === reg.nombre) setForm(f => ({ ...f, caja: null }))
+      setEmployees(es => es.map(e => e.caja === reg.nombre ? { ...e, caja_id: null, caja: null } : e))
+      setDeleteConfirmId(null)
+    } catch (err) { pushToast?.(err?.message || "No se pudo eliminar la caja", "error") }
   }
 
   const sorted       = [...registers.filter(r => r.activa), ...registers.filter(r => !r.activa)]
@@ -761,7 +763,7 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         {tab === "info"     && <TabInfo form={form} setForm={setForm} employees={employees} original={original} />}
-        {tab === "cajas"    && <TabCajas form={form} setForm={setForm} employees={employees} setEmployees={setEmployees} registers={registers} setRegisters={setRegisters} />}
+        {tab === "cajas"    && <TabCajas form={form} setForm={setForm} employees={employees} setEmployees={setEmployees} registers={registers} setRegisters={setRegisters} pushToast={pushToast} />}
         {tab === "permisos" && <TabPermisos form={form} setForm={setForm} />}
       </div>
 
@@ -787,7 +789,7 @@ const NEW_EMP = {
 
 export default function EmployeesModule() {
   const [employees, setEmployees] = useState([])
-  const [registers, setRegisters] = useState(loadRegisters)
+  const [registers, setRegisters] = useState([])
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [selected, setSelected]   = useState(null)
@@ -806,17 +808,28 @@ export default function EmployeesModule() {
 
   useEffect(() => { load() }, [])
 
-  useEffect(() => {
-    localStorage.setItem(LS_REGISTERS, JSON.stringify(registers))
-  }, [registers])
+  /** nombre de caja a partir de su id (resuelto contra el catálogo cargado). */
+  function nombreDeCaja(cajaId, cajas) {
+    if (!cajaId) return null
+    return cajas.find(c => String(c.id) === String(cajaId))?.nombre ?? null
+  }
+  /** caja_id a partir de su nombre (para persistir la asignación). */
+  function idDeCaja(nombre) {
+    if (!nombre) return null
+    return registers.find(c => c.nombre === nombre)?.id ?? null
+  }
 
   async function load() {
     setLoading(true)
     try {
-      // Modo admin: incluye el pin (con token admin) para validar duplicados.
-      const users = await obtenerUsuarios(true)
-      const asignaciones = loadAsignaciones()
-      setEmployees(users.map(u => ({ ...u, caja: asignaciones[u.id] ?? null })))
+      // Catálogo de cajas + usuarios (modo admin: incluye pin con token admin
+      // para validar duplicados). La asignación viaja en u.caja_id.
+      const [cajas, users] = await Promise.all([
+        listarCajasAPI().catch(() => []),
+        obtenerUsuarios(true),
+      ])
+      setRegisters(cajas)
+      setEmployees(users.map(u => ({ ...u, caja: nombreDeCaja(u.caja_id, cajas) })))
     } catch {
       pushToast("Error al cargar empleados", "error")
     } finally {
@@ -845,22 +858,26 @@ export default function EmployeesModule() {
 
   async function handleSave(form) {
     const { pinConfirm: _, caja: formCaja, ...apiData } = form
+    const cajaId = idDeCaja(formCaja)
     setSaving(true)
     try {
       if (isNew) {
-        const created = await crearUsuario(apiData)
-        setEmployees(es => {
-          const next = [...es, { ...created, caja: formCaja ?? null }]
-          saveAsignaciones(next)
-          return next
-        })
+        // Crear el usuario con su caja en un solo POST (el endpoint acepta caja_id).
+        const created = await crearUsuario({ ...apiData, caja_id: cajaId })
+        setEmployees(es => [...es, { ...created, caja_id: cajaId, caja: formCaja ?? null }])
         setSelected(created.id); setIsNew(false)
       } else {
-        const updated = await actualizarUsuario(apiData)
+        // Persistir datos + asignación de caja en un solo PUT.
+        const updated = await actualizarUsuario({ ...apiData, caja_id: cajaId })
+        // Una caja = 0..1 empleado: si este toma una caja ya asignada a otro,
+        // se la quitamos al otro (server + estado).
+        if (cajaId) {
+          const previo = employees.find(e => e.id !== updated.id && e.caja === formCaja)
+          if (previo) await actualizarUsuario({ ...previo, caja_id: null }).catch(() => {})
+        }
         setEmployees(es => {
-          let next = es.map(e => e.id === updated.id ? { ...updated, caja: formCaja ?? e.caja } : e)
-          if (formCaja) next = next.map(e => e.id !== updated.id && e.caja === formCaja ? { ...e, caja: null } : e)
-          saveAsignaciones(next)
+          let next = es.map(e => e.id === updated.id ? { ...updated, caja_id: cajaId, caja: formCaja ?? e.caja } : e)
+          if (formCaja) next = next.map(e => e.id !== updated.id && e.caja === formCaja ? { ...e, caja_id: null, caja: null } : e)
           return next
         })
       }
@@ -896,11 +913,7 @@ export default function EmployeesModule() {
     }
     try {
       await eliminarUsuario(emp.id)
-      setEmployees(es => {
-        const next = es.filter(e => e.id !== emp.id)
-        saveAsignaciones(next)
-        return next
-      })
+      setEmployees(es => es.filter(e => e.id !== emp.id))
       if (selected === emp.id) { setSelected(null); setIsNew(false) }
       pushToast("Empleado eliminado")
     } catch (err) {
@@ -908,18 +921,22 @@ export default function EmployeesModule() {
     }
   }
 
-  function handleReassign(empId, newCaja, owner) {
-    setEmployees(es => {
-      const next = es.map(e => {
-        if (e.id === empId) return { ...e, caja: newCaja }
-        if (owner && e.id === owner.id) return { ...e, caja: null }
+  async function handleReassign(empId, newCaja, owner) {
+    const cajaId = idDeCaja(newCaja)
+    try {
+      const emp = employees.find(e => e.id === empId)
+      if (emp) await actualizarUsuario({ ...emp, caja_id: cajaId })
+      if (owner) await actualizarUsuario({ ...owner, caja_id: null }).catch(() => {})
+      setEmployees(es => es.map(e => {
+        if (e.id === empId) return { ...e, caja_id: cajaId, caja: newCaja }
+        if (owner && e.id === owner.id) return { ...e, caja_id: null, caja: null }
         return e
-      })
-      saveAsignaciones(next)
-      return next
-    })
-    const empName = employees.find(e => e.id === empId)?.nombre.split(" ")[0] ?? ""
-    pushToast(`Caja reasignada a ${empName} ✓`)
+      }))
+      const empName = employees.find(e => e.id === empId)?.nombre.split(" ")[0] ?? ""
+      pushToast(`Caja reasignada a ${empName} ✓`)
+    } catch (err) {
+      pushToast(err?.message || "Error al reasignar", "error")
+    }
     setReassignData(null)
   }
 

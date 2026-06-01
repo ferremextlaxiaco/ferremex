@@ -257,7 +257,8 @@ function MisPedidos({ pedidos, onStatusChange, onVerOC }) {
 // ── Main module ───────────────────────────────────────────────────────────────
 
 export default function PedidosModule() {
-  const [proveedores,  setProveedores]  = useState(() => loadProveedores())
+  // Catálogo de proveedores desde la BD (módulo ferremex_proveedores), cargado async.
+  const [proveedores,  setProveedores]  = useState([])
   const [activeTab,    setActiveTab]    = useState("nuevo")
   const [rows,        setRows]        = useState(() => loadDraft()?.rows      ?? [])
   const [freeItems,   setFreeItems]   = useState(() => loadDraft()?.freeItems ?? [])
@@ -290,11 +291,14 @@ export default function PedidosModule() {
     localStorage.setItem("ferremex_pedidos_espera", JSON.stringify(espera))
   }, [espera])
 
-  // Cargar "Mis Pedidos" desde el backend al montar.
+  // Cargar "Mis Pedidos" + catálogo de proveedores desde el backend al montar.
   useEffect(() => {
     listarPedidos()
       .then(setPedidos)
       .catch(() => showToast("Error al cargar pedidos", "error"))
+    loadProveedores()
+      .then(setProveedores)
+      .catch(() => setProveedores([]))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 

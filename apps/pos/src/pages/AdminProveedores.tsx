@@ -1,23 +1,22 @@
 import { useState, useEffect, useRef } from "react"
-
-function uuid(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = Math.random() * 16 | 0
-    return (c === "x" ? r : (r & 0x3 | 0x8)).toString(16)
-  })
-}
 import {
   type Proveedor,
   type FacturaCredito,
   type EstadoFactura,
   loadProveedores,
-  saveProveedores,
-  siguienteNumProveedor,
+  siguienteNumProveedorAsync,
+  crearProveedor,
+  actualizarProveedor,
+  eliminarProveedor,
+  agregarFactura,
+  actualizarFactura,
+  eliminarFactura,
   diasRestantes,
   estadoFactura as calcEstado,
   fechaVencimientoISO,
   fmtFecha,
 } from "../lib/proveedores"
+import { MigracionProveedoresCajas } from "../components/MigracionProveedoresCajas"
 
 // ── Etiquetas de estado ───────────────────────────────────────────────────────
 
@@ -379,7 +378,8 @@ function FacturaModal({
 // ── Componente principal ──────────────────────────────────────────────────────
 
 export function AdminProveedores() {
-  const [proveedores, setProveedores] = useState<Proveedor[]>(loadProveedores)
+  const [proveedores, setProveedores] = useState<Proveedor[]>([])
+  const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerMode, setDrawerMode] = useState<"add" | "edit">("add")
@@ -390,6 +390,31 @@ export function AdminProveedores() {
 
   const selected = proveedores.find((p) => p.id === selectedId) ?? null
 
+  // Carga inicial desde la BD.
+  useEffect(() => {
+    let activo = true
+    ;(async () => {
+      try {
+        const lista = await loadProveedores()
+        if (activo) setProveedores(lista)
+      } catch (e) {
+        console.error("[AdminProveedores] carga inicial:", e)
+      } finally {
+        if (activo) setLoading(false)
+      }
+    })()
+    return () => { activo = false }
+  }, [])
+
+  /** Recarga la lista completa desde la BD (la verdad vive en el servidor). */
+  async function refrescar() {
+    try {
+      setProveedores(await loadProveedores())
+    } catch (e) {
+      console.error("[AdminProveedores] refrescar:", e)
+    }
+  }
+
   const filtrados = search.trim()
     ? proveedores.filter(
         (p) =>
@@ -399,15 +424,14 @@ export function AdminProveedores() {
       )
     : proveedores
 
-  function guardar(lista: Proveedor[]) {
-    saveProveedores(lista)
-    setProveedores(lista)
-  }
-
   // ── CRUD proveedores ──────────────────────────────────────────────────────
 
-  function abrirNuevo() {
-    setDefaultNum(siguienteNumProveedor(proveedores))
+  async function abrirNuevo() {
+    try {
+      setDefaultNum(await siguienteNumProveedorAsync())
+    } catch {
+      setDefaultNum("")
+    }
     setDrawerMode("add")
     setDrawerOpen(true)
   }
@@ -417,77 +441,87 @@ export function AdminProveedores() {
     setDrawerOpen(true)
   }
 
-  function handleSaveProveedor(data: ProvForm & { id?: string }) {
-    if (data.id) {
-      guardar(proveedores.map((p) => (p.id === data.id ? { ...p, ...data } : p)))
-    } else {
-      const nuevo: Proveedor = { ...data, id: uuid(), facturas: [] }
-      guardar(
-        [...proveedores, nuevo].sort((a, b) =>
-          a.nombre.localeCompare(b.nombre, "es")
-        )
-      )
-      setSelectedId(nuevo.id)
+  async function handleSaveProveedor(data: ProvForm & { id?: string }) {
+    try {
+      if (data.id) {
+        const { id, ...rest } = data
+        await actualizarProveedor(id, rest)
+        await refrescar()
+      } else {
+        const creado = await crearProveedor(data)
+        await refrescar()
+        setSelectedId(creado.id)
+      }
+      setDrawerOpen(false)
+    } catch (e) {
+      console.error("[AdminProveedores] guardar proveedor:", e)
+      alert("No se pudo guardar el proveedor. Revisa los datos e inténtalo de nuevo.")
     }
-    setDrawerOpen(false)
   }
 
   function handleEliminar() {
     if (!selected) return
+    const id = selected.id
     setConfirmModal({
       mensaje: `¿Eliminar al proveedor "${selected.nombre}"? Esta acción no se puede deshacer.`,
-      onAceptar: () => { guardar(proveedores.filter((p) => p.id !== selectedId)); setSelectedId(null) },
+      onAceptar: async () => {
+        try {
+          await eliminarProveedor(id)
+          setSelectedId(null)
+          await refrescar()
+        } catch (e) {
+          console.error("[AdminProveedores] eliminar proveedor:", e)
+          alert("No se pudo eliminar el proveedor.")
+        }
+      },
     })
   }
 
   // ── CRUD facturas ─────────────────────────────────────────────────────────
 
-  function handleSaveFactura(data: Omit<FacturaCredito, "id"> & { id?: string }) {
+  async function handleSaveFactura(data: Omit<FacturaCredito, "id"> & { id?: string }) {
     if (!selected) return
-    let nuevas: FacturaCredito[]
-    if (data.id) {
-      nuevas = selected.facturas.map((f) =>
-        f.id === data.id ? { ...f, ...data } : f
-      )
-    } else {
-      nuevas = [...selected.facturas, { ...data, id: uuid() }]
+    try {
+      if (data.id) {
+        const { id, ...rest } = data
+        await actualizarFactura(selected.id, id, rest)
+      } else {
+        await agregarFactura(selected.id, data)
+      }
+      await refrescar()
+      setFacturaModal(null)
+    } catch (e) {
+      console.error("[AdminProveedores] guardar factura:", e)
+      alert("No se pudo guardar la factura.")
     }
-    guardar(
-      proveedores.map((p) =>
-        p.id === selected.id ? { ...p, facturas: nuevas } : p
-      )
-    )
-    setFacturaModal(null)
   }
 
   function handleEliminarFactura(facturaId: string) {
     if (!selected) return
+    const provId = selected.id
     setConfirmModal({
       mensaje: "¿Eliminar esta factura a crédito? Esta acción no se puede deshacer.",
-      onAceptar: () => guardar(
-        proveedores.map((p) =>
-          p.id === selected.id
-            ? { ...p, facturas: p.facturas.filter((f) => f.id !== facturaId) }
-            : p
-        )
-      ),
+      onAceptar: async () => {
+        try {
+          await eliminarFactura(provId, facturaId)
+          await refrescar()
+        } catch (e) {
+          console.error("[AdminProveedores] eliminar factura:", e)
+          alert("No se pudo eliminar la factura.")
+        }
+      },
     })
   }
 
-  function handleMarcarPagada(facturaId: string) {
+  async function handleMarcarPagada(facturaId: string) {
     if (!selected) return
-    guardar(
-      proveedores.map((p) =>
-        p.id === selected.id
-          ? {
-              ...p,
-              facturas: p.facturas.map((f) =>
-                f.id === facturaId ? { ...f, pagada: true } : f
-              ),
-            }
-          : p
-      )
-    )
+    try {
+      await actualizarFactura(selected.id, facturaId, { pagada: true })
+      await refrescar()
+    } catch (e) {
+      console.error("[AdminProveedores] marcar pagada:", e)
+      alert("No se pudo marcar la factura como pagada.")
+    }
   }
 
   // ── Resumen saldo ─────────────────────────────────────────────────────────
@@ -551,6 +585,9 @@ export function AdminProveedores() {
       )}
 
       <div className="apv-root">
+        {/* Banner de migración one-shot proveedores+cajas → BD (solo si hay datos locales) */}
+        <MigracionProveedoresCajas />
+
         {/* Header */}
         <div className="apv-header">
           <div>
@@ -589,7 +626,9 @@ export function AdminProveedores() {
 
           {/* Lista izquierda */}
           <div className="apv-list">
-            {filtrados.length === 0 ? (
+            {loading ? (
+              <p className="apv-empty">Cargando proveedores…</p>
+            ) : filtrados.length === 0 ? (
               <p className="apv-empty">
                 {search
                   ? `Sin resultados para "${search}"`

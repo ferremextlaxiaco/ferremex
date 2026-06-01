@@ -4,7 +4,7 @@
 > `MEMORIA_INSTALACIÓN.md` (estado por fases/infra, mantenido por el skill `actualizador`).
 > **Actualiza este archivo al cierre de cada sesión** (regla abajo). Convierte fechas relativas a absolutas.
 >
-> Última actualización: **2026-05-30**
+> Última actualización: **2026-05-31**
 
 ---
 
@@ -44,15 +44,15 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 ## Active Queues
 
 ### Pendientes de producto (priorizados)
-1. **Proveedores/Cajas → BD (Fase 3 continuación):** migrar `pos_proveedores` y `pos_cajas_*` de localStorage a BD Medusa. Actualmente aislados por terminal.
-2. **Compras (recepción) → inventario:** recibir una OC debe poder incrementar inventario vía `incrementarInventario()`.
-3. **Empleados/Cajas ↔ Corte:** vincular asignaciones de caja al cierre de turno (`/caja/corte`). Hoy son áreas separadas.
+1. **Compras (recepción) → inventario:** recibir una OC debe poder incrementar inventario vía `incrementarInventario()`.
+2. **Empleados/Cajas ↔ Corte:** vincular asignaciones de caja al cierre de turno (`/caja/corte`). Ahora que las cajas viven en BD (`ferremex_cajas`) y la asignación es `caja_id` del usuario, esto quedó habilitado pero no implementado.
+3. **Aprovechar `proveedorId` en consultas:** ahora compras y pedidos guardan `proveedorId` real; se puede filtrar historial de compras/pedidos por proveedor del catálogo, o mostrar "compras de este proveedor" desde AdminProveedores (mejora, no urgente).
 
 ### Deuda técnica abierta
 - **Race condition en venta:** `/caja/ventas` POST valida stock y luego descuenta sin transacción atómica (check→decrement). Riesgo de sobreventa concurrente.
 - **Sin auth/RBAC en `/caja/*`:** las rutas confían en token POS; los permisos de usuario se cargan pero no se validan server-side para operaciones específicas.
 - **Sin auditoría de cambios:** no se registra quién editó qué (artículos, precios, taxonomía, límites de crédito).
-- **localStorage por terminal:** proveedores/cajas aún viven aislados por navegador (clientes/cartera ya migrados).
+- **localStorage por terminal (residual):** solo quedan movimientos manuales de caja diarios y borradores de PedidosModule. Proveedores, cajas, clientes y cartera ya migrados a BD.
 
 ### Calidad del harness
 - Hooks de memoria de sesión instalados (session-start/end). Pendiente opcional: hooks de calidad (typecheck/format/config-protection) — documentados en `HARNESS-SUMMARY.md`.
@@ -82,5 +82,7 @@ El agente `doc-updater` puede ayudar a refrescar este archivo.
 
 ## Latest Execution Notes
 
+- **2026-05-31 (Etapa 2):** **Compras/Pedidos enlazados al proveedor por ID real.** Eliminado `PROVEEDOR_SEED` ficticio de `ComprasModule`; el selector de Compras (`ComprasTable`) y Pedidos (`PedidosModule`) ahora cargan el catálogo async desde la BD (`loadProveedores()`), con ids reales. `registroCompra` persiste `proveedorId`; `crearPedido` ya enviaba `proveedorId` y el backend `/caja/pedidos` ya lo persistía (shape preexistente). La factura por pagar de una compra a crédito usa el id real del proveedor. OC (`OcDocument`) sin cambios (usa el objeto proveedor recibido). Verificado end-to-end: pedido creado con `proveedorId` real persiste OK. 0 errores tsc nuevos (POS baseline 15). Solo pedidos/compras NUEVOS llevan ID (históricos conservan solo el nombre, como se acordó).
+- **2026-05-31:** Migración de **Proveedores + Cajas a BD Medusa** (continuación de Fase 3). Módulos custom nuevos `ferremex_proveedores` (Proveedor + FacturaProveedor, facturas como subrecurso) y `ferremex_cajas` (Caja). Rutas `/caja/proveedores/*`, `/caja/cajas`, `/caja/migrar-proveedores-cajas`. `/caja/usuarios` extendido con `caja_id` (asignación caja↔empleado; reemplaza `pos_cajas_asignaciones`). `proveedores.ts` → fachada async (espejo de `clientes.ts`). Refactor de `AdminProveedores`, `CashMovementsModule`, `EmployeesModule`, `ComprasModule`. Componente `MigracionProveedoresCajas.tsx` montado en AdminProveedores. Verificado en runtime (CRUD completo de cajas y proveedores+facturas vía curl, cascada de borrado OK). 0 errores tsc nuevos (POS baseline 15 intacto).
 - **2026-05-29/30:** Fase 3 (Clientes + Cartera BD) + Fase 2 (Formatos + Inventario) completadas. Módulo ferremex_cartera en BD (CarteraCliente/Movimiento/Nota/HistorialLimite); rutas `/caja/clientes/*`, `/caja/grupos/*`, `/caja/cartera/*`, `/caja/migrar-localstorage` implementadas. Frontend refactorizado a async. FormatoConfig.tsx permite config multi-formato (Nota/Factura/Cupón). InventarioModule.jsx reemplaza iframe. Commits fda641d + 8194566.
 - **2026-05-29:** Construcción del harness de contexto inspirado en ECC. Reestructurado `CLAUDE.md` (conservando taxonomía, protocolo de impacto cruzado y gotchas). Creados `.claude/{ECC-SELECTION,FERREMEX-STATE,FERREMEX-MODULES,FERREMEX-PREFERENCES,FERREMEX-SCHEMA,HARNESS-SUMMARY}.md`, contextos `dev/research/review`, 7 agentes y hooks de memoria de sesión. Backup del CLAUDE.md previo en `CLAUDE.md.bak-2026-05-29`.
