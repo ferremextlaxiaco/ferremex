@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-05-30.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-06-01.
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -11,15 +11,16 @@
 
 | Componente | Archivo | Propósito |
 |---|---|---|
-| Venta (página) | `pages/Venta.tsx` | Orquesta búsqueda + carrito + cobro + ticket |
+| Venta (página) | `pages/Venta.tsx` | Orquesta búsqueda + carrito (drawer) + cobro + ticket. Estado `carritoAbierto`, FAB 🛒. |
 | Buscador | `components/Buscador.tsx` | Input + FiltroBar + GridProductos + ProductoDetalle |
 | FiltroBar | `components/FiltroBar.tsx` | Cascada Dept→Cat→Marca (chips) + filtro de stock |
-| GridProductos | `components/GridProductos.tsx` | Grid con thumbnail, +/- al carrito |
+| GridProductos | `components/GridProductos.tsx` | Grid expandido (230px cols ≈6 por fila), thumbnail, +/- al carrito, modal desglose paquete |
 | ProductoDetalle | `components/ProductoDetalle.tsx` | Vista expandida, precio según `num_precio`, validación de cantidad |
-| Carrito | `components/Carrito.tsx` | Items con cantidad editable (draft), badge mayoreo |
+| Carrito | `components/Carrito.tsx` | Drawer deslizable (esquina inferior derecha), items con cantidad editable, cierra con Escape/overlay |
 | ModalCobro | `components/ModalCobro.tsx` | Pago split (efectivo/transferencia/crédito), cambio, registra venta. Cargo a crédito vía `/caja/cartera` (BD) |
 | Ticket | `components/Ticket.tsx` | Impresión ESC/POS directa |
 | SelectorCliente | `components/SelectorCliente.tsx` | Dropdown de clientes vía `/caja/clientes` (BD) → `clienteActivo` |
+| DesglosePaqueteModal | `components/DesglosePaqueteModal.tsx` | Modal de desglose: artículos del paquete, cantidad, precio prorrateo, ahorro $/%., renderizado vía createPortal |
 
 **Datos:** productos/stock/precio 🟢 (vía `/caja/productos`); venta 🟡 (`ventas-pos.json`); cartera 🟢 (módulo ferremex_cartera BD); cliente 🟢 (Customer Medusa).
 **Conexiones:** `buscarProductos()` → `pos-store` (carrito) → `registrarVenta()` (incluye cargo a cartera si crédito, transaccional) + `abrirCajon()` (si efectivo).
@@ -39,7 +40,7 @@
 | Caja / Movimientos | `pages/AdminCaja.tsx` | `modules/CashMovementsModule.jsx` | Movimientos de caja, resumen diario/turno. Movimientos manuales 🔴 por día | 🟡 ventas + 🔴 `pos_movimientos_caja_*` |
 | Empleados / Usuarios | `pages/AdminEmpleados.tsx` (`/admin/usuarios` → redirect aquí) | `modules/EmployeesModule.jsx` | CRUD cajeros, roles/permisos, asignación de cajas. Usa `obtenerUsuarios(true)` (con pin) | 🟡 `usuarios-pos.json` + 🔴 `pos_cajas_*` |
 | Clientes | `pages/AdminClientes.tsx` (landing), `pages/AdminClientesLista.tsx` (CRUD) | — | CRUD clientes (Customers Medusa), grupos (customer_groups). Banner de migración de localStorage. | 🟢 Customer + customer_group |
-| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO, semáforo, notas, historial de límite. Async desde módulo ferremex_cartera BD | 🟢 módulo ferremex_cartera |
+| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO (EXCLUYEN cancelados), semáforo, notas, historial de límite. Botón "Cancelar abono" en DetalleAbonoModal, badge "Cancelado" en lista. | 🟢 módulo ferremex_cartera |
 | Proveedores | `pages/AdminProveedores.tsx` | — | Gestión de proveedores + facturas a crédito | 🔴 `pos_proveedores` |
 | Compras | `pages/AdminCompras.jsx`, `AdminComprasNueva.jsx`, `AdminConsultarCompras.jsx` | `components/ComprasModule.jsx`, `modules/ConsultarCompras.jsx` (+ `ComprasTable`, `ComprasDetailPanel`, `OC*`) | Alta + historial de compras, generación OC PDF | 🟡/frontend (PDF vía `/caja/generar-oc`) |
 | Pedidos | `pages/AdminPedidos.jsx` | `components/PedidosModule.jsx` (+ `PedidosTabla`, `PedidosPreview`, `PedidosFiltros`, `ConfirmDialog`) | Pedidos a proveedor desde faltantes. **Backend en `/caja/pedidos`** (folio server-side); espera/draft 🔴 | 🟡 `pedidos-pos.json` + 🔴 espera/draft |
@@ -68,17 +69,20 @@
 - **`pos-auth.ts`** — `validarPosToken` / `validarPosAdminToken`. Consumido por `middlewares.ts` y `usuarios/route.ts`.
 
 ### Backend — módulos de negocio (`packages/api/src/modules/`)
-- **`ferremex_cartera`** — módulo custom de Medusa. Entidades: `CarteraCliente` (raíz única por customer_id), `MovimientoCartera` (compra/pago transaccional), `NotaCartera` (registros textuales), `HistorialLimite` (auditoría de cambios de límite). Registrado en `medusa-config.ts` y migración aplicada. Consumido por rutas `/caja/cartera/*`.
+- **`ferremex_cartera`** — módulo custom de Medusa. Entidades: `CarteraCliente` (raíz única por customer_id), `MovimientoCartera` (compra/pago transaccional, **NEW:** `cancelado`, `motivo_cancelacion`, `fecha_cancelacion`), `NotaCartera` (registros textuales), `HistorialLimite` (auditoría de cambios de límite). Registrado en `medusa-config.ts` y migración aplicada. Consumido por rutas `/caja/cartera/*`.
 
 ---
 
 ## Conexiones ACTUALES (quién llama a quién)
 
 ```
-Buscador ──buscarProductos()──► /caja/productos ──► Medusa (product+inventory+price)
+Buscador ──buscarProductos()──► /caja/productos ──► Medusa (product+inventory+price). Búsqueda literal + fonética fusionadas.
+GridPaquetes ──DesglosePaqueteModal──► cargarDesglosePaquete() ──► componentes+prorrateo+thumbnails
+Carrito ──drawer FAB──► Venta state `carritoAbierto`, cierra Escape/overlay
 ModalCobro ──registrarVenta()──► /caja/ventas ──► descuenta inventario + ventas-pos.json
-ModalCobro ──agregarMovimientoCredito()──► pos_cartera (localStorage)   [si crédito]
+ModalCobro ──agregarMovimientoCredito()──► /caja/cartera (BD)   [si crédito]
 ModalCobro ──abrirCajon()──► serial.ts                                   [si efectivo]
+CarteraCredito ──anularAbono()──► PATCH /caja/cartera/[customerId]/movimientos/[movId] ──► devolución a deuda
 ArticlesModule / PedidosFiltros / FiltroBar / CatalogosModule ──listarCatalogos()──► /caja/catalogos
 SalesHistory / CashMovementsModule ──listarVentas()──► /caja/ventas
 PedidosModule ──listarFaltantes()──► /caja/articulos?faltantes=1

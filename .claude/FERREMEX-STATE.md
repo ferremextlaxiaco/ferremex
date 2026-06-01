@@ -4,7 +4,7 @@
 > `MEMORIA_INSTALACIÓN.md` (estado por fases/infra, mantenido por el skill `actualizador`).
 > **Actualiza este archivo al cierre de cada sesión** (regla abajo). Convierte fechas relativas a absolutas.
 >
-> Última actualización: **2026-05-31**
+> Última actualización: **2026-06-01**
 
 ---
 
@@ -24,10 +24,10 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 - **POS:** React 18 + Vite, puerto 7002 (`base: /pos`). Montado como módulo `vendor-ui`.
 - **Servicios (PM2):** `ferremex-admin` (7000), `ferremex-pos` (7002), `ferremex-api` (9000). Redis (Docker) 6379, PostgreSQL 16 (5432).
 - **Últimos commits:**
-  - `8194566` Fase 2: formatos de ticket (Nota/Factura/Cupón) + InventarioModule sin iframe (2026-05-29/30)
-  - `fda641d` Fase 3: migración de Clientes + Cartera de crédito de localStorage a BD Medusa (2026-05-29/30)
-  - `c3e0cf0` Auditoría completa + fixes de seguridad/integridad + harness de contexto (2026-05-29)
-  - `98e16bf` Mayoreo + búsqueda SKU case-insensitive + fixes de precios (2026-05-27)
+  - `f2d8aac` Cartera: cancelar (anular) abonos con devolución a la deuda (2026-06-01)
+  - `44035bd` Clientes: quitar banner de migración a la nube (2026-06-01)
+  - `075d182` POS venta: modal de desglose de paquete + carrito como drawer + grid (2026-06-01)
+  - `6d97adf` Búsqueda de venta: relevancia literal + fusión SKU-parcial con nombre (2026-06-01)
 
 ---
 
@@ -82,6 +82,7 @@ El agente `doc-updater` puede ayudar a refrescar este archivo.
 
 ## Latest Execution Notes
 
+- **2026-06-01 (Feature: Cancelación de abonos + UI venta):** **Cartera:** módulo ferremex_cartera ganó 3 columnas nuevas (`cancelado`, `motivo_cancelacion`, `fecha_cancelacion`) en MovimientoCartera. Ruta NUEVA: `PATCH /caja/cartera/[customerId]/movimientos/[movId]` (motivo obligatorio). Frontend: `anularMovimientoCarteraAPI()` en client.ts, `anularAbono()` en clientes.ts. Los movimientos cancelados EXCLUYEN de FIFO/semáforo → monto regresa a deuda. DetalleAbonoModal con botón "Cancelar abono" + badge "Cancelado" en lista. **Clientes:** quitado banner MigracionNube (Fase 3 ya completa). **POS venta:** componente NUEVO `DesglosePaqueteModal.tsx` (desglose interactivo de artículos de paquete con prorrateo). Carrito convertido a drawer deslizable (FAB 🛒 en esquina inferior derecha, cierra con Escape/overlay). Grid expandido (230px cols ≈6 por fila). **Búsqueda:** `/caja/productos` arreglado — match parcial de SKU ahora se FUSIONA con fonética (antes cortocircuitaba). Scoring literal antes de desempate por stock ("PVC" pasó de 15 a 626 resultados, incluye tubos). Verificado end-to-end: anular/restaurar abonos OK, carrito drawer usable, búsqueda precisa. 0 errores tsc nuevos.
 - **2026-05-31 (Etapa 3 — deudas):** **Historial de compras migrado a BD** (módulo custom `ferremex_compras`: Compra + ArticuloCompra anidado). Rutas `/caja/compras` (GET `?proveedor_id`, POST, PATCH cancelar). `ComprasModule` escribe a BD, `ConsultarCompras` lee/cancela de BD (async). Migrador one-shot extendido con `compras[]` (idempotente por folio, remapea proveedorId por nombre). **Deuda #2:** validación `fecha_emision` YYYY-MM-DD (helper `esFechaISO` en lib/text) en POST/PUT de facturas + saneo en migrador. **Deuda #3:** sección "Compras a este proveedor" en AdminProveedores (vía `?proveedor_id`). Verificado end-to-end (crear/listar/filtrar/cancelar vía curl). 0 errores tsc nuevos (POS 15, backend 13). BD limpia tras pruebas.
 - **2026-05-31 (Etapa 2):** **Compras/Pedidos enlazados al proveedor por ID real.** Eliminado `PROVEEDOR_SEED` ficticio de `ComprasModule`; el selector de Compras (`ComprasTable`) y Pedidos (`PedidosModule`) ahora cargan el catálogo async desde la BD (`loadProveedores()`), con ids reales. `registroCompra` persiste `proveedorId`; `crearPedido` ya enviaba `proveedorId` y el backend `/caja/pedidos` ya lo persistía (shape preexistente). La factura por pagar de una compra a crédito usa el id real del proveedor. OC (`OcDocument`) sin cambios (usa el objeto proveedor recibido). Verificado end-to-end: pedido creado con `proveedorId` real persiste OK. 0 errores tsc nuevos (POS baseline 15). Solo pedidos/compras NUEVOS llevan ID (históricos conservan solo el nombre, como se acordó).
 - **2026-05-31:** Migración de **Proveedores + Cajas a BD Medusa** (continuación de Fase 3). Módulos custom nuevos `ferremex_proveedores` (Proveedor + FacturaProveedor, facturas como subrecurso) y `ferremex_cajas` (Caja). Rutas `/caja/proveedores/*`, `/caja/cajas`, `/caja/migrar-proveedores-cajas`. `/caja/usuarios` extendido con `caja_id` (asignación caja↔empleado; reemplaza `pos_cajas_asignaciones`). `proveedores.ts` → fachada async (espejo de `clientes.ts`). Refactor de `AdminProveedores`, `CashMovementsModule`, `EmployeesModule`, `ComprasModule`. Componente `MigracionProveedoresCajas.tsx` montado en AdminProveedores. Verificado en runtime (CRUD completo de cajas y proveedores+facturas vía curl, cascada de borrado OK). 0 errores tsc nuevos (POS baseline 15 intacto).

@@ -1,7 +1,7 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-05-30.
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-01.
 > **Medusa:** módulos nativos + `metadata` en producto + **módulo custom ferremex_cartera** (Fase 3).
 
 ---
@@ -30,7 +30,7 @@
 | Entidad | Tabla | Campos clave | Notas |
 |---|---|---|---|
 | **CarteraCliente** | `cartera_cliente` | `id` (PK uuid), `customer_id` (UK, FK), `limite_credito`, `creado_en`, `actualizado_en` | Raíz única por customer. Holds movimientos/notas/historial |
-| **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?` | Transaccional. Compras al registrar venta; pagos manuales |
+| **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?`, **`cancelado`** (bool, default false), **`motivo_cancelacion`** (text nullable), **`fecha_cancelacion`** (timestamp ISO nullable) | Transaccional. Compras al registrar venta; pagos manuales. NEW: soft-cancel de abonos (restituye deuda vía FIFO al excluirlo del cálculo). |
 | **NotaCartera** | `nota_cartera` | `id`, `cartera_cliente_id` (FK), `fecha`, `hora`, `autor`, `texto` | Auditoría textual |
 | **HistorialLimite** | `historial_limite` | `id`, `cartera_cliente_id` (FK), `fecha`, `usuario`, `anterior`, `nuevo`, `nota` | Auditoría de cambios de límite |
 
@@ -168,13 +168,15 @@ Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + v
 ```ts
 Cliente { id?, num_cliente, nombre, telefono, num_precio (1-4), dias_credito, limite_credito,
           grupo, monedero, rfc, razon_social, regimen_fiscal, cfdi, calle, numero, colonia, ciudad, estado, cp }
-Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota? }
+Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota?, 
+             cancelado?: boolean, motivo_cancelacion?: string, fecha_cancelacion?: string }
 NotaCartera { id, fecha, hora, autor, texto }
 HistorialLimite { id, fecha, usuario, anterior, nuevo, nota }
 CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: HistorialLimite[] }
 ```
-- **Saldos:** `calcularSaldos()` aplica pagos FIFO (compra más antigua primero). Estado: `pagado`/`parcial`/`pendiente`.
+- **Saldos:** `calcularSaldos()` aplica pagos FIFO (compra más antigua primero). **EXCLUYE movimientos con `cancelado=true`** (devolución a deuda). Estado: `pagado`/`parcial`/`pendiente`.
 - **Semáforo:** azul (al día) · verde (≥7d) · amarillo (1–7d) · naranja (1–30d vencido) · rojo (30–60d) · rojo_oscuro (60+d).
+- **Cancelación de abono:** soft-cancel vía `PATCH /caja/cartera/[customerId]/movimientos/[movId]` con motivo obligatorio. Auditable (fecha_cancelacion persiste ISO). No se borra, se marca como inválido para cálculos.
 
 ---
 

@@ -145,7 +145,7 @@ El POS vive en `apps/pos/` (Vite, puerto 7002, `base: "/pos"`). React 18 + React
 ### Estructura de rutas
 ```
 /pos/           → Login — selección de cajero + PIN (validado server-side vía POST /caja/login)
-/pos/venta      → Pantalla de venta: búsqueda + carrito + cobro
+/pos/venta      → Pantalla de venta: búsqueda (ancho completo) + drawer carrito (FAB 🛒) + cobro
 /pos/corte      → Cierre de turno / arqueo
 /pos/admin      → Shell admin (requiere permisos.puede_ver_admin)
   /consulta-ventas → Historial de ventas (SalesHistory.jsx). Es el índice de /admin.
@@ -184,6 +184,8 @@ XxxPreview.jsx (modal/panel) → detalle de solo lectura o edición
 ```
 
 Paneles de crear/editar son `XxxDrawer.jsx`; confirmaciones de borrado `XxxDeleteModal.jsx`. Solo el Module tiene estado.
+
+**Patrón de UX en pantalla de venta (Venta.tsx):** búsqueda ocupa ancho completo (sin carrito fijo a derecha), carrito convertido a drawer deslizable (FAB 🛒 flotante esquina inferior derecha, cierra con Escape/overlay). Componente `DesglosePaqueteModal.tsx` abre desde tarjeta de producto (GridPaquetes) y desde bloque de paquete en carrito (Carrito.tsx), renderizado con `createPortal` para escapar stacking context.
 
 **Interfaces de consulta complejas** (ej. `SalesHistory.jsx`) son módulos "gordos" autocontenidos (no se dividen). Patrones a reutilizar:
 - Estado de filtros persistido en `localStorage` (ej. `pos_sales_filters`) y restaurado al montar.
@@ -261,7 +263,7 @@ Sistemas compartidos y sus consumidores actuales:
 | Shape `ArticuloPOS` (campos de artículo) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal` |
 | Búsqueda fonética (backend `/caja/productos`) | `Buscador` |
 | `CatalogosOp` PATCH (`/caja/catalogos`) | `CatalogosModule` |
-| **Cartera BD** (`/caja/cartera/*`) + `lib/clientes.ts` (async) | `CarteraCredito`, `ModalCobro`, `SelectorCliente`, `AdminClientesLista` |
+| **Cartera BD** (`/caja/cartera/*`, NEW PATCH anular) + `lib/clientes.ts` (async) | `CarteraCredito` (cancelar abono), `ModalCobro`, `SelectorCliente`, `AdminClientesLista` |
 | **Clientes BD** (`/caja/clientes/*`) + `lib/clientes.ts` (async) | `SelectorCliente`, `AdminClientesLista`, `AdminClientes` |
 | **Grupos BD** (`/caja/grupos/*`) | `AdminClientesLista`, `AdminClientes` |
 | **Proveedores BD** (`/caja/proveedores/*`) + `lib/proveedores.ts` (async) | `AdminProveedores`, `ComprasModule`/`ComprasTable`, `PedidosModule`/`PedidosTabla` (selector de proveedor); `ComprasModule` registra factura por pagar |
@@ -309,14 +311,14 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
   - **Artículos/inventario:** `listarArticulos`, `listarArticulosDeCatalogo`, `listarFaltantes`, `crearArticulo/actualizarArticulo/eliminarArticulo`, `subirImagenArticulo`, `ajustarInventario`/`incrementarInventario`.
   - **Pedidos:** `listarPedidos`, `crearPedido`, `actualizarPedido`, `eliminarPedido`.
   - **Clientes (Fase 3):** `listarClientesAPI`, `crearClienteAPI`, `actualizarClienteAPI`, `eliminarClienteAPI`, `siguienteNumClienteAPI`. Mapeo async Customer ↔ ClientePOS.
-  - **Cartera (Fase 3):** `listarCarteraGlobalAPI`, `obtenerCarteraClienteAPI`, `agregarMovimientoCarteraAPI`, `agregarNotaCarteraAPI`, `registrarCambioLimiteAPI`. Módulo ferremex_cartera.
+  - **Cartera (Fase 3):** `listarCarteraGlobalAPI`, `obtenerCarteraClienteAPI`, `agregarMovimientoCarteraAPI`, **`anularMovimientoCarteraAPI`** (NEW), `agregarNotaCarteraAPI`, `registrarCambioLimiteAPI`. Módulo ferremex_cartera.
   - **Grupos (Fase 3):** `listarGruposAPI`, `guardarGruposAPI`.
   - **Proveedores (Fase 3 cont.):** `listarProveedoresAPI`, `crearProveedorAPI`, `actualizarProveedorAPI`, `eliminarProveedorAPI`, `siguienteNumProveedorAPI`, `agregarFacturaAPI`/`actualizarFacturaAPI`/`eliminarFacturaAPI`. Módulo ferremex_proveedores.
   - **Cajas (Fase 3 cont.):** `listarCajasAPI`, `crearCajaAPI`, `actualizarCajaAPI`, `eliminarCajaAPI`. Módulo ferremex_cajas. Asignación caja↔empleado vía `caja_id` en `actualizarUsuario`.
   - **Compras (Fase 3 cont.):** `listarComprasAPI(proveedorId?)`, `crearCompraAPI`, `cancelarCompraAPI`. Módulo ferremex_compras (Compra + ArticuloCompra). Shape `CompraAPI` con `proveedorId`, artículos en `precioUnit` (camelCase).
   - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos`, `actualizarCatalogo`.
 - `pos-store.ts` — estado global (Context + useReducer).
-- `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO), semáforo.
+- `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO, EXCLUYE cancelados), semáforo, `anularAbono()` wrapper de ruta PATCH.
 - `proveedores.ts` — **FACHADA ASYNC** sobre BD (`/caja/proveedores/*`). Tipos preservados (Proveedor, FacturaCredito, EstadoFactura). Lógica de negocio pura en cliente (`diasRestantes`, `estadoFactura`/semáforo, `fechaVencimientoISO`). Funciones `*Local` solo para migración desde localStorage.
 - `serial.ts` — impresora ESC/POS + cajón (Chrome/Web Serial).
 - `unidades-sat.ts` — unidades de medida SAT.
@@ -334,15 +336,17 @@ Datos persistidos en módulo custom `ferremex_cartera` (BD Medusa), accesibles v
 
 **Tipos en `clientes.ts` (ahora async, antes localStorage):**
 ```ts
-interface Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota? }
+interface Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota?, 
+                       cancelado?: boolean, motivo_cancelacion?: string, fecha_cancelacion?: string }
 interface NotaCartera { id, fecha, hora, autor, texto }
 interface HistorialLimite { id, fecha, usuario, anterior, nuevo, nota }
 interface CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: HistorialLimite[] }
 ```
 
 **Lógica de negocio clave (intraducible):**
-- **Asignación FIFO de pagos** (`calcularSaldos()`): los pagos se aplican a la compra más antigua primero. Estado por compra: `pagado` / `parcial` / `pendiente`.
+- **Asignación FIFO de pagos** (`calcularSaldos()`): los pagos se aplican a la compra más antigua primero. **EXCLUYEN movimientos con `cancelado=true`** (devolución automática a deuda). Estado por compra: `pagado` / `parcial` / `pendiente`.
 - **Semáforo:** `azul` = al día, `verde` = ≥7 días para vencer, `amarillo` = 1–7 días, `naranja` = 1–30 días vencido, `rojo` = 30–60, `rojo_oscuro` = 60+.
+- **Cancelación de abono (soft-cancel):** botón "Cancelar abono" en `DetalleAbonoModal` → `PATCH /caja/cartera/[customerId]/movimientos/[movId]` con `{ motivo }` obligatorio. Setea `cancelado=true`, `motivo_cancelacion`, `fecha_cancelacion` (ISO). No borra el registro (auditable). Abonos cancelados se muestran tachados con badge "Cancelado" en la lista de movimientos.
 
 **Flujo de cobro (ModalCobro.tsx):** cuando `pago_credito > 0` y existe `clienteActivo`, el backend `/caja/ventas` registra la compra en cartera **transaccional** (dentro del lock de venta). No hay llamada posterior desde el frontend; `registrarVenta()` lo incluye.
 Pagos en efectivo además llaman `abrirCajon()`.
@@ -380,6 +384,7 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 | GET | `/caja/cartera` | GET global Record<customer_id, CartEntrada> (módulo ferremex_cartera). |
 | GET | `/caja/cartera/[customerId]` | GET cartera completa de un cliente. |
 | POST | `/caja/cartera/[customerId]/movimientos` | Registra movimiento (compra/pago) en cartera. |
+| PATCH | `/caja/cartera/[customerId]/movimientos/[movId]` | **NEW:** Cancela (soft-cancel) un movimiento (abono). Body `{ motivo }` obligatorio. Setea `cancelado=true`, `motivo_cancelacion`, `fecha_cancelacion`. 400 si falta motivo / no existe / ya cancelado. |
 | POST | `/caja/cartera/[customerId]/notas` | Añade nota de auditoría. |
 | POST | `/caja/cartera/[customerId]/limite` | Actualiza límite de crédito + dual-write a customer.metadata. |
 | POST | `/caja/migrar-localstorage` | One-shot idempotente: migra cliente desde localStorage (pos_clientes) a BD si aún no existe (num_cliente). |
