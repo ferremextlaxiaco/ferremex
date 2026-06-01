@@ -268,6 +268,7 @@ Sistemas compartidos y sus consumidores actuales:
 | **Cajas BD** (`/caja/cajas`) | `CashMovementsModule`, `EmployeesModule` |
 | Shape `Proveedor` / `FacturaCredito` (`lib/proveedores.ts`) | `AdminProveedores`, `ComprasModule`, `PedidosModule` |
 | `proveedorId` en compras/pedidos (enlace al catálogo) | `ComprasModule` (registroCompra), `PedidosModule` + `/caja/pedidos` |
+| **Compras BD** (`/caja/compras`) + shape `CompraAPI` | `ComprasModule` (escribe), `ConsultarCompras` (lee/cancela), `AdminProveedores` (compras por proveedor) |
 | `listarVentas()` / `cancelarVenta()` (`/caja/ventas`) | `SalesHistory` (AdminConsultaVentas), `CashMovementsModule` |
 | `folio-counter.json` + `/caja/folio-contador` | `/caja/ventas` POST (modo secuencial), `FormatoConfig` |
 | `/caja/usuarios` (GET sin pin / `?admin=1` con pin; persiste `caja_id`) + `/caja/login` | `Login`, `EmployeesModule`, `CashMovementsModule`, `SalesHistory` |
@@ -296,6 +297,7 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
 - **Clientes + Cartera de crédito**: BD de Medusa (Fase 3 completada). Customers nativas + módulo custom ferremex_cartera. Acceso vía `/caja/clientes/*` y `/caja/cartera/*`. Terminal-agnostic (datos compartidos).
 - **Proveedores + facturas por pagar**: BD de Medusa (módulo custom `ferremex_proveedores`). Acceso vía `/caja/proveedores/*`. Terminal-agnostic.
 - **Cajas (catálogo)**: BD de Medusa (módulo custom `ferremex_cajas`). Acceso vía `/caja/cajas`. La **asignación caja↔empleado** se persiste como `caja_id` en el usuario (`/caja/usuarios`), no en una entidad aparte (los empleados aún viven en JSON).
+- **Compras (historial de recepciones)**: BD de Medusa (módulo custom `ferremex_compras`, con `ArticuloCompra` anidado). Acceso vía `/caja/compras`. Enlazado por `proveedor_id` al catálogo. Terminal-agnostic. Antes en localStorage (`pos_historial_compras`).
 - **Movimientos manuales de caja**: `localStorage` por día (`pos_movimientos_caja_YYYY-MM-DD`) en CashMovementsModule. Reset al cierre.
 - **Ventas / cortes / usuarios / ticket-config / folio / pedidos**: archivos JSON en `packages/api/data/*.json` (escritos vía `lib/json-store`).
 - **Productos / inventario / precios / categorías / imágenes**: BD de Medusa (PostgreSQL).
@@ -311,6 +313,7 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
   - **Grupos (Fase 3):** `listarGruposAPI`, `guardarGruposAPI`.
   - **Proveedores (Fase 3 cont.):** `listarProveedoresAPI`, `crearProveedorAPI`, `actualizarProveedorAPI`, `eliminarProveedorAPI`, `siguienteNumProveedorAPI`, `agregarFacturaAPI`/`actualizarFacturaAPI`/`eliminarFacturaAPI`. Módulo ferremex_proveedores.
   - **Cajas (Fase 3 cont.):** `listarCajasAPI`, `crearCajaAPI`, `actualizarCajaAPI`, `eliminarCajaAPI`. Módulo ferremex_cajas. Asignación caja↔empleado vía `caja_id` en `actualizarUsuario`.
+  - **Compras (Fase 3 cont.):** `listarComprasAPI(proveedorId?)`, `crearCompraAPI`, `cancelarCompraAPI`. Módulo ferremex_compras (Compra + ArticuloCompra). Shape `CompraAPI` con `proveedorId`, artículos en `precioUnit` (camelCase).
   - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos`, `actualizarCatalogo`.
 - `pos-store.ts` — estado global (Context + useReducer).
 - `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO), semáforo.
@@ -386,7 +389,9 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 | GET/PUT/DELETE | `/caja/proveedores/[id]` | Detalle/edición/borrado de un proveedor (DELETE en cascada con sus facturas). |
 | POST | `/caja/proveedores/[id]/facturas` | Agrega una factura por pagar al proveedor. |
 | PUT/DELETE | `/caja/proveedores/[id]/facturas/[facturaId]` | Edita (incl. marcar pagada) / elimina una factura. |
-| POST | `/caja/migrar-proveedores-cajas` | One-shot idempotente: migra proveedores (por num_proveedor) + cajas (por nombre) + asignaciones desde localStorage a BD. |
+| POST | `/caja/migrar-proveedores-cajas` | One-shot idempotente: migra proveedores (por num_proveedor) + cajas (por nombre) + asignaciones + compras (por folio) desde localStorage a BD. |
+| GET/POST | `/caja/compras` | Historial de compras (módulo ferremex_compras). GET `?proveedor_id=` filtra por proveedor. POST registra compra + artículos. Consumido por ComprasModule (escribe), ConsultarCompras (lee), AdminProveedores (compras por proveedor). |
+| PATCH | `/caja/compras/[id]` | Cancela una compra (estado → Cancelada + motivo). Idempotente. El descuento de inventario lo hace el frontend. |
 
 ### Seguridad y concurrencia de las rutas `/caja/*`
 - **Token POS:** un middleware (`middlewares.ts` + `lib/pos-auth.ts`) exige el header `X-POS-Token` (= env `POS_TOKEN`) en todos los métodos mutantes (POST/PUT/PATCH/DELETE), **excepto** `/caja/login`. Si `POS_TOKEN` no está definido, la validación se desactiva (dev). El cliente lo envía vía `posHeaders()` en `client.ts` (`VITE_POS_TOKEN`). La vista admin de usuarios usa además `POS_ADMIN_TOKEN` / `VITE_POS_ADMIN_TOKEN`.

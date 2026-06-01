@@ -21,6 +21,16 @@ import { migrarProveedoresCajasAPI, type MigracionProvCajasResumen } from "../li
 
 const LS_CAJAS = "pos_cajas_catalogo"
 const LS_ASIGNACION = "pos_cajas_asignaciones"
+const LS_HISTORIAL_COMPRAS = "pos_historial_compras"
+
+function loadComprasLocal(): any[] {
+  try {
+    const raw = localStorage.getItem(LS_HISTORIAL_COMPRAS)
+    return raw ? (JSON.parse(raw) as any[]) : []
+  } catch {
+    return []
+  }
+}
 
 function loadCajasLocal(): { id?: string | number; nombre: string; descripcion?: string; activa?: boolean }[] {
   try {
@@ -41,13 +51,14 @@ function loadAsignacionesLocal(): Record<string, string> {
   }
 }
 
-/** ¿Hay algo de proveedores/cajas/asignaciones sin migrar en esta terminal? */
+/** ¿Hay algo de proveedores/cajas/asignaciones/compras sin migrar en esta terminal? */
 function hayDatosProvCajasSinMigrar(): boolean {
   if (localStorage.getItem(STORAGE_KEY_MIGRADO_PROV_CAJAS) === "1") return false
   return (
     hayProveedoresLocalesSinMigrar() ||
     loadCajasLocal().length > 0 ||
-    Object.keys(loadAsignacionesLocal()).length > 0
+    Object.keys(loadAsignacionesLocal()).length > 0 ||
+    loadComprasLocal().length > 0
   )
 }
 
@@ -74,6 +85,7 @@ export function MigracionProveedoresCajas() {
           activa: c.activa ?? true,
         })),
         asignaciones: loadAsignacionesLocal(),
+        compras: loadComprasLocal(),
       }
       const r = await migrarProveedoresCajasAPI(dump)
       setResumen(r.resumen)
@@ -87,6 +99,7 @@ export function MigracionProveedoresCajas() {
 
   const nProv = (() => { try { return loadProveedoresLocal().length } catch { return 0 } })()
   const nCajas = (() => { try { return loadCajasLocal().length } catch { return 0 } })()
+  const nCompras = (() => { try { return loadComprasLocal().length } catch { return 0 } })()
 
   return (
     <div
@@ -104,7 +117,7 @@ export function MigracionProveedoresCajas() {
           <p style={{ fontSize: 13, color: "var(--at-text-soft)", lineHeight: 1.5 }}>
             {resumen.proveedores_creados} proveedor(es) creados · {resumen.proveedores_omitidos} ya existían ·{" "}
             {resumen.facturas} factura(s) · {resumen.cajas_creadas} caja(s) creadas ·{" "}
-            {resumen.asignaciones_aplicadas} asignación(es).
+            {resumen.asignaciones_aplicadas} asignación(es) · {resumen.compras_creadas} compra(s).
             {resumen.huerfanos.length > 0 && (
               <> {resumen.huerfanos.length} asignación(es) no aplicadas (omitidas).</>
             )}
@@ -130,8 +143,8 @@ export function MigracionProveedoresCajas() {
               Migrar proveedores y cajas a la nube
             </p>
             <p style={{ fontSize: 13, color: "var(--at-text-soft)", lineHeight: 1.4 }}>
-              Esta terminal tiene {nProv} proveedor(es) y {nCajas} caja(s) guardados solo en este
-              navegador. Súbelos a la base de datos para compartirlos entre todas las terminales.
+              Esta terminal tiene {nProv} proveedor(es), {nCajas} caja(s) y {nCompras} compra(s) guardados
+              solo en este navegador. Súbelos a la base de datos para compartirlos entre todas las terminales.
             </p>
             {estado === "error" && error && (
               <p style={{ fontSize: 12, color: "#dc2626", marginTop: 4 }}>Error: {error}</p>

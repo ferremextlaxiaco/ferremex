@@ -56,3 +56,14 @@ export function normalizarFonetico(texto: string): string {
     .replace(/\s+/g, " ")
     .trim()
 }
+
+/**
+ * Valida que una cadena tenga formato de fecha ISO `YYYY-MM-DD` y sea una fecha
+ * real (no "2026-13-40"). Usado para validar fecha_emision de facturas antes de
+ * persistir, para no romper el cálculo de vencimiento en el cliente.
+ */
+export function esFechaISO(s: unknown): s is string {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false
+  const d = new Date(s + "T12:00:00")
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+}

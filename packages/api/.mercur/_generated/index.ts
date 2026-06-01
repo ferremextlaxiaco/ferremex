@@ -714,6 +714,9 @@ export type Routes = {
         clientes: typeof import("../../src/api/caja/clientes/route") & {
             $id: typeof import("../../src/api/caja/clientes/[id]/route");
         };
+        compras: typeof import("../../src/api/caja/compras/route") & {
+            $id: typeof import("../../src/api/caja/compras/[id]/route");
+        };
         corte: typeof import("../../src/api/caja/corte/route");
         folioContador: typeof import("../../src/api/caja/folio-contador/route");
         generarOc: typeof import("../../src/api/caja/generar-oc/route");

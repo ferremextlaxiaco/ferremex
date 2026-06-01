@@ -3,23 +3,15 @@ import {
   Search, X, Download, Printer, FileText, AlertTriangle,
   ChevronDown, ChevronUp, ArrowUp, ArrowDown, Ban, Maximize2,
 } from "lucide-react"
-import { incrementarInventario } from "../lib/client"
+import { incrementarInventario, listarComprasAPI, cancelarCompraAPI } from "../lib/client"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function r2(n) { return Math.round(n * 100) / 100 }
 
-// ── Persistencia compartida con ComprasModule ─────────────────────────────────
-
-const KEY_HISTORIAL = "pos_historial_compras"
-
-function cargarHistorial() {
-  try { return JSON.parse(localStorage.getItem(KEY_HISTORIAL) ?? "[]") } catch { return [] }
-}
-
-function guardarHistorial(lista) {
-  localStorage.setItem(KEY_HISTORIAL, JSON.stringify(lista))
-}
+// ── Persistencia: BD (módulo ferremex_compras) vía /caja/compras ──────────────
+// Compartida con ComprasModule. Antes en localStorage (`pos_historial_compras`),
+// aislada por terminal; ahora terminal-agnostic.
 
 function fmt(n) {
   const s = Math.abs(n).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -78,7 +70,7 @@ function EstadoBadge({ estado }) {
 // ── Componente principal ───────────────────────────────────────────────────────
 
 export default function ConsultarCompras() {
-  const [purchases,       setPurchases]       = useState(() => cargarHistorial())
+  const [purchases,       setPurchases]       = useState([])
   const [filters,         setFilters]         = useState({ fechaInicio: "", fechaFin: "", tipo: "", estado: "", proveedor: "", categoria: "", marca: "" })
   const [searchInput,     setSearchInput]     = useState("")
   const [appliedSearch,   setAppliedSearch]   = useState("")
@@ -93,9 +85,13 @@ export default function ConsultarCompras() {
   const [toast,           setToast]           = useState(null)
   const toastTimer = useRef(null)
 
-  // Recarga desde localStorage al montar (cubre el caso de navegación entre rutas)
+  // Carga desde la BD al montar (cubre el caso de navegación entre rutas).
   useEffect(() => {
-    setPurchases(cargarHistorial())
+    let activo = true
+    listarComprasAPI()
+      .then((lista) => { if (activo) setPurchases(lista) })
+      .catch(() => { if (activo) setPurchases([]) })
+    return () => { activo = false }
   }, [])
 
   // ── Toast ─────────────────────────────────────────────────────────────────
@@ -213,19 +209,19 @@ export default function ConsultarCompras() {
 
   async function confirmCancel() {
     if (!cancelModal || cancelMotivo.trim().length < 5) return
-    const now = new Date().toISOString()
-    setPurchases(prev => {
-      const updated = prev.map(p =>
-        p.id === cancelModal.id
-          ? { ...p, estado: "Cancelada", canceladaEl: now, motivoCancelacion: cancelMotivo.trim() }
-          : p
-      )
-      guardarHistorial(updated)
-      return updated
-    })
+    const compra = cancelModal
+    try {
+      // Cancela en BD (estado + auditoría); devuelve la compra actualizada.
+      const actualizada = await cancelarCompraAPI(compra.id, cancelMotivo.trim())
+      setPurchases(prev => prev.map(p => p.id === compra.id ? actualizada : p))
+    } catch (err) {
+      console.error("Error al cancelar la compra:", err)
+      showToast("No se pudo cancelar la compra", "#dc2626")
+      return
+    }
 
     // Descontar del inventario las unidades que entró esta compra
-    const ajustes = (cancelModal.articulos ?? [])
+    const ajustes = (compra.articulos ?? [])
       .filter(a => a.codigo)
       .map(a => ({ sku: a.codigo, delta: -a.cantidad }))
     if (ajustes.length > 0) {
@@ -234,7 +230,7 @@ export default function ConsultarCompras() {
       )
     }
 
-    showToast(`Compra ${cancelModal.folio} cancelada correctamente`, "#dc2626")
+    showToast(`Compra ${compra.folio} cancelada correctamente`, "#dc2626")
     setCancelModal(null)
     setCancelMotivo("")
   }

@@ -2,6 +2,7 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_PROVEEDORES } from "../../../../../../modules/ferremex-proveedores"
 import type FerremexProveedoresService from "../../../../../../modules/ferremex-proveedores/service"
 import { aFacturaPOS, type FacturaProveedorPOS } from "../../../route"
+import { esFechaISO } from "../../../../../../lib/text"
 
 /** /caja/proveedores/:id/facturas/:facturaId — edición y borrado de una factura. */
 
@@ -23,6 +24,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       if (!Number.isFinite(monto) || monto <= 0) {
         res.status(400).json({ error: "El monto debe ser un número positivo" }); return
       }
+    }
+    if (body.fecha_emision !== undefined && !esFechaISO(body.fecha_emision)) {
+      res.status(400).json({ error: "La fecha de emisión debe tener formato YYYY-MM-DD válido" }); return
     }
     await service.updateFacturaProveedors({
       id: facturaId,

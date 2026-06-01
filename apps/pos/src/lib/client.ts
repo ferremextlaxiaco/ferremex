@@ -954,6 +954,8 @@ export interface MigracionProvCajasResumen {
   cajas_creadas: number
   cajas_omitidas: number
   asignaciones_aplicadas: number
+  compras_creadas: number
+  compras_omitidas: number
   huerfanos: string[]
 }
 
@@ -961,9 +963,60 @@ export async function migrarProveedoresCajasAPI(dump: {
   proveedores?: Proveedor[]
   cajas?: { id?: string | number; nombre: string; descripcion?: string | null; activa?: boolean }[]
   asignaciones?: Record<string, string>
+  compras?: any[]
 }): Promise<{ ok: boolean; resumen: MigracionProvCajasResumen }> {
   return apiFetch("/caja/migrar-proveedores-cajas", {
     method: "POST",
     body: JSON.stringify(dump),
+  })
+}
+
+// ── Compras (módulo ferremex_compras) ─────────────────────────────────────────
+
+export interface ArticuloCompraAPI {
+  codigo: string
+  nombre: string
+  cantidad: number
+  precioUnit: number
+  categoria: string
+  departamento: string
+  marca: string
+}
+
+export interface CompraAPI {
+  id: string
+  folio: string
+  proveedor: string
+  proveedorId: string | null
+  fecha: string
+  tipo: string
+  estado: string
+  subtotal: number
+  iva: number
+  total: number
+  canceladaEl: string | null
+  motivoCancelacion: string | null
+  articulos: ArticuloCompraAPI[]
+}
+
+/** Lista compras. `proveedorId` filtra por proveedor del catálogo. */
+export async function listarComprasAPI(proveedorId?: string): Promise<CompraAPI[]> {
+  const qs = proveedorId ? `?proveedor_id=${encodeURIComponent(proveedorId)}` : ""
+  return apiFetch<CompraAPI[]>(`/caja/compras${qs}`)
+}
+
+/** Registra una compra con sus artículos. */
+export async function crearCompraAPI(compra: Omit<CompraAPI, "id">): Promise<CompraAPI> {
+  return apiFetch<CompraAPI>("/caja/compras", {
+    method: "POST",
+    body: JSON.stringify(compra),
+  })
+}
+
+/** Cancela una compra (estado → Cancelada + motivo). El inventario lo ajusta el caller. */
+export async function cancelarCompraAPI(id: string, motivo: string): Promise<CompraAPI> {
+  return apiFetch<CompraAPI>(`/caja/compras/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ estado: "Cancelada", motivo }),
   })
 }

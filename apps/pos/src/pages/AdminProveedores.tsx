@@ -17,6 +17,7 @@ import {
   fmtFecha,
 } from "../lib/proveedores"
 import { MigracionProveedoresCajas } from "../components/MigracionProveedoresCajas"
+import { listarComprasAPI, type CompraAPI } from "../lib/client"
 
 // ── Etiquetas de estado ───────────────────────────────────────────────────────
 
@@ -387,8 +388,22 @@ export function AdminProveedores() {
   const [facturaModal, setFacturaModal] = useState<{ factura: FacturaCredito | null } | null>(null)
   const [confirmModal, setConfirmModal] = useState<{ mensaje: string; onAceptar: () => void } | null>(null)
   const [search, setSearch] = useState("")
+  const [compras, setCompras] = useState<CompraAPI[]>([])
+  const [comprasLoading, setComprasLoading] = useState(false)
 
   const selected = proveedores.find((p) => p.id === selectedId) ?? null
+
+  // Compras del proveedor seleccionado (módulo ferremex_compras, filtrado por id).
+  useEffect(() => {
+    if (!selectedId) { setCompras([]); return }
+    let activo = true
+    setComprasLoading(true)
+    listarComprasAPI(selectedId)
+      .then((lista) => { if (activo) setCompras(lista) })
+      .catch(() => { if (activo) setCompras([]) })
+      .finally(() => { if (activo) setComprasLoading(false) })
+    return () => { activo = false }
+  }, [selectedId])
 
   // Carga inicial desde la BD.
   useEffect(() => {
@@ -879,6 +894,64 @@ export function AdminProveedores() {
                       </div>
                     )}
                   </>
+                )}
+
+                {/* Sección de compras a este proveedor (módulo ferremex_compras) */}
+                <div className="apv-facturas-header" style={{ marginTop: 20 }}>
+                  <p className="apv-facturas-title">Compras a este proveedor</p>
+                  {compras.length > 0 && (
+                    <span style={{ fontSize: 12, color: "var(--at-text-soft)" }}>
+                      {compras.length} compra{compras.length !== 1 ? "s" : ""} ·{" "}
+                      ${compras
+                        .filter((c) => c.estado !== "Cancelada")
+                        .reduce((s, c) => s + c.total, 0)
+                        .toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                    </span>
+                  )}
+                </div>
+
+                {comprasLoading ? (
+                  <p className="apv-facturas-empty">Cargando compras…</p>
+                ) : compras.length === 0 ? (
+                  <p className="apv-facturas-empty">
+                    No hay compras registradas a este proveedor.
+                  </p>
+                ) : (
+                  <div className="apv-facturas-list">
+                    {compras.slice(0, 10).map((c) => (
+                      <div
+                        key={c.id}
+                        className={`apv-factura-row${c.estado === "Cancelada" ? " pagada" : ""}`}
+                      >
+                        <div className="apv-factura-main">
+                          <div className="apv-factura-num">
+                            {c.folio}
+                            {c.estado === "Cancelada" && (
+                              <span className="apv-estado-badge vencida" style={{ marginLeft: 8 }}>
+                                Cancelada
+                              </span>
+                            )}
+                          </div>
+                          <div className="apv-factura-fechas">
+                            <span>{fmtFecha(c.fecha)}</span>
+                            <span>{c.tipo}</span>
+                            <span>{c.articulos.length} artículo{c.articulos.length !== 1 ? "s" : ""}</span>
+                          </div>
+                        </div>
+                        <div className="apv-factura-right">
+                          <div className="apv-factura-monto">
+                            ${c.total.toLocaleString("es-MX", { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                    {compras.length > 10 && (
+                      <p className="apv-facturas-empty" style={{ textAlign: "center" }}>
+                        Mostrando las 10 compras más recientes de {compras.length}. Ve todas en
+                        Consultar Compras.
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}

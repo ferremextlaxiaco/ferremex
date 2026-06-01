@@ -44,6 +44,12 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-proveedores",
     },
     {
+      // Historial de compras (recepciones de factura) + sus artículos.
+      // Enlazado por proveedor_id al catálogo. Antes en localStorage
+      // (pos_historial_compras). Ver src/modules/ferremex-compras.
+      resolve: "./src/modules/ferremex-compras",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

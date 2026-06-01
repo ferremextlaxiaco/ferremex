@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react"
-import { listarArticulos, actualizarArticulo, incrementarInventario } from "../lib/client"
+import { listarArticulos, actualizarArticulo, incrementarInventario, listarComprasAPI, crearCompraAPI } from "../lib/client"
 import { loadProveedores, agregarFactura } from "../lib/proveedores"
 import ComprasTable from "./ComprasTable"
 import ComprasDetailPanel from "./ComprasDetailPanel"
@@ -17,17 +17,9 @@ function round2(n) {
   return Math.round(n * 100) / 100
 }
 
-// ── Historial de compras (compartido con ConsultarCompras) ────────────────────
-
-const KEY_HISTORIAL = "pos_historial_compras"
-
-function cargarHistorial() {
-  try { return JSON.parse(localStorage.getItem(KEY_HISTORIAL) ?? "[]") } catch { return [] }
-}
-
-function guardarHistorial(lista) {
-  localStorage.setItem(KEY_HISTORIAL, JSON.stringify(lista))
-}
+// ── Historial de compras ──────────────────────────────────────────────────────
+// Persistido en BD (módulo ferremex_compras) vía /caja/compras. Compartido entre
+// terminales. Antes en localStorage (`pos_historial_compras`), aislado por terminal.
 
 function calcRow(row) {
   const base   = Number(row.costo)   || 0
@@ -424,7 +416,7 @@ export default function ComprasModule() {
     showToast("Compra retomada")
   }
 
-  function handleConfirmar() {
+  async function handleConfirmar() {
     if (rows.length === 0) {
       showToast("Agrega artículos antes de confirmar", "error")
       return
@@ -436,11 +428,19 @@ export default function ComprasModule() {
       setPagoModal({ tipo: "error", faltantes })
       return
     }
-    // Validar folio duplicado contra el historial de compras
+    // Pre-check de folio duplicado: solo las compras de ESTE proveedor (consulta
+    // ligera). La unicidad real la garantiza el backend (UNIQUE en folio → 409);
+    // este check es solo para dar un mensaje rico antes de abrir el modal de pago.
     const folioBuscado = numFactura.trim()
-    const duplicado = cargarHistorial().find(
-      (c) => c.folio === folioBuscado && c.estado !== "Cancelada"
-    )
+    let duplicado = null
+    try {
+      const historial = await listarComprasAPI(proveedor.id)
+      duplicado = historial.find(
+        (c) => c.folio === folioBuscado && c.estado !== "Cancelada"
+      )
+    } catch (e) {
+      console.error("[ComprasModule] no se pudo verificar folio duplicado:", e)
+    }
     if (duplicado) {
       setPagoModal({
         tipo: "error",
@@ -479,9 +479,9 @@ export default function ComprasModule() {
         pagada:         false,
       }).catch((err) => console.error("Error al registrar factura de proveedor:", err))
     }
-    // Registrar en historial compartido con Consultar Compras
+    // Registrar en historial compartido con Consultar Compras (BD compartida).
+    // El backend asigna su propio id; aquí solo armamos el payload.
     const registroCompra = {
-      id:       uuid(),
       folio:    numFactura.trim() || `COMP-${fecha}-${Date.now().toString().slice(-4)}`,
       proveedor: proveedor?.nombre ?? "",
       // Etapa 2: enlace por ID real al catálogo (ferremex_proveedores). El nombre
@@ -505,7 +505,16 @@ export default function ComprasModule() {
       canceladaEl:       null,
       motivoCancelacion: null,
     }
-    guardarHistorial([registroCompra, ...cargarHistorial()])
+    await crearCompraAPI(registroCompra).catch((err) => {
+      console.error("Error al registrar la compra en BD:", err)
+      const dup = String(err?.message ?? "").includes("409")
+      showToast(
+        dup
+          ? `El folio "${registroCompra.folio}" ya existe. La compra no se guardó por duplicado.`
+          : "La compra se procesó pero no se pudo guardar en el historial",
+        "error"
+      )
+    })
 
     limpiarSnapshots()
     setRows([])

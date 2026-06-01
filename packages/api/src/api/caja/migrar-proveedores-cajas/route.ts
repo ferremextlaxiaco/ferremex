@@ -3,7 +3,10 @@ import { FERREMEX_CAJAS } from "../../../modules/ferremex-cajas"
 import type FerremexCajasService from "../../../modules/ferremex-cajas/service"
 import { FERREMEX_PROVEEDORES } from "../../../modules/ferremex-proveedores"
 import type FerremexProveedoresService from "../../../modules/ferremex-proveedores/service"
+import { FERREMEX_COMPRAS } from "../../../modules/ferremex-compras"
+import type FerremexComprasService from "../../../modules/ferremex-compras/service"
 import { asignarCajaAUsuario } from "../usuarios/route"
+import { esFechaISO } from "../../../lib/text"
 
 /**
  * POST /caja/migrar-proveedores-cajas — migración one-shot de los datos que cada
@@ -36,16 +39,28 @@ interface ProveedorIn {
   rfc?: string; notas?: string; facturas?: FacturaIn[]
 }
 interface CajaIn { id?: string | number; nombre?: string; descripcion?: string; activa?: boolean }
+interface ArticuloCompraIn {
+  codigo?: string; nombre?: string; cantidad?: number; precioUnit?: number
+  categoria?: string; departamento?: string; marca?: string
+}
+interface CompraIn {
+  folio?: string; proveedor?: string; proveedorId?: string | null; fecha?: string
+  tipo?: string; estado?: string; subtotal?: number; iva?: number; total?: number
+  canceladaEl?: string | null; motivoCancelacion?: string | null
+  articulos?: ArticuloCompraIn[]
+}
 
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const body = (req.body ?? {}) as {
     proveedores?: ProveedorIn[]
     cajas?: CajaIn[]
     asignaciones?: Record<string, string>
+    compras?: CompraIn[]
   }
   const proveedoresIn = Array.isArray(body.proveedores) ? body.proveedores : []
   const cajasIn = Array.isArray(body.cajas) ? body.cajas : []
   const asignacionesIn = body.asignaciones ?? {}
+  const comprasIn = Array.isArray(body.compras) ? body.compras : []
 
   const resumen = {
     proveedores_creados: 0,
@@ -54,12 +69,15 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     cajas_creadas: 0,
     cajas_omitidas: 0,
     asignaciones_aplicadas: 0,
+    compras_creadas: 0,
+    compras_omitidas: 0,
     huerfanos: [] as string[], // descripción de asignaciones que no se pudieron aplicar
   }
 
   try {
     const cajasService: FerremexCajasService = req.scope.resolve(FERREMEX_CAJAS)
     const proveedoresService: FerremexProveedoresService = req.scope.resolve(FERREMEX_PROVEEDORES)
+    const comprasService: FerremexComprasService = req.scope.resolve(FERREMEX_COMPRAS)
 
     // 1) Cajas: upsert por nombre. Mapa nombreLocal -> caja.id de BD.
     const cajasExistentes = await cajasService.listCajas({})
@@ -123,7 +141,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           if (!f.monto || Number(f.monto) <= 0) continue
           await proveedoresService.agregarFactura(proveedorId, {
             numero_factura: String(f.numero_factura),
-            fecha_emision: f.fecha_emision ?? new Date().toISOString().slice(0, 10),
+            // Sanear fecha legacy: si no es YYYY-MM-DD válida, usar hoy (no romper migración).
+            fecha_emision: esFechaISO(f.fecha_emision) ? f.fecha_emision : new Date().toISOString().slice(0, 10),
             dias_credito: Number(f.dias_credito) || 0,
             monto: Number(f.monto) || 0,
             descripcion: f.descripcion ?? "",
@@ -145,6 +164,58 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       const aplicado = await asignarCajaAUsuario(usuarioId, cajaId)
       if (aplicado) resumen.asignaciones_aplicadas++
       else resumen.huerfanos.push(`usuario ${usuarioId} no existe (caja "${nombreCaja}")`)
+    }
+
+    // 4) Compras: upsert por folio. Remapea proveedorId por nombre cuando el id
+    //    local (p.ej. "prov-001") no corresponde a un proveedor de BD.
+    if (comprasIn.length > 0) {
+      const comprasExistentes = await comprasService.listCompras({})
+      const foliosExistentes = new Set((comprasExistentes as any[]).map((c) => c.folio))
+      // Mapa nombre(lower) -> proveedor.id de BD, para remapear proveedorId.
+      const proveedoresBD = await proveedoresService.listProveedors({})
+      const porNombreProv = new Map<string, string>(
+        (proveedoresBD as any[]).map((p) => [String(p.nombre).trim().toLowerCase(), p.id])
+      )
+      const idsValidos = new Set((proveedoresBD as any[]).map((p) => p.id))
+
+      for (const compra of comprasIn) {
+        const folio = String(compra.folio ?? "").trim()
+        if (!folio || foliosExistentes.has(folio)) {
+          resumen.compras_omitidas++
+          continue
+        }
+        // proveedorId: usar el del payload si existe en BD; si no, remapear por nombre.
+        let proveedorId: string | null = null
+        if (compra.proveedorId && idsValidos.has(compra.proveedorId)) {
+          proveedorId = compra.proveedorId
+        } else if (compra.proveedor) {
+          proveedorId = porNombreProv.get(String(compra.proveedor).trim().toLowerCase()) ?? null
+        }
+        await comprasService.crearCompraConArticulos(
+          {
+            folio,
+            proveedor: compra.proveedor ?? "",
+            proveedor_id: proveedorId,
+            fecha: compra.fecha ?? new Date().toISOString().slice(0, 10),
+            tipo: compra.tipo ?? "Factura",
+            estado: compra.estado ?? "Recibida",
+            subtotal: Number(compra.subtotal) || 0,
+            iva: Number(compra.iva) || 0,
+            total: Number(compra.total) || 0,
+          },
+          (compra.articulos ?? []).map((a) => ({
+            codigo: a.codigo,
+            nombre: a.nombre,
+            cantidad: a.cantidad,
+            precio_unit: a.precioUnit,
+            categoria: a.categoria ?? null,
+            departamento: a.departamento ?? null,
+            marca: a.marca ?? null,
+          }))
+        )
+        foliosExistentes.add(folio)
+        resumen.compras_creadas++
+      }
     }
 
     res.json({ ok: true, resumen })

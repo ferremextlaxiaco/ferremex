@@ -2,6 +2,7 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_PROVEEDORES } from "../../../../../modules/ferremex-proveedores"
 import type FerremexProveedoresService from "../../../../../modules/ferremex-proveedores/service"
 import { aFacturaPOS, type FacturaProveedorPOS } from "../../route"
+import { esFechaISO } from "../../../../../lib/text"
 
 /**
  * POST /caja/proveedores/:id/facturas — agrega una factura por pagar al proveedor.
@@ -22,6 +23,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const monto = Number(body.monto)
     if (!Number.isFinite(monto) || monto <= 0) {
       res.status(400).json({ error: "El monto debe ser un número positivo" }); return
+    }
+    // fecha_emision: si viene, debe ser YYYY-MM-DD válida; si no, default a hoy.
+    if (body.fecha_emision !== undefined && body.fecha_emision !== "" && !esFechaISO(body.fecha_emision)) {
+      res.status(400).json({ error: "La fecha de emisión debe tener formato YYYY-MM-DD válido" }); return
     }
     const creada = await service.agregarFactura(id, {
       numero_factura: String(body.numero_factura).trim(),
