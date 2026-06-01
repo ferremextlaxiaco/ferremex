@@ -38,6 +38,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number }
   const variantesBase: VarianteBase[] = []
+  // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
+  // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
+  // El match PARCIAL de SKU (abajo) NO corta: se fusiona con la búsqueda por nombre.
+  let matchExacto = false
 
   // ── Intento de match exacto por SKU o código de barras ──────────────────
   const codigoCandidato = skuExacto || (q && !q.includes(" ") ? q : "")
@@ -81,12 +85,15 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         } catch { /* sin metadata */ }
       }
       variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones, mayoreoActivo, mayoreoMin, precio2 })
+      matchExacto = true
     }
   }
 
   // ── Búsqueda parcial de SKU (case-insensitive) cuando el match exacto falló ──
   // Cubre casos como "gr6x1" → GR6X1, GR6X11/2, GR6X11/4, etc.
-  if (variantesBase.length === 0 && codigoCandidato && !skuExacto) {
+  // NO corta la búsqueda por nombre: "pvc" debe traer tanto SKUs con "pvc" como
+  // productos cuyo TÍTULO contiene "pvc" (p. ej. "Tubo de PVC" con SKU 3447).
+  if (!matchExacto && codigoCandidato && !skuExacto) {
     const qLower = codigoCandidato.toLowerCase()
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allVars = await productModule.listProductVariants(
@@ -124,10 +131,13 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     }
   }
 
-  if (variantesBase.length > 0) {
-    // Ya encontramos por SKU (exacto o parcial) — saltar la búsqueda fonética
+  if (matchExacto) {
+    // Match exacto de SKU/barcode → un único resultado, sin búsqueda por nombre.
   } else if (!skuExacto) {
     // ── Búsqueda por texto / filtros ────────────────────────────────────────
+    // Corre SIEMPRE que no haya match exacto (aunque el SKU parcial ya haya
+    // aportado variantes): así "pvc" trae SKUs-PVC + títulos que contienen "pvc".
+    // Las duplicadas (misma variante por SKU y por nombre) se deduplican al final.
 
     // Paso 1: cargar todos los productos (solo id + title + metadata, sin relaciones → rápido)
     // Si hay categoryId, primero obtenemos los productIds de esa categoría porque
@@ -210,6 +220,17 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
+  // ── Deduplicar por id de variante ─────────────────────────────────────────
+  // El SKU parcial y la búsqueda fonética pueden aportar la misma variante.
+  const vistos = new Set<string>()
+  const variantesUnicas = variantesBase.filter((v) => {
+    if (vistos.has(v.id)) return false
+    vistos.add(v.id)
+    return true
+  })
+  variantesBase.length = 0
+  variantesBase.push(...variantesUnicas)
+
   // ── Precios via query.graph (cross-módulo: variant → price_set → prices) ──
   const variantIds = variantesBase.map((v) => v.id)
   const { data: variantsConPrecios } = await query.graph({
@@ -269,8 +290,31 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       }
     })
     .filter((r) => r.sku && r.descripcion)
-    // ── Ordenar: primero los que tienen stock ─────────────────────────────
-    .sort((a, b) => b.existencia - a.existencia)
+
+  // ── Ordenar: relevancia LITERAL primero, luego stock ───────────────────────
+  // La búsqueda fonética hace muda la "h" (brocha → broca), así que "brocha"
+  // matchea cientos de pijas "punta de broca". Para que lo que el usuario
+  // escribió LITERALMENTE pese más, puntuamos por coincidencia de texto crudo
+  // (sin normalización fonética) antes de desempatar por existencia.
+  const qLiteral = q.toLowerCase().trim()
+  const relevancia = (descripcion: string, sku: string): number => {
+    if (!qLiteral) return 5
+    const desc = descripcion.toLowerCase()
+    const clave = sku.toLowerCase()
+    if (clave === qLiteral || desc === qLiteral) return 0
+    if (desc.startsWith(qLiteral)) return 1            // "brocha profesional…"
+    if (desc.includes(` ${qLiteral}`)) return 2        // palabra completa dentro del título
+    if (desc.includes(qLiteral)) return 3              // subcadena en cualquier parte
+    return 4                                           // solo coincidió por fonética (broca↔brocha)
+  }
+
+  resultados.sort((a, b) => {
+    const ra = relevancia(a.descripcion, a.sku)
+    const rb = relevancia(b.descripcion, b.sku)
+    if (ra !== rb) return ra - rb
+    // Dentro del mismo nivel de relevancia: primero los que tienen stock.
+    return b.existencia - a.existencia
+  })
 
   res.json(resultados)
 }
