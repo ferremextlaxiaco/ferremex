@@ -1,13 +1,10 @@
 import { useNavigate } from "react-router-dom"
-import { MigracionNube } from "../components/MigracionNube"
 
 export function AdminClientes() {
   const navigate = useNavigate()
 
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", padding: 32, gap: 12 }}>
-      <MigracionNube />
-
       <p style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--at-text-muted)", marginBottom: 8 }}>
         Módulo de Clientes
       </p>
