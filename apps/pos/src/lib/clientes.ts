@@ -23,6 +23,7 @@ import {
   listarCarteraGlobalAPI,
   obtenerCarteraClienteAPI,
   agregarMovimientoCarteraAPI,
+  anularMovimientoCarteraAPI,
 } from "./client"
 
 // ---------------------------------------------------------------------------
@@ -62,6 +63,12 @@ export interface Movimiento {
   plazo?: number
   descripcion: string
   nota?: string
+  // Anulación de un abono registrado por error. Cuando `cancelado` es true, el
+  // movimiento deja de contar en el cálculo de saldos (el monto vuelve a la
+  // deuda) pero permanece visible como rastro auditable.
+  cancelado?: boolean
+  motivo_cancelacion?: string | null
+  fecha_cancelacion?: string | null
 }
 
 export interface NotaCartera {
@@ -154,6 +161,19 @@ export async function agregarMovimientoCredito(
   mov: Omit<Movimiento, "id">
 ): Promise<Movimiento> {
   return agregarMovimientoCarteraAPI(clienteId, mov)
+}
+
+/**
+ * Anula un abono (movimiento de pago) registrado por error. No lo borra: el
+ * backend lo marca cancelado, con lo que el monto vuelve a la deuda al
+ * recalcular saldos. `motivo` es obligatorio (rastro auditable).
+ */
+export async function anularAbono(
+  clienteId: string,
+  movimientoId: string,
+  motivo: string
+): Promise<Movimiento> {
+  return anularMovimientoCarteraAPI(clienteId, movimientoId, motivo)
 }
 
 // ---------------------------------------------------------------------------

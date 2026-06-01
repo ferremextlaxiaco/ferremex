@@ -705,7 +705,9 @@ export type Routes = {
         cartera: typeof import("../../src/api/caja/cartera/route") & {
             $customerId: typeof import("../../src/api/caja/cartera/[customerId]/route") & {
                 limite: typeof import("../../src/api/caja/cartera/[customerId]/limite/route");
-                movimientos: typeof import("../../src/api/caja/cartera/[customerId]/movimientos/route");
+                movimientos: typeof import("../../src/api/caja/cartera/[customerId]/movimientos/route") & {
+                    $movId: typeof import("../../src/api/caja/cartera/[customerId]/movimientos/[movId]/route");
+                };
                 notas: typeof import("../../src/api/caja/cartera/[customerId]/notas/route");
             };
         };

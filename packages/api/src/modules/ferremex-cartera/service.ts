@@ -66,6 +66,35 @@ class FerremexCarteraService extends MedusaService({
     return await this.createNotaCarteras({ ...nota, cartera_id: cartera.id })
   }
 
+  /**
+   * Anula un movimiento (típicamente un abono registrado por error). No lo
+   * borra: lo marca cancelado para que deje de contar en el cálculo de saldos
+   * (el monto "regresa" a la deuda) pero quede rastro auditable. Valida que el
+   * movimiento pertenezca a la cartera del cliente y que no esté ya cancelado.
+   */
+  async anularMovimiento(
+    customer_id: string,
+    movimiento_id: string,
+    motivo: string,
+    fecha_cancelacion: string
+  ) {
+    const cartera = await this.getOrCreateCartera(customer_id)
+    const movs = await this.listMovimientoCarteras({ id: movimiento_id, cartera_id: cartera.id })
+    const mov = movs[0]
+    if (!mov) {
+      throw new Error("Movimiento no encontrado en la cartera de este cliente")
+    }
+    if (mov.cancelado) {
+      throw new Error("El movimiento ya está cancelado")
+    }
+    return await this.updateMovimientoCarteras({
+      id: movimiento_id,
+      cancelado: true,
+      motivo_cancelacion: motivo,
+      fecha_cancelacion,
+    })
+  }
+
   async registrarCambioLimite(
     customer_id: string,
     cambio: { fecha: string; usuario: string; anterior: number; nuevo: number; nota: string }

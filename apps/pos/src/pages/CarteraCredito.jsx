@@ -3,7 +3,7 @@ import {
   ShoppingCart, Banknote, Search, X, Plus, ChevronUp, ChevronDown,
   TriangleAlert, Printer, FileText, Edit, Check, Trash2,
 } from "lucide-react"
-import { loadClientes, actualizarCliente, loadCartera, agregarMovimientoCredito } from "../lib/clientes"
+import { loadClientes, actualizarCliente, loadCartera, agregarMovimientoCredito, anularAbono } from "../lib/clientes"
 import { obtenerUsuarios, obtenerVenta, agregarNotaCarteraAPI, registrarCambioLimiteAPI } from "../lib/client"
 import { formatMXN as fmtPeso } from "../lib/format"
 
@@ -77,8 +77,12 @@ function semaforoMovimiento(mov, plazo) {
 // Apply FIFO to determine which purchases are paid/partially paid.
 // Returns { balance, available, overdue, movimientosConEstado }
 function calcularSaldos(movimientos, plazo, limite) {
+  // Los movimientos cancelados (abonos anulados por error) NO cuentan en el
+  // cálculo de saldos: el monto "regresa" a la deuda. Se siguen mostrando en la
+  // lista (tachados), por eso solo se excluyen del FIFO, no del output.
+  const activos = movimientos.filter(m => !m.cancelado)
   // Sort all by date ascending (for FIFO)
-  const sorted = [...movimientos].sort((a, b) => a.fecha.localeCompare(b.fecha))
+  const sorted = [...activos].sort((a, b) => a.fecha.localeCompare(b.fecha))
 
   // FIFO: pool of available payments
   let paymentPool = 0
@@ -117,8 +121,10 @@ function calcularSaldos(movimientos, plazo, limite) {
 
   const movimientosConEstado = movimientos.map(m => ({
     ...m,
-    _estado: estados[m.id] ?? (m.tipo === "pago" ? "pago" : "pendiente"),
-    _semaforo: m.tipo === "pago" ? "gray" : semaforoMovimiento(m, plazo),
+    // Los cancelados se marcan aparte para renderizarlos tachados; no tienen
+    // estado FIFO porque no participaron en el cálculo.
+    _estado: m.cancelado ? "cancelado" : (estados[m.id] ?? (m.tipo === "pago" ? "pago" : "pendiente")),
+    _semaforo: m.cancelado ? "gray" : (m.tipo === "pago" ? "gray" : semaforoMovimiento(m, plazo)),
   }))
 
   const available = Math.max(0, limite - balance)
@@ -142,7 +148,9 @@ function semaforoCliente(movimientosConEstado, balance) {
 // Returns which compras a specific pago covered (FIFO order).
 // { aplicaciones: [{ compra, aplicado }], excedente }
 function calcularAplicacionAbono(movimientos, pagoId) {
-  const sorted = [...movimientos].sort((a, b) => a.fecha.localeCompare(b.fecha))
+  // Excluir movimientos cancelados: un abono anulado no aplica a ninguna compra.
+  const activos = movimientos.filter(m => !m.cancelado)
+  const sorted = [...activos].sort((a, b) => a.fecha.localeCompare(b.fecha))
   const compras = sorted.filter(m => m.tipo === "compra")
   const pagos   = sorted.filter(m => m.tipo === "pago")
 
@@ -829,7 +837,7 @@ function EliminarCuentaModal({ open, portfolio, onClose, onConfirm }) {
 // DetalleAbonoModal — FIFO allocation when clicking a pago movement
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DetalleAbonoModal({ mov, portfolio, onClose }) {
+function DetalleAbonoModal({ mov, portfolio, onClose, onAnular }) {
   if (!mov || !portfolio) return null
 
   const { aplicaciones, excedente } = calcularAplicacionAbono(portfolio.movimientos, mov.id)
@@ -911,9 +919,33 @@ function DetalleAbonoModal({ mov, portfolio, onClose }) {
               </div>
             </div>
           )}
+
+          {/* Si el abono ya fue anulado, mostrar el aviso con motivo */}
+          {mov.cancelado && (
+            <div style={{ marginTop: 14, background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.25)", borderRadius: 6, padding: "10px 12px", fontSize: 13 }}>
+              <div style={{ fontWeight: 700, color: "#dc2626", marginBottom: 2 }}>Abono cancelado</div>
+              {mov.motivo_cancelacion && (
+                <div style={{ color: "#71717a" }}>Motivo: {mov.motivo_cancelacion}</div>
+              )}
+              {mov.fecha_cancelacion && (
+                <div style={{ color: "#a1a1aa", fontSize: 11, marginTop: 2 }}>
+                  {fmtFecha(mov.fecha_cancelacion.slice(0, 10))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        <div style={S.modalFooter}>
+        <div style={{ ...S.modalFooter, justifyContent: mov.cancelado ? "flex-end" : "space-between" }}>
+          {/* Cancelar el abono (devolver el monto a la deuda). Solo si no está ya anulado. */}
+          {!mov.cancelado && (
+            <button
+              style={{ ...S.btnSecondary, color: "#dc2626", borderColor: "rgba(220,38,38,0.4)" }}
+              onClick={() => onAnular?.(mov)}
+            >
+              Cancelar abono
+            </button>
+          )}
           <button style={S.btnSecondary} onClick={onClose}>Cerrar</button>
         </div>
       </div>
@@ -1111,6 +1143,10 @@ export default function CarteraCredito() {
   const [showAbonoConfirm, setShowAbonoConfirm] = useState(false)
   const [showEliminar,     setShowEliminar]     = useState(false)
   const [movDetalle,       setMovDetalle]       = useState(null)
+  // Anulación de abono: el movimiento a cancelar + motivo + flag de envío.
+  const [anularMov,        setAnularMov]        = useState(null)
+  const [anularMotivo,     setAnularMotivo]     = useState("")
+  const [anulando,         setAnulando]         = useState(false)
 
   // ── Abono form ────────────────────────────────────────────────────────────
   const [abonoForm, setAbonoForm] = useState({
@@ -1180,8 +1216,8 @@ export default function CarteraCredito() {
       const diasVence = proximoVence
         ? Math.ceil((proximoVence - new Date()) / 86400000)
         : null
-      // Last payment
-      const pagos = p.movimientos.filter(m => m.tipo === "pago").sort((a, b) => b.fecha.localeCompare(a.fecha))
+      // Last payment (los abonos cancelados no cuentan como "último abono")
+      const pagos = p.movimientos.filter(m => m.tipo === "pago" && !m.cancelado).sort((a, b) => b.fecha.localeCompare(a.fecha))
       const ultimoPago = pagos[0] ?? null
       return { ...p, balance, available, overdue, movimientosConEstado, semaforo, diasVence, ultimoPago }
     })
@@ -1198,7 +1234,7 @@ export default function CarteraCredito() {
     // DSO = (cartera total / ventas últimos 30d) × 30 — approximate with total balance / 30 × 30
     const totalVentas30 = portfoliosComputados.reduce((s, p) => {
       const cutoff = daysAgo(30)
-      return s + p.movimientos.filter(m => m.tipo === "compra" && m.fecha >= cutoff).reduce((ss, m) => ss + m.monto, 0)
+      return s + p.movimientos.filter(m => m.tipo === "compra" && !m.cancelado && m.fecha >= cutoff).reduce((ss, m) => ss + m.monto, 0)
     }, 0)
     const dso = totalVentas30 > 0 ? Math.round((carteraTotal / totalVentas30) * 30) : 0
     return { carteraTotal, totalVencido, enMora, dso }
@@ -1330,6 +1366,29 @@ export default function CarteraCredito() {
     showToast(`Abono de ${fmtPeso(monto)} registrado correctamente`)
   }
 
+  // ── Anular abono ──────────────────────────────────────────────────────────
+  // Cancela un abono registrado por error: el monto regresa a la deuda. No se
+  // borra (rastro auditable con motivo). Requiere un motivo no vacío.
+  async function handleAnularAbono() {
+    if (!selPortfolio || !anularMov) return
+    const motivo = anularMotivo.trim()
+    if (!motivo) return
+    setAnulando(true)
+    try {
+      await anularAbono(selPortfolio.clienteId, anularMov.id, motivo)
+      const cartera = await loadCartera()
+      setPortfolios(buildPortfolios(clientesLS, cartera))
+      setAnularMov(null)
+      setAnularMotivo("")
+      setMovDetalle(null)
+      showToast(`Abono de ${fmtPeso(anularMov.monto)} cancelado — el monto regresó a la deuda`, "#dc2626")
+    } catch (e) {
+      showToast(e?.message ?? "No se pudo cancelar el abono", "#dc2626")
+    } finally {
+      setAnulando(false)
+    }
+  }
+
   // ── Agregar nota ──────────────────────────────────────────────────────────
   async function handleAgregarNota() {
     if (!selPortfolio || !nuevaNota.trim()) return
@@ -1401,7 +1460,7 @@ export default function CarteraCredito() {
     const { balance, available, overdue, limite, plazo, historialLimite, diasVence, movimientosConEstado } = selPortfolio
 
     // Próximo vencimiento
-    const pendientes = movimientosConEstado.filter(m => m.tipo === "compra" && m._estado !== "pagado")
+    const pendientes = movimientosConEstado.filter(m => m.tipo === "compra" && !m.cancelado && m._estado !== "pagado")
     let proximaDue = null
     pendientes.forEach(m => {
       const due = new Date(m.fecha + "T12:00:00")
@@ -1547,6 +1606,7 @@ export default function CarteraCredito() {
             }
           }
 
+          const cancelado = !!m.cancelado
           return (
             <div
               key={m.id}
@@ -1555,29 +1615,39 @@ export default function CarteraCredito() {
                 display: "flex", alignItems: "flex-start", gap: 12,
                 padding: "12px 16px", borderBottom: "1px solid #f4f4f5",
                 cursor: "pointer", transition: "background 0.1s",
+                opacity: cancelado ? 0.6 : 1,
               }}
               onMouseEnter={e => e.currentTarget.style.background = "#f9f9fa"}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}
             >
               <div style={{ marginTop: 3 }}>
                 {isPago
-                  ? <Banknote size={17} style={{ color: "#16a34a" }} />
+                  ? <Banknote size={17} style={{ color: cancelado ? "#a1a1aa" : "#16a34a" }} />
                   : <ShoppingCart size={17} style={{ color: semColor }} />
                 }
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: "#18181b" }}>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: "#18181b", textDecoration: cancelado ? "line-through" : "none" }}>
                     {fmtPeso(m.monto)}
                   </span>
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
-                    background: isPago ? "rgba(22,163,74,0.1)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.1)" : "rgba(249,99,2,0.1)",
-                    color:      isPago ? "#16a34a"              : m.tipo === "cancelacion" ? "#dc2626"             : "#c75000",
-                    border: `1px solid ${isPago ? "rgba(22,163,74,0.25)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.25)" : "rgba(249,99,2,0.25)"}`,
-                  }}>
-                    {isPago ? "Abono" : m.tipo === "cancelacion" ? "Cancelación" : "Compra"}
-                  </span>
+                  {cancelado ? (
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
+                      background: "rgba(239,68,68,0.1)", color: "#dc2626", border: "1px solid rgba(239,68,68,0.25)",
+                    }}>
+                      Cancelado
+                    </span>
+                  ) : (
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: "2px 9px", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0,
+                      background: isPago ? "rgba(22,163,74,0.1)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.1)" : "rgba(249,99,2,0.1)",
+                      color:      isPago ? "#16a34a"              : m.tipo === "cancelacion" ? "#dc2626"             : "#c75000",
+                      border: `1px solid ${isPago ? "rgba(22,163,74,0.25)" : m.tipo === "cancelacion" ? "rgba(239,68,68,0.25)" : "rgba(249,99,2,0.25)"}`,
+                    }}>
+                      {isPago ? "Abono" : m.tipo === "cancelacion" ? "Cancelación" : "Compra"}
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontSize: 13, color: "#71717a", marginTop: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {m.descripcion}
@@ -1604,7 +1674,7 @@ export default function CarteraCredito() {
     if (!selPortfolio) return null
     const { movimientosConEstado, plazo } = selPortfolio
     const comprasPendientes = movimientosConEstado.filter(
-      m => m.tipo === "compra" && m._estado !== "pagado"
+      m => m.tipo === "compra" && !m.cancelado && m._estado !== "pagado"
     )
 
     return (
@@ -2066,7 +2136,46 @@ export default function CarteraCredito() {
         mov={movDetalle?.tipo === "pago" ? movDetalle : null}
         portfolio={selPortfolio}
         onClose={() => setMovDetalle(null)}
+        onAnular={(mov) => { setAnularMov(mov); setAnularMotivo("") }}
       />
+
+      {/* ── ANULAR ABONO (motivo obligatorio) ───────────────────────────── */}
+      {anularMov && (
+        <div style={{ ...S.overlay, zIndex: 1200 }} onClick={e => { if (e.target === e.currentTarget && !anulando) { setAnularMov(null); setAnularMotivo("") } }}>
+          <div style={{ ...S.modal, width: 440 }}>
+            <div style={S.modalHeader}>
+              <div style={{ fontSize: 15, fontWeight: 700, color: "#18181b" }}>Cancelar abono</div>
+              <button style={S.btnGhost} disabled={anulando} onClick={() => { setAnularMov(null); setAnularMotivo("") }}><X size={16} /></button>
+            </div>
+            <div style={S.modalBody}>
+              <div style={{ background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.22)", borderRadius: 6, padding: "10px 12px", marginBottom: 14, fontSize: 13, color: "#71717a" }}>
+                Se cancelará el abono de <strong style={{ color: "#dc2626" }}>{fmtPeso(anularMov.monto)}</strong> del {fmtFecha(anularMov.fecha)}.
+                El monto <strong>regresará a la deuda</strong> del cliente. El abono no se borra: queda registrado como cancelado.
+              </div>
+              <div style={S.fieldGroup}>
+                <label style={S.label}>Motivo de la cancelación *</label>
+                <textarea
+                  style={{ ...S.input, minHeight: 70, resize: "vertical", fontFamily: "inherit" }}
+                  placeholder="Ej. El cajero registró un monto equivocado"
+                  value={anularMotivo}
+                  onChange={e => setAnularMotivo(e.target.value)}
+                  autoFocus
+                />
+              </div>
+            </div>
+            <div style={S.modalFooter}>
+              <button style={S.btnSecondary} disabled={anulando} onClick={() => { setAnularMov(null); setAnularMotivo("") }}>Volver</button>
+              <button
+                style={{ ...S.btnPrimary, background: "#dc2626", opacity: (!anularMotivo.trim() || anulando) ? 0.5 : 1, cursor: (!anularMotivo.trim() || anulando) ? "default" : "pointer" }}
+                disabled={!anularMotivo.trim() || anulando}
+                onClick={handleAnularAbono}
+              >
+                {anulando ? "Cancelando…" : "Confirmar cancelación"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── MODALS ──────────────────────────────────────────────────────── */}
 

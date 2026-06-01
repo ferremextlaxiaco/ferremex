@@ -15,6 +15,12 @@ const MovimientoCartera = model.define("cartera_movimiento", {
   plazo: model.number().nullable(),
   descripcion: model.text(),
   nota: model.text().nullable(),
+  // Anulación de un abono registrado por error. El movimiento NO se borra
+  // (rastro auditable): se marca cancelado y deja de contar en el cálculo de
+  // saldos (el monto "regresa" a la deuda). Aplica sobre todo a tipo="pago".
+  cancelado: model.boolean().default(false),
+  motivo_cancelacion: model.text().nullable(),
+  fecha_cancelacion: model.text().nullable(), // ISO timestamp
   cartera: model.belongsTo(() => CarteraCliente, { mappedBy: "movimientos" }),
 })
 

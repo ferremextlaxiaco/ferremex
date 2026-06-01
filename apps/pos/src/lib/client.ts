@@ -805,6 +805,25 @@ export async function agregarMovimientoCarteraAPI(
   })
 }
 
+/**
+ * Anula (cancela) un movimiento de cartera —típicamente un abono registrado
+ * por error—. No lo borra: lo marca cancelado para que el monto regrese a la
+ * deuda y quede rastro auditable con `motivo`.
+ */
+export async function anularMovimientoCarteraAPI(
+  customerId: string,
+  movimientoId: string,
+  motivo: string
+): Promise<Movimiento> {
+  return apiFetch<Movimiento>(
+    `/caja/cartera/${encodeURIComponent(customerId)}/movimientos/${encodeURIComponent(movimientoId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ motivo }),
+    }
+  )
+}
+
 export async function agregarNotaCarteraAPI(
   customerId: string,
   nota: Omit<NotaCartera, "id">

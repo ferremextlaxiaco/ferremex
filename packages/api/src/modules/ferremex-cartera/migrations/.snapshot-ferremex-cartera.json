@@ -318,6 +318,34 @@
           "nullable": true,
           "mappedType": "text"
         },
+        "cancelado": {
+          "name": "cancelado",
+          "type": "boolean",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": false,
+          "default": "false",
+          "mappedType": "boolean"
+        },
+        "motivo_cancelacion": {
+          "name": "motivo_cancelacion",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "mappedType": "text"
+        },
+        "fecha_cancelacion": {
+          "name": "fecha_cancelacion",
+          "type": "text",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "mappedType": "text"
+        },
         "cartera_id": {
           "name": "cartera_id",
           "type": "text",
