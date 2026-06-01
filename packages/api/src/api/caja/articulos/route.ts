@@ -452,8 +452,24 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return toArticuloPOS(p, variant, precio1, existencia)
   })
 
-  // Ordenar: primero con existencia > 0, luego alfabético
+  // Relevancia respecto al término LITERAL escrito (qRaw), para que un match
+  // exacto gane al match solo fonético. Ej: buscar "brocha" debe rankear las
+  // "Brocha…" por encima de las "Broca…" (que solo coinciden por la 'h' muda).
+  // Menor puntaje = más relevante.
+  const relevancia = (a: any): number => {
+    const desc = String(a.descripcion ?? "").toLowerCase()
+    const sku = String(a.clave ?? "").toLowerCase()
+    if (sku === qRaw || desc === qRaw) return 0           // match exacto
+    if (desc.startsWith(qRaw)) return 1                   // empieza con el término
+    if (sku.startsWith(qRaw)) return 2                    // SKU empieza con el término
+    if (desc.includes(` ${qRaw}`) || desc.includes(qRaw)) return 3 // contiene el término literal
+    return 4                                              // solo match fonético
+  }
+
+  // Ordenar: 1º relevancia literal, 2º con existencia, 3º alfabético.
   result.sort((a: any, b: any) => {
+    const ra = relevancia(a), rb = relevancia(b)
+    if (ra !== rb) return ra - rb
     const aStock = a.existencia > 0 ? 1 : 0
     const bStock = b.existencia > 0 ? 1 : 0
     if (bStock !== aStock) return bStock - aStock

@@ -1,35 +1,53 @@
-import { useState, useRef, useMemo } from "react"
+import { useState, useRef, useMemo, useEffect } from "react"
 import { Trash2 } from "lucide-react"
-import { listarArticulos, listarArticulosDeCatalogo, ajustarInventario } from "../lib/client"
+import { listarCatalogos, ajustarInventario } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import { formatMXN } from "../lib/format"
 import { DataTable } from "../components/DataTable"
 import { InventarioToolbar } from "../components/InventarioToolbar"
+import SelectorArticulosPopup from "../components/SelectorArticulosPopup"
 
 /**
  * Ajuste masivo de inventario por SKU — módulo React (reemplaza el viejo iframe).
  *
- * Dueño del estado. Dos vías para cargar artículos: buscador (uno por uno, con
- * auto-agregar en match exacto) o filtros de taxonomía (por lote/categoría).
+ * Dueño del estado. Los artículos se cargan vía el SELECTOR CRISTAL
+ * (SelectorArticulosPopup, multiSelect): se abre al enfocar la barra, busca por
+ * texto o taxonomía, se marcan varios y se agregan en lote. La pre-selección la
+ * posee este módulo, así persiste al cerrar/reabrir el popup mientras el módulo
+ * esté montado.
  * Tabla rica (TanStack/DataTable): Localización, Stock, Nueva cantidad editable,
  * Diferencia (color), Monto $ (diferencia × precioCompra). Barra de resumen abajo.
  * Confirma vía ajustarInventario() con advertencia de cantidades negativas.
  *
  * Cumple el Contrato de Conexión: datos por client.ts, taxonomía por
- * listarCatalogos (dentro del toolbar), feedback con useToasts, formatMXN.
+ * listarCatalogos, feedback con useToasts, formatMXN.
  */
 export function InventarioModule() {
   const { toasts, push } = useToasts()
-  const [resultados, setResultados] = useState([])
-  const [buscando, setBuscando] = useState(false)
-  const [cargandoLote, setCargandoLote] = useState(false)
-  const [mostrarResultados, setMostrarResultados] = useState(false)
-  const [terminoBuscado, setTerminoBuscado] = useState("")
   // Filas de ajuste: { clave, descripcion, localizacion, existencia, precioCompra, nueva }
   const [filas, setFilas] = useState([])
   const [filtroTabla, setFiltroTabla] = useState("")
   const [guardando, setGuardando] = useState(false)
   const [confirmando, setConfirmando] = useState(false)
+
+  // Selector cristal
+  const [buscadorAbierto, setBuscadorAbierto] = useState(false)
+  const [taxonomia, setTaxonomia] = useState({ depts: [], cats: [], marcas: [] })
+  const [taxLoading, setTaxLoading] = useState(true)
+  // Pre-selección del popup (persiste mientras el módulo esté montado):
+  //   selSkus = Set de SKUs marcados; selArts = Map SKU→artículo (para agregar sin re-buscar)
+  const [selSkus, setSelSkus] = useState(() => new Set())
+  const selArts = useRef(new Map())
+
+  // Cargar taxonomía una vez (única fuente: listarCatalogos).
+  useEffect(() => {
+    let on = true
+    listarCatalogos()
+      .then((d) => { if (on) setTaxonomia(d) })
+      .catch(() => { /* sin taxonomía los filtros del popup quedan vacíos */ })
+      .finally(() => { if (on) setTaxLoading(false) })
+    return () => { on = false }
+  }, [])
 
   // ── Helpers de filas ────────────────────────────────────────────────────────
   function filaDeArticulo(a) {
@@ -43,31 +61,6 @@ export function InventarioModule() {
     }
   }
 
-  function agregar(art) {
-    if (!art.clave) { push("El artículo no tiene clave/SKU", "error"); return }
-    let yaEstaba = false
-    setFilas((prev) => {
-      if (prev.some((f) => f.clave === art.clave)) { yaEstaba = true; return prev }
-      return [...prev, filaDeArticulo(art)]
-    })
-    if (yaEstaba) push(`${art.clave} ya está en el ajuste`, "info")
-    cerrarResultados()
-  }
-
-  /** Agrega varios a la vez (carga por lote), sin duplicar. */
-  function agregarVarios(arts) {
-    let agregados = 0
-    setFilas((prev) => {
-      const claves = new Set(prev.map((f) => f.clave))
-      const nuevas = arts
-        .filter((a) => a.clave && !claves.has(a.clave))
-        .map(filaDeArticulo)
-      agregados = nuevas.length
-      return [...prev, ...nuevas]
-    })
-    return agregados
-  }
-
   function setNueva(clave, valor) {
     setFilas((prev) => prev.map((f) => (f.clave === clave ? { ...f, nueva: valor } : f)))
   }
@@ -75,45 +68,47 @@ export function InventarioModule() {
     setFilas((prev) => prev.filter((f) => f.clave !== clave))
   }
   function limpiarTodo() {
-    setFilas([]); setFiltroTabla(""); cerrarResultados()
-  }
-  function cerrarResultados() {
-    setResultados([]); setMostrarResultados(false)
-  }
-
-  // ── Búsqueda (uno por uno) ────────────────────────────────────────────────────
-  async function onBuscar(term) {
-    setBuscando(true)
-    setTerminoBuscado(term)
-    try {
-      const arts = await listarArticulos(term)
-      // Auto-agregar si hay UN match exacto por clave (flujo de escáner).
-      const exacto = arts.find((a) => a.clave?.toLowerCase() === term.toLowerCase())
-      if (exacto && arts.length === 1) { agregar(exacto); return }
-      setResultados(arts.slice(0, 50))
-      setMostrarResultados(true)
-    } catch (e) {
-      push(`Error al buscar: ${e instanceof Error ? e.message : "desconocido"}`, "error")
-    } finally {
-      setBuscando(false)
-    }
+    setFilas([]); setFiltroTabla("")
+    setSelSkus(new Set()); selArts.current.clear()
+    setBuscadorAbierto(false)
   }
 
-  // ── Carga por lote (taxonomía) ────────────────────────────────────────────────
-  async function onCargarLote({ departamento, categoria, marca }) {
-    setCargandoLote(true)
-    try {
-      let arts = await listarArticulosDeCatalogo(departamento, categoria)
-      if (marca) arts = arts.filter((a) => a.marca === marca)
-      if (arts.length === 0) { push("No se encontraron artículos en esa categoría", "info"); return }
-      const n = agregarVarios(arts)
-      push(n > 0 ? `${n} artículo(s) agregados al ajuste` : "Todos ya estaban en el ajuste",
-        n > 0 ? "success" : "info")
-    } catch (e) {
-      push(`Error al cargar la categoría: ${e instanceof Error ? e.message : "desconocido"}`, "error")
-    } finally {
-      setCargandoLote(false)
+  // ── Selector cristal (multiSelect) ────────────────────────────────────────────
+  // SKUs que ya están en la lista de ajuste (para deshabilitarlos en el popup).
+  const skusEnLista = useMemo(() => new Set(filas.map((f) => f.clave)), [filas])
+
+  /** Marca/desmarca un artículo en la pre-selección. */
+  function toggleSeleccion(art) {
+    const sku = art.clave || art.claveAlterna
+    if (!sku) { push("El artículo no tiene clave/SKU", "error"); return }
+    // El mapa de artículos (ref) se actualiza FUERA del updater de estado: el
+    // updater debe ser puro (StrictMode lo ejecuta 2× en dev y un side-effect
+    // ahí desincronizaría selArts del Set → "nada nuevo que agregar").
+    const yaEstaba = selSkus.has(sku)
+    if (yaEstaba) selArts.current.delete(sku)
+    else selArts.current.set(sku, art)
+    setSelSkus((prev) => {
+      const next = new Set(prev)
+      if (next.has(sku)) next.delete(sku)
+      else next.add(sku)
+      return next
+    })
+  }
+
+  /** Vuelca toda la pre-selección a la lista de ajuste, sin duplicar. */
+  function agregarSeleccionados() {
+    const yaEnLista = new Set(filas.map((f) => f.clave))
+    const nuevas = []
+    for (const sku of selSkus) {
+      if (yaEnLista.has(sku)) continue
+      const art = selArts.current.get(sku)
+      if (art) nuevas.push(filaDeArticulo(art))
     }
+    if (nuevas.length > 0) setFilas((prev) => [...prev, ...nuevas])
+    setSelSkus(new Set()); selArts.current.clear()
+    setBuscadorAbierto(false)
+    push(nuevas.length > 0 ? `${nuevas.length} artículo(s) agregados al ajuste` : "Nada nuevo que agregar",
+      nuevas.length > 0 ? "success" : "info")
   }
 
   // ── Derivados ────────────────────────────────────────────────────────────────
@@ -236,59 +231,45 @@ export function InventarioModule() {
     }
   }
 
-  const stockBadge = (n) => {
-    if (n < 0) return "bg-red-100 text-red-700"
-    if (n === 0) return "bg-gray-100 text-gray-500"
-    return "bg-green-100 text-green-700"
-  }
-
   return (
     <div className="flex flex-col h-full p-5 gap-4 box-border bg-gray-50">
-      {/* Toolbar (buscador + filtros taxonomía + confirmar) */}
-      <div className="relative">
+      {/* Toolbar (la barra abre el selector cristal) + popup anclado debajo.
+          Cuando el popup está abierto, este contenedor se eleva (z-[520]) por
+          encima del overlay (z-500) para que sus clics (incluido "Agregar
+          seleccionados") NO los intercepte el backdrop. */}
+      <div className={`relative ${buscadorAbierto ? "z-[520]" : ""}`}>
         <InventarioToolbar
-          buscando={buscando}
-          cargandoLote={cargandoLote}
           numCambios={conCambio.length}
           hayCambios={hayCambios}
           guardando={guardando}
-          onBuscar={onBuscar}
-          onCargarLote={onCargarLote}
+          buscadorAbierto={buscadorAbierto}
+          onAbrirBuscador={() => setBuscadorAbierto(true)}
           onConfirmar={pedirConfirmar}
           onLimpiar={limpiarTodo}
         />
 
-        {/* Popup de resultados de búsqueda */}
-        {mostrarResultados && (
-          <div className="absolute top-[calc(100%+4px)] left-0 z-20 w-[28rem] max-w-full bg-white border border-gray-200 rounded-lg shadow-xl max-h-80 overflow-hidden flex flex-col">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-gray-100 bg-gray-50">
-              <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                {buscando ? "Buscando…" : `${resultados.length} resultado${resultados.length === 1 ? "" : "s"}`}
-              </span>
-              <button onClick={cerrarResultados} className="text-gray-400 hover:text-gray-600 p-0.5" title="Cerrar">✕</button>
-            </div>
-            <div className="overflow-y-auto">
-              {!buscando && resultados.length === 0 ? (
-                <p className="px-3 py-3 text-sm text-gray-500">Sin resultados para "{terminoBuscado}"</p>
-              ) : (
-                resultados.map((a) => {
-                  const yaEsta = filas.some((f) => f.clave === a.clave)
-                  const stock = a.existencia ?? 0
-                  return (
-                    <button key={a.id} onClick={() => agregar(a)} disabled={yaEsta}
-                      className={`flex items-center gap-2.5 w-full px-3 py-2 border-b border-gray-50 text-left hover:bg-orange-50 ${yaEsta ? "opacity-40 pointer-events-none" : ""}`}>
-                      <span className="font-mono text-xs text-gray-500 w-20 flex-shrink-0">{a.clave || "—"}</span>
-                      <span className="flex-1 text-sm truncate">{a.descripcion}</span>
-                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full flex-shrink-0 ${stockBadge(stock)}`}>
-                        {yaEsta ? "Agregado" : stock}
-                      </span>
-                    </button>
-                  )
-                })
-              )}
-            </div>
-          </div>
+        {/* Backdrop con tinte sutil: da contraste para que el cristal luzca y
+            cierra el popup al hacer clic fuera (la selección se conserva). */}
+        {buscadorAbierto && (
+          <div className="pk-sel-overlay" onClick={() => setBuscadorAbierto(false)} />
         )}
+
+        {/* Selector cristal (multiSelect), anclado bajo la barra */}
+        <SelectorArticulosPopup
+          open={buscadorAbierto}
+          anchorMode="inline"
+          onClose={() => setBuscadorAbierto(false)}
+          yaAgregados={skusEnLista}
+          taxonomy={taxonomia}
+          taxLoading={taxLoading}
+          pushToast={push}
+          titulo="Agregar artículos al ajuste"
+          agregarTitulo="Marcar para agregar"
+          multiSelect
+          seleccionados={selSkus}
+          onToggle={toggleSeleccion}
+          onConfirmarSeleccion={agregarSeleccionados}
+        />
       </div>
 
       {/* Filtro de la tabla de ajuste */}

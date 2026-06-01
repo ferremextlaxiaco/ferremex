@@ -6,9 +6,10 @@ import {
 import { formatMXN } from "../lib/format"
 import ConfirmDialog from "./ConfirmDialog"
 import { useToasts } from "../hooks/useToasts"
+import SelectorArticulosPopup from "./SelectorArticulosPopup"
 import {
   Plus, Search, Trash2, Pencil, X, Package, AlertTriangle, PackageCheck,
-  Check, Filter, ImageOff, ImagePlus,
+  ImageOff, ImagePlus,
 } from "lucide-react"
 
 // ── Helpers de precio ───────────────────────────────────────────────────────
@@ -35,197 +36,8 @@ function esVendible(componentes) {
   return componentes.length > 0 && componentes.every((c) => (c.existencia ?? 0) >= c.cantidad)
 }
 
-// ── Popup flotante de selección de artículos (izquierda del drawer) ──────────
-
-const SEL_PAGE_SIZE = 40 // mismo tamaño de página que ArticlesModule
-
-function SelectorArticulosPopup({ open, onClose, onAgregar, yaAgregados, taxonomy, taxLoading, pushToast }) {
-  const [busqueda, setBusqueda] = useState("")
-  const [resultados, setResultados] = useState([])
-  const [buscando, setBuscando] = useState(false)
-  const [hasBuscado, setHasBuscado] = useState(false)
-  const [fDept, setFDept] = useState("")   // dep-id
-  const [fCat, setFCat] = useState("")     // cat-id
-  const [fMarca, setFMarca] = useState("") // mar-id
-  const [page, setPage] = useState(0)
-  const inputRef = useRef(null)
-  const gridRef = useRef(null)
-
-  // Cascada derivada de la taxonomía (mismo patrón que ArticlesModule)
-  const cats = (taxonomy?.cats ?? []).filter((c) => !fDept || c.depId === fDept)
-  const marcas = (taxonomy?.marcas ?? []).filter((m) => !fCat || m.catId === fCat)
-  const depNombre = (taxonomy?.depts ?? []).find((d) => d.id === fDept)?.nombre ?? ""
-  const catNombre = (taxonomy?.cats ?? []).find((c) => c.id === fCat)?.nombre ?? ""
-  const marNombre = (taxonomy?.marcas ?? []).find((m) => m.id === fMarca)?.nombre ?? ""
-  const hayFiltros = fDept || fCat || fMarca
-
-  const buscar = useCallback(async (texto, dep, cat, mar) => {
-    const q = (texto ?? "").trim()
-    const hayTaxo = dep || cat || mar
-    if (!q && !hayTaxo) { setResultados([]); setHasBuscado(false); return }
-    setBuscando(true); setHasBuscado(true)
-    try {
-      let data
-      if (q) {
-        data = await listarArticulos(q)
-        if (hayTaxo) {
-          data = data.filter((a) => {
-            if (dep && a.departamento !== dep) return false
-            if (cat && a.categoria !== cat) return false
-            if (mar && a.marca !== mar) return false
-            return true
-          })
-        }
-      } else {
-        data = await listarArticulosDeCatalogo(dep, cat)
-        if (mar) data = data.filter((a) => a.marca === mar)
-      }
-      setResultados(data)
-      setPage(0) // nueva búsqueda → volver a la primera página
-    } catch {
-      pushToast("Error al buscar artículos", "error")
-      setResultados([])
-    } finally {
-      setBuscando(false)
-    }
-  }, [pushToast])
-
-  // Paginación de resultados (mismo patrón useMemo + slice que ArticlesModule)
-  const totalPages = Math.max(1, Math.ceil(resultados.length / SEL_PAGE_SIZE))
-  const pageItems = useMemo(
-    () => resultados.slice(page * SEL_PAGE_SIZE, (page + 1) * SEL_PAGE_SIZE),
-    [resultados, page]
-  )
-  function goPage(delta) {
-    setPage((p) => {
-      const np = Math.min(Math.max(p + delta, 0), totalPages - 1)
-      return np
-    })
-    gridRef.current?.scrollTo({ top: 0, behavior: "smooth" })
-  }
-
-  // Auto-buscar al cambiar filtros de taxonomía
-  useEffect(() => {
-    if (!open) return
-    if (fDept || fCat || fMarca) buscar(busqueda, depNombre, catNombre, marNombre)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fDept, fCat, fMarca, open])
-
-  // Foco al abrir
-  useEffect(() => { if (open) setTimeout(() => inputRef.current?.focus(), 50) }, [open])
-
-  if (!open) return null
-
-  return (
-    <div className="pk-sel-popup" onClick={(e) => e.stopPropagation()}>
-      <div className="pk-sel-header">
-        <span className="pk-sel-title"><Search size={16} /> Buscar artículos</span>
-        <button className="pk-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
-      </div>
-
-      {/* Búsqueda por texto */}
-      <div className="pk-sel-search">
-        <Search size={15} className="pk-search-icon" />
-        <input
-          ref={inputRef}
-          className="pk-input" style={{ paddingLeft: 32 }}
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") buscar(busqueda, depNombre, catNombre, marNombre) }}
-          placeholder="Buscar por clave o descripción…"
-        />
-        <button className="pk-btn-sec" onClick={() => buscar(busqueda, depNombre, catNombre, marNombre)} disabled={buscando}>
-          {buscando ? "…" : "Buscar"}
-        </button>
-      </div>
-
-      {/* Filtros de taxonomía en cascada */}
-      <div className="pk-sel-filtros">
-        <Filter size={13} style={{ color: "#9ca3af", flexShrink: 0 }} />
-        <select className="pk-sel-select" value={fDept} disabled={taxLoading}
-          onChange={(e) => { setFDept(e.target.value); setFCat(""); setFMarca("") }}>
-          <option value="">Todos los departamentos</option>
-          {(taxonomy?.depts ?? []).map((d) => <option key={d.id} value={d.id}>{d.nombre}</option>)}
-        </select>
-        <select className="pk-sel-select" value={fCat} disabled={taxLoading || cats.length === 0}
-          onChange={(e) => { setFCat(e.target.value); setFMarca("") }}>
-          <option value="">Todas las categorías</option>
-          {cats.map((c) => <option key={c.id} value={c.id}>{c.nombre}</option>)}
-        </select>
-        <select className="pk-sel-select" value={fMarca} disabled={taxLoading || marcas.length === 0}
-          onChange={(e) => setFMarca(e.target.value)}>
-          <option value="">Todas las marcas</option>
-          {marcas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
-        </select>
-        {hayFiltros && (
-          <button className="pk-filter-clear" onClick={() => { setFDept(""); setFCat(""); setFMarca(""); if (!busqueda.trim()) { setResultados([]); setHasBuscado(false) } }}>
-            ✕
-          </button>
-        )}
-      </div>
-
-      {/* Contador de resultados */}
-      {hasBuscado && !buscando && resultados.length > 0 && (
-        <div className="pk-sel-count">
-          {resultados.length} artículo{resultados.length !== 1 ? "s" : ""}
-          {totalPages > 1 && <> · pág. {page + 1}/{totalPages}</>}
-        </div>
-      )}
-
-      {/* Grid de resultados con imágenes */}
-      <div className="pk-sel-grid" ref={gridRef}>
-        {buscando ? (
-          <p className="pk-sel-empty">Buscando…</p>
-        ) : !hasBuscado ? (
-          <p className="pk-sel-empty">Escribe o elige un filtro para buscar artículos.</p>
-        ) : resultados.length === 0 ? (
-          <p className="pk-sel-empty">Sin resultados.</p>
-        ) : (
-          pageItems.map((a) => {
-            const sku = a.clave || a.claveAlterna
-            const agregado = yaAgregados.has(sku)
-            return (
-              <button
-                key={a.id}
-                className={`pk-sel-card${agregado ? " agregado" : ""}`}
-                onClick={() => !agregado && onAgregar(a)}
-                disabled={agregado}
-                title={agregado ? "Ya está en el paquete" : "Agregar al paquete"}
-              >
-                <div className="pk-sel-card-img">
-                  {a.thumbnail ? <img src={a.thumbnail} alt="" loading="lazy" /> : <ImageOff size={20} />}
-                </div>
-                <div className="pk-sel-card-info">
-                  <span className="pk-sel-card-name">{a.descripcion}</span>
-                  <span className="pk-sel-card-meta">
-                    <span className="pk-sel-card-sku">{sku}</span> · {formatMXN(a.precio1 ?? 0)} ·{" "}
-                    <span className={(a.existencia ?? 0) > 0 ? "pk-stock-ok" : "pk-stock-zero"}>{a.existencia ?? 0} stk</span>
-                  </span>
-                </div>
-                <span className="pk-sel-card-action">
-                  {agregado ? <Check size={16} /> : <Plus size={16} />}
-                </span>
-              </button>
-            )
-          })
-        )}
-      </div>
-
-      {/* Paginación */}
-      {hasBuscado && !buscando && totalPages > 1 && (
-        <div className="pk-sel-pag">
-          <button className="pk-sel-pag-btn" disabled={page === 0} onClick={() => goPage(-1)}>
-            ‹ Anterior
-          </button>
-          <span className="pk-sel-pag-info">Página {page + 1} de {totalPages}</span>
-          <button className="pk-sel-pag-btn" disabled={page >= totalPages - 1} onClick={() => goPage(1)}>
-            Siguiente ›
-          </button>
-        </div>
-      )}
-    </div>
-  )
-}
+// El popup de selección de artículos (estilo cristal) vive en su propio módulo
+// reutilizable: ./SelectorArticulosPopup. Aquí se usa con anchorMode="drawer".
 
 // ── Drawer de crear / editar paquete ─────────────────────────────────────────
 
@@ -388,6 +200,8 @@ function PaqueteDrawer({ open, mode, paquete, onSave, onClose, saving, pushToast
         taxonomy={taxonomy}
         taxLoading={taxLoading}
         pushToast={pushToast}
+        anchorMode="drawer"
+        agregarTitulo="Agregar al paquete"
       />
 
       <div className="pk-drawer" onClick={(e) => e.stopPropagation()}>
