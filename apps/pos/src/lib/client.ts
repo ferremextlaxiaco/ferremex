@@ -124,6 +124,9 @@ export interface CorteCerrado {
   cajero: string
   turno_id: string
   cerrado_en: string
+  /** Caja física del corte (heredada del empleado). null si no tenía asignada. */
+  caja_id?: string | null
+  caja_name?: string | null
   num_ventas: number
   total_ventas: number
   ventas_efectivo: number
@@ -143,6 +146,8 @@ export interface CorteCerrado {
 export interface CorteResponse {
   cajero: string
   turno_id: string
+  /** Caja física a la que se acotó el resumen (eco del parámetro de la petición). */
+  caja_id?: string | null
   num_ventas: number
   total_ventas: number
   ventas_efectivo: number
@@ -357,6 +362,8 @@ export interface PosUsuario {
   tiene_pin?: boolean
   rol: "admin" | "supervisor" | "cajero"
   activo: boolean
+  /** Caja física asignada (id del catálogo ferremex_cajas). 0..1 por empleado. */
+  caja_id?: string | null
   permisos: {
     puede_vender: boolean
     puede_cotizar: boolean
@@ -546,8 +553,13 @@ export async function cancelarVenta(folio: string, motivo: string): Promise<Vent
   })
 }
 
-export async function obtenerCorte(cajero: string, turno_id: string): Promise<CorteResponse> {
+export async function obtenerCorte(
+  cajero: string,
+  turno_id: string,
+  caja_id?: string | null
+): Promise<CorteResponse> {
   const params = new URLSearchParams({ cajero, turno_id })
+  if (caja_id) params.set("caja_id", caja_id)
   return apiFetch<CorteResponse>(`/caja/corte?${params}`)
 }
 

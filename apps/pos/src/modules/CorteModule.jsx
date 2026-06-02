@@ -121,7 +121,7 @@ export default function CorteModule() {
     if (!cajero) return
     let on = true
     setCargando(true)
-    obtenerCorte(cajero.nombre, cajero.turno_id)
+    obtenerCorte(cajero.nombre, cajero.turno_id, cajero.caja_id ?? null)
       .then((data) => {
         if (!on) return
         setCorte(data)
@@ -190,6 +190,8 @@ export default function CorteModule() {
         denominaciones: modoConteo === "denominacion" ? denoms : null,
         siguiente_turno_id: fondoNum > 0 ? siguienteTurnoId(cajero.turno_id) : null,
         cajero_id: cajero.id,
+        caja_id: cajero.caja_id ?? null,
+        caja_name: cajero.caja_nombre ?? null,
       })
       setResultado(res.corte)
       if (res.yaCerrado) push("Este turno ya estaba cerrado", "info")
@@ -227,6 +229,14 @@ export default function CorteModule() {
           <span>{cajero.alias?.trim() || cajero.nombre}</span>
           <span className="text-gray-300">·</span>
           <span className="font-mono">{cajero.turno_id}</span>
+          {cajero.caja_nombre && (
+            <>
+              <span className="text-gray-300">·</span>
+              <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs rounded-full px-2 py-0.5">
+                <Wallet size={12} /> {cajero.caja_nombre}
+              </span>
+            </>
+          )}
           {!conteoAbierto && !yaCerrado && (
             <span className="flex items-center gap-1 bg-indigo-50 text-indigo-600 text-xs rounded-full px-2 py-0.5">
               <EyeOff size={12} /> Conteo ciego
@@ -425,6 +435,11 @@ function CorteCerradoView({ resultado, onImprimir }) {
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
           <div className="text-gray-500">Cajero</div><div className="text-right font-medium">{resultado.cajero}</div>
+          {resultado.caja_name && (
+            <>
+              <div className="text-gray-500">Caja</div><div className="text-right font-medium">{resultado.caja_name}</div>
+            </>
+          )}
           <div className="text-gray-500">Turno</div><div className="text-right font-mono">{resultado.turno_id}</div>
           <div className="text-gray-500">Cerrado</div><div className="text-right">{new Date(resultado.cerrado_en).toLocaleString("es-MX")}</div>
         </div>

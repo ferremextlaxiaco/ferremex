@@ -39,6 +39,8 @@ interface Movimiento {
   desc: string
   method: string
   amount: number
+  cajaId?: string | null
+  cajaName?: string | null
   cajeroId?: string
   cajeroName?: string
   turnoId?: string | null
@@ -49,6 +51,10 @@ interface CorteCerrado {
   cajero: string
   turno_id: string
   cerrado_en: string
+  // Caja física en la que se hizo el corte (heredada del empleado). Se sella en
+  // el arqueo para auditoría; null si el empleado no tenía caja asignada.
+  caja_id?: string | null
+  caja_name?: string | null
   // Snapshot del arqueo en el momento del cierre
   num_ventas: number
   total_ventas: number
@@ -80,8 +86,16 @@ function cargarCortes(): CorteCerrado[] {
   return readJson<CorteCerrado[]>(CORTES_FILE, [])
 }
 
-/** Calcula el resumen conciliable de un turno (sin escribir nada). */
-function calcularResumen(cajero: string, turno_id: string) {
+/**
+ * Calcula el resumen conciliable de un turno (sin escribir nada).
+ *
+ * `caja_id` (opcional) acota los MOVIMIENTOS manuales a esa caja física: cuando
+ * se pasa, solo cuentan los movimientos de esa caja MÁS los que no tienen caja
+ * (`cajaId == null`, históricos o capturados sin caja asignada), para no perder
+ * efectivo. Las VENTAS no se filtran por caja: hoy no llevan `cajaId`, así que
+ * el arqueo de ventas sigue siendo por cajero+turno.
+ */
+function calcularResumen(cajero: string, turno_id: string, caja_id?: string | null) {
   const ventas = cargarVentas()
     .filter((v) => v.cajero === cajero && v.turno_id === turno_id)
     .filter((v) => !v.estado || v.estado === "Vigente")
@@ -91,7 +105,11 @@ function calcularResumen(cajero: string, turno_id: string) {
   const ventas_credito = ventas.reduce((s, v) => s + Number(v.pago_credito ?? 0), 0)
   const total_ventas = ventas.reduce((s, v) => s + Number(v.total ?? 0), 0)
 
-  const movs = cargarMovimientos().filter((m) => m.turnoId === turno_id)
+  const caja = caja_id ? String(caja_id) : null
+  const movs = cargarMovimientos()
+    .filter((m) => m.turnoId === turno_id)
+    // Si el corte es de una caja concreta, incluir sus movimientos + los sin caja.
+    .filter((m) => !caja || m.cajaId == null || String(m.cajaId) === caja)
   const fondo_inicial = movs.filter((m) => m.origin === "FONDO").reduce((s, m) => s + m.amount, 0)
   const entradas_manuales = movs.filter((m) => m.origin === "MOVIM_E").reduce((s, m) => s + m.amount, 0)
   // Las salidas vienen con signo negativo; las exponemos como magnitud positiva.
@@ -102,6 +120,7 @@ function calcularResumen(cajero: string, turno_id: string) {
   return {
     cajero,
     turno_id,
+    caja_id: caja,
     num_ventas: ventas.length,
     total_ventas,
     ventas_efectivo,
@@ -132,17 +151,18 @@ function calcularResumen(cajero: string, turno_id: string) {
   }
 }
 
-/** GET /caja/corte?cajero=&turno_id= */
+/** GET /caja/corte?cajero=&turno_id=&caja_id= */
 export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const cajero = String(req.query["cajero"] ?? "").trim()
   const turno_id = String(req.query["turno_id"] ?? "").trim()
+  const caja_id = String(req.query["caja_id"] ?? "").trim() || null
 
   if (!cajero || !turno_id) {
     res.status(400).json({ error: "Faltan parámetros: cajero, turno_id" })
     return
   }
 
-  const resumen = calcularResumen(cajero, turno_id)
+  const resumen = calcularResumen(cajero, turno_id, caja_id)
   // Si el turno ya tiene corte cerrado, lo adjuntamos (vista de solo lectura).
   const cerrado = cargarCortes().find((c) => c.cajero === cajero && c.turno_id === turno_id) ?? null
 
@@ -186,7 +206,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   // Recalculamos el resumen en el servidor (no confiamos en cifras del cliente).
-  const resumen = calcularResumen(cajero, turno_id)
+  // El arqueo se acota a la caja del corte (si viene), igual que el GET.
+  const caja_id = body.caja_id ? String(body.caja_id) : null
+  const caja_name = body.caja_name ? String(body.caja_name) : null
+  const resumen = calcularResumen(cajero, turno_id, caja_id)
   const diferencia = efectivo_contado - resumen.efectivo_esperado
 
   // Cierre idempotente bajo el lock del archivo de cortes.
@@ -199,6 +222,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       cajero,
       turno_id,
       cerrado_en: new Date().toISOString(),
+      caja_id,
+      caja_name,
       num_ventas: resumen.num_ventas,
       total_ventas: resumen.total_ventas,
       ventas_efectivo: resumen.ventas_efectivo,

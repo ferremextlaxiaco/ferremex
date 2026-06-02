@@ -48,6 +48,10 @@ export interface Cajero {
   alias?: string
   rol: "admin" | "supervisor" | "cajero"
   turno_id: string
+  // Caja física asignada al empleado (heredada al iniciar sesión). Sella el
+  // corte y acota sus movimientos. null/undefined si el empleado no tiene caja.
+  caja_id?: string | null
+  caja_nombre?: string | null
   permisos: Permisos
 }
 

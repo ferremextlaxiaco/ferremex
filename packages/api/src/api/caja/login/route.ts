@@ -17,6 +17,9 @@ interface PosUsuario {
   pin: string
   rol: "admin" | "supervisor" | "cajero"
   activo: boolean
+  // Caja física asignada al empleado (id del catálogo ferremex_cajas). Viaja al
+  // cliente para sellar el corte con la caja del cajero. Opcional.
+  caja_id?: string | null
   permisos: Record<string, boolean>
 }
 

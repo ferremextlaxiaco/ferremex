@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { obtenerUsuarios, obtenerTicketConfig, login, type PosUsuario } from "../lib/client"
+import { obtenerUsuarios, obtenerTicketConfig, listarCajasAPI, login, type PosUsuario } from "../lib/client"
 import { usePOS, buildTurnoId } from "../lib/pos-store"
 
 export function Login() {
   const { dispatch } = usePOS()
   const navigate = useNavigate()
   const [usuarios, setUsuarios] = useState<PosUsuario[]>([])
+  // Mapa caja_id → nombre, para sellar el corte con la caja del empleado sin un
+  // fetch extra en el camino del login. En un ref para que `iniciarSesion` lea
+  // siempre el valor más reciente (evita un stale closure si las cajas cargan
+  // justo mientras un cajero está validando su PIN).
+  const cajasPorIdRef = useRef<Record<string, string>>({})
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pinUsuario, setPinUsuario] = useState<PosUsuario | null>(null)
@@ -15,9 +20,11 @@ export function Login() {
   const [validandoPin, setValidandoPin] = useState(false)
 
   useEffect(() => {
-    Promise.all([obtenerUsuarios(), obtenerTicketConfig()])
-      .then(([users, config]) => {
+    // Las cajas son opcionales: si fallan, el login sigue (corte sin caja).
+    Promise.all([obtenerUsuarios(), obtenerTicketConfig(), listarCajasAPI().catch(() => [])])
+      .then(([users, config, cajas]) => {
         setUsuarios(users.filter((u) => u.activo))
+        cajasPorIdRef.current = Object.fromEntries(cajas.map((c) => [c.id, c.nombre]))
         dispatch({ type: "SET_TICKET_CONFIG", config })
       })
       .catch(() => setError("No se pudo conectar con el servidor"))
@@ -25,6 +32,7 @@ export function Login() {
   }, [dispatch])
 
   const iniciarSesion = useCallback((usuario: PosUsuario) => {
+    const caja_id = usuario.caja_id ?? null
     dispatch({
       type: "SET_CAJERO",
       cajero: {
@@ -33,6 +41,8 @@ export function Login() {
         alias: usuario.alias?.trim() || undefined,
         rol: usuario.rol,
         turno_id: buildTurnoId(),
+        caja_id,
+        caja_nombre: caja_id ? (cajasPorIdRef.current[caja_id] ?? null) : null,
         permisos: usuario.permisos,
       },
     })
