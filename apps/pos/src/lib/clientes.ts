@@ -176,6 +176,28 @@ export async function anularAbono(
   return anularMovimientoCarteraAPI(clienteId, movimientoId, motivo)
 }
 
+/**
+ * Campos mínimos para timbrar un CFDI 4.0 nominativo (Facturama). Si alguno
+ * falta, el cliente no se puede facturar todavía. Centraliza la regla para que
+ * el chip "Puede facturar" (pantalla de venta) y el panel de FacturarBoton usen
+ * el mismo criterio.
+ */
+export function camposFiscalesFaltantes(c: Cliente | null | undefined): string[] {
+  if (!c) return ["RFC", "Razón social", "Régimen fiscal", "Uso de CFDI", "Código postal"]
+  const faltan: string[] = []
+  if (!c.rfc?.trim()) faltan.push("RFC")
+  if (!c.razon_social?.trim()) faltan.push("Razón social")
+  if (!c.regimen_fiscal?.trim()) faltan.push("Régimen fiscal")
+  if (!c.cfdi?.trim()) faltan.push("Uso de CFDI")
+  if (!c.cp?.trim()) faltan.push("Código postal")
+  return faltan
+}
+
+/** True si el cliente tiene todos los datos fiscales para emitir CFDI. */
+export function clientePuedeFacturar(c: Cliente | null | undefined): boolean {
+  return camposFiscalesFaltantes(c).length === 0
+}
+
 // ---------------------------------------------------------------------------
 // localStorage legacy — SOLO para el componente de migración (MigracionNube).
 // No usar en código nuevo. Lee los datos que cada terminal capturó antes de

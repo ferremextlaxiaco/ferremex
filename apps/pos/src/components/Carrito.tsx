@@ -214,6 +214,34 @@ export function Carrito({ onCobrar }: CarritoProps) {
       )}
 
       <div className="carrito-footer">
+        {/* Desglose fiscal POR ÍTEM: solo los artículos con IVA (precio ya
+            incluye el 16%) aportan impuesto; los exentos/neto van completos a la
+            base. Es lo que el CFDI desglosará. */}
+        {items.length > 0 && (() => {
+          let base = 0, iva = 0
+          for (const it of items) {
+            const importe = efectivoPrecio(it) * it.cantidad
+            if (it.impuesto) {
+              const b = importe / 1.16
+              base += b
+              iva += importe - b
+            } else {
+              base += importe
+            }
+          }
+          return (
+            <div className="carrito-desglose">
+              <div className="carrito-desglose-fila">
+                <span>Subtotal</span>
+                <span>${base.toFixed(2)}</span>
+              </div>
+              <div className="carrito-desglose-fila">
+                <span>IVA (16%)</span>
+                <span>${iva.toFixed(2)}</span>
+              </div>
+            </div>
+          )
+        })()}
         <div className="carrito-total">
           <span className="carrito-total-label">Total</span>
           <span className="carrito-total-valor">${total.toFixed(2)}</span>

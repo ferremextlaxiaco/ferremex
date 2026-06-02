@@ -23,6 +23,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           descripcion: producto.descripcion,
           precio: producto.precio,
           precio2: producto.precio2,
+          impuesto: producto.impuesto,
           existencia: producto.existencia,
           mayoreoActivo: producto.mayoreoActivo,
           mayoreoMin: producto.mayoreoMin,

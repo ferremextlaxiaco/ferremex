@@ -1,11 +1,15 @@
 import type { VentaResponse } from "../lib/client"
+import type { Cliente } from "../lib/clientes"
+import { FacturarBoton } from "./FacturarBoton"
 
 interface TicketProps {
   venta: VentaResponse
+  /** Cliente de la venta (para el gancho de facturación). Público = null. */
+  cliente?: Cliente | null
   onImpreso: () => void
 }
 
-export function Ticket({ venta, onImpreso }: TicketProps) {
+export function Ticket({ venta, cliente, onImpreso }: TicketProps) {
   function handleImprimir() {
     window.print()
     // Cerrar la vista previa después de imprimir
@@ -79,6 +83,7 @@ export function Ticket({ venta, onImpreso }: TicketProps) {
           <button className="btn-secondary" onClick={onImpreso}>
             Cerrar
           </button>
+          <FacturarBoton folio={venta.folio} cliente={cliente} variant="full" />
           <button className="btn-confirmar" onClick={handleImprimir}>
             🖨 Imprimir ticket
           </button>

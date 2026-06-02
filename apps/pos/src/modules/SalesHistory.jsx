@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import { formatMXNAbs as fmt } from "../lib/format"
+import { FacturarBoton } from "../components/FacturarBoton"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -852,13 +853,11 @@ function SaleDrawer({ venta, onClose, onCancel }) {
             flex: 1, background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
             padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",
           }}>🖨️ Reimprimir</button>
-          <div title="Facturación próximamente" style={{ flex: 1 }}>
-            <button disabled style={{
-              width: "100%", background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
-              padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "not-allowed", color: "var(--text-muted)",
-              opacity: 0.6,
-            }}>📄 Facturar</button>
-          </div>
+          <FacturarBoton
+            folio={venta.folio}
+            cliente={venta.cliente_id ? { id: venta.cliente_id, nombre: venta.cliente_nombre } : null}
+            variant="compact"
+          />
           {vigente && (
             <button onClick={() => onCancel(venta)} style={{
               flex: 1, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.3)", borderRadius: 6,

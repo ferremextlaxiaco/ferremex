@@ -281,6 +281,9 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         descripcion: v.title ?? "",
         precio,
         precio2,
+        // Si lleva IVA, `precio`/`precio2` ya vienen con el 16% incluido. El POS
+        // usa este flag para desglosar base+IVA en el carrito y en el CFDI.
+        impuesto: !!v.impuesto,
         existencia: existenciaPorSku.get(v.sku ?? "") ?? 0,
         thumbnail: v.thumbnail,
         marca: v.marca,

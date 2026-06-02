@@ -7375,3 +7375,261 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .carrito-paquete-comp-nombre { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .carrito-paquete-comp-cant { color: #9ca3af; font-variant-numeric: tabular-nums; }
 .carrito-paquete-comp-sub { font-weight: 600; color: #374151; min-width: 64px; text-align: right; }
+
+/* ============================================================
+   REDISEÑO PANTALLA DE VENTA (2026-06-02)
+   Header 2 filas + barra de comandos + carrito fijo/drawer
+   ============================================================ */
+
+/* ---- Header fila 1: sesión enriquecida (caja · cajero · turno) ---- */
+.pos-header-centro { gap: 10px; }
+
+.chip-facturar {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: var(--green-dim); color: var(--green);
+  font-size: 12px; font-weight: 700;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid rgba(22,163,74,0.25);
+  white-space: nowrap;
+}
+
+.pos-sesion {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--text-soft); font-weight: 500;
+}
+.pos-sesion-sep { color: var(--border); }
+.pos-sesion-caja { font-weight: 700; color: var(--text); }
+.pos-sesion-caja--sin { color: var(--text-muted); font-weight: 500; }
+.pos-sesion-turno { font-variant-numeric: tabular-nums; color: var(--text-muted); }
+
+/* ---- Header fila 2: barra de comandos ---- */
+.barra-comandos {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  padding: 7px 16px;
+  flex-shrink: 0;
+  z-index: 9;
+}
+.barra-comandos-grupo { display: flex; align-items: center; gap: 8px; }
+.barra-comandos-grupo--fin { margin-left: auto; }
+
+.cmd-btn {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 14px;
+  background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: 10px;
+  font-size: 13.5px; font-weight: 600;
+  cursor: pointer; transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+.cmd-btn:hover { background: var(--bg-hover); border-color: #d4d4d8; }
+.cmd-btn:active { transform: scale(0.97); }
+.cmd-btn svg { color: var(--orange); flex-shrink: 0; }
+
+.cmd-btn--ghost {
+  background: transparent; border-color: transparent; color: var(--text-soft);
+}
+.cmd-btn--ghost:hover { background: var(--bg-hover); border-color: var(--border); }
+.cmd-btn--ghost svg { color: var(--text-soft); }
+
+.cmd-badge {
+  min-width: 20px; height: 20px; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--orange); color: #fff;
+  font-size: 12px; font-weight: 800; border-radius: 999px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Carrito como columna fija (pantallas anchas) ---- */
+.venta-page--carrito-fijo .venta-derecha { display: flex; }
+.venta-derecha {
+  width: 400px; flex-shrink: 0;
+  display: flex; flex-direction: column;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+/* En modo fijo, el carrito interior ocupa toda la columna. */
+.venta-derecha .carrito { height: 100%; border-radius: 0; }
+
+/* ---- Desglose fiscal del carrito (subtotal / IVA) ---- */
+.carrito-desglose {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 0 0 8px 0; margin-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+.carrito-desglose-fila {
+  display: flex; justify-content: space-between;
+  font-size: 12.5px; color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- Botón "Facturar" (gancho stub) ---- */
+.facturar-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  font-weight: 600; cursor: pointer;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-panel); color: var(--text);
+  transition: background 0.12s, border-color 0.12s;
+}
+.facturar-btn:hover { background: var(--bg-hover); border-color: var(--orange); color: var(--orange); }
+.facturar-btn svg { color: var(--orange); }
+.facturar-btn--full { padding: 10px 16px; font-size: 14px; }
+.facturar-btn--compact { flex: 1; padding: 8px 0; font-size: 12px; }
+
+.facturar-overlay {
+  position: fixed; inset: 0; z-index: 1600;
+  background: rgba(17,24,39,0.4); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.facturar-panel {
+  width: 460px; max-width: 100%;
+  background: var(--bg-panel); border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  overflow: hidden;
+}
+.facturar-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.facturar-panel-titulo {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+.facturar-panel-titulo svg { color: var(--orange); }
+.facturar-panel-cerrar {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
+}
+.facturar-panel-cerrar:hover { background: var(--red-dim); color: var(--red); }
+
+.facturar-aviso {
+  display: flex; align-items: flex-start; gap: 9px;
+  margin: 16px 18px 0;
+  padding: 11px 13px; border-radius: 10px;
+  background: var(--orange-dim); color: #9a3412;
+  font-size: 13px; line-height: 1.45;
+}
+.facturar-aviso svg { color: var(--orange); flex-shrink: 0; margin-top: 1px; }
+
+.facturar-seccion { padding: 16px 18px 0; }
+.facturar-seccion-titulo {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--text-muted); margin-bottom: 8px;
+}
+.facturar-check {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 10px 12px; border-radius: 9px; font-size: 13px; line-height: 1.4;
+}
+.facturar-check svg { flex-shrink: 0; margin-top: 1px; }
+.facturar-check--ok { background: var(--green-dim); color: #15803d; }
+.facturar-check--ok svg { color: var(--green); }
+.facturar-check--warn { background: #fef3c7; color: #92400e; }
+.facturar-check--warn svg { color: #d97706; }
+
+.facturar-panel-acciones {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 18px; margin-top: 8px;
+}
+
+/* ---- Panel de pedidos en espera ---- */
+.espera-overlay {
+  position: fixed; inset: 0; z-index: 1550;
+  background: rgba(17,24,39,0.4); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.espera-panel {
+  width: 560px; max-width: 100%; max-height: 80vh;
+  background: var(--bg-panel); border-radius: 14px;
+  box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.espera-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.espera-titulo {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+.espera-titulo svg { color: var(--orange); }
+.espera-cerrar {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
+}
+.espera-cerrar:hover { background: var(--red-dim); color: var(--red); }
+
+.espera-guardar {
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+.espera-guardar-info {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13px; color: var(--text-soft); margin-bottom: 9px;
+}
+.espera-guardar-info svg { color: var(--orange); }
+.espera-guardar-vacio { color: var(--text-muted); }
+.espera-guardar-row { display: flex; gap: 8px; }
+.espera-input {
+  flex: 1; min-height: 40px;
+  border: 1px solid var(--border); border-radius: 9px;
+  padding: 0 12px; font-size: 13px; background: var(--bg-input); color: var(--text);
+}
+.espera-input:focus { outline: none; border-color: var(--orange); }
+.espera-btn-guardar {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 40px; padding: 0 14px;
+  background: var(--orange); color: #fff;
+  border-radius: 9px; font-size: 13px; font-weight: 700; cursor: pointer;
+  white-space: nowrap; transition: background 0.12s;
+}
+.espera-btn-guardar:hover { background: var(--orange-hover); }
+.espera-btn-guardar:disabled { opacity: 0.4; pointer-events: none; }
+
+.espera-lista { flex: 1; overflow-y: auto; padding: 10px 18px 18px; }
+.espera-lista-vacia {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 40px 20px; text-align: center; color: var(--text-muted);
+}
+.espera-lista-vacia svg { color: var(--border); }
+.espera-lista-vacia p { margin: 0; font-size: 14px; }
+.espera-lista-vacia-hint { font-size: 12px !important; color: var(--text-muted); max-width: 320px; }
+
+.espera-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px; margin-top: 8px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-panel);
+}
+.espera-item:hover { border-color: #d4d4d8; }
+.espera-item-info { flex: 1; min-width: 0; }
+.espera-item-nombre { display: block; font-size: 14px; font-weight: 700; color: var(--text); }
+.espera-item-meta { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+.espera-item-acciones { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.espera-item-retomar {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 36px; padding: 0 12px;
+  background: var(--orange-dim); color: var(--orange);
+  border: 1px solid rgba(249,99,2,0.25); border-radius: 8px;
+  font-size: 12.5px; font-weight: 700; cursor: pointer;
+}
+.espera-item-retomar:hover { background: rgba(249,99,2,0.16); }
+.espera-item-eliminar {
+  display: flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; border-radius: 8px;
+  background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
+}
+.espera-item-eliminar:hover { background: var(--red-dim); color: var(--red); }
+
+/* ---- Responsive: barra de comandos compacta en pantallas angostas ---- */
+@media (max-width: 1100px) {
+  .cmd-btn span:not(.cmd-badge) { display: none; }   /* solo iconos */
+  .cmd-btn { padding: 0 12px; }
+  .pos-sesion-turno, .pos-sesion-sep:last-of-type { display: none; }
+}

@@ -13,6 +13,8 @@ export interface CartItem {
   precio2?: number
   cantidad: number
   existencia: number
+  /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para el desglose fiscal. */
+  impuesto?: boolean
   mayoreoActivo?: boolean
   mayoreoMin?: number
   // Cuando el item forma parte de un paquete vendido, `precio` ya es el precio
@@ -84,6 +86,9 @@ type PosAction =
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
   | { type: "SET_CLIENTE"; cliente: Cliente | null }
+  // Restaura un carrito completo (items + cliente) de una sola vez. Lo usa
+  // "Pedidos en espera" al retomar un pedido/cotización guardado.
+  | { type: "RESTORE_CART"; items: CartItem[]; cliente: Cliente | null }
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -186,6 +191,10 @@ function posReducer(state: PosState, action: PosAction): PosState {
     case "CLEAR":
       // Al vaciar el carrito (o completar una venta) se reinicia el cliente activo
       return { ...state, items: [], clienteActivo: null }
+
+    case "RESTORE_CART":
+      // Reemplaza el carrito y el cliente con un pedido en espera retomado.
+      return { ...state, items: action.items, clienteActivo: action.cliente }
 
     default:
       return state

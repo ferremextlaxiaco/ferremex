@@ -8,6 +8,8 @@ export interface ProductoPOS {
   descripcion: string
   precio: number
   precio2?: number
+  /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para desglose fiscal. */
+  impuesto?: boolean
   existencia: number
   thumbnail: string | null
   marca?: string
