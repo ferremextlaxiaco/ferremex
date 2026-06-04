@@ -234,6 +234,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   gap: 10px;
 }
 
+/* Botones Panel / Salir en el header (fila 1). */
+.pos-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.pos-header-btn:hover { background: var(--bg-hover); border-color: var(--border); color: var(--text); }
+.pos-header-btn svg { flex-shrink: 0; }
+.pos-header-btn--salir:hover { background: var(--red-dim); border-color: rgba(220,38,38,0.3); color: var(--red); }
+
 .pos-cajero {
   font-size: 14px;
   color: var(--text-soft);
@@ -510,8 +529,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .grid-productos {
   display: grid;
-  /* Tarjetas más grandes: ~6 columnas a ancho completo (antes 190px ≈ 7) */
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  /* 5 columnas en la zona de búsqueda (con el carrito fijo a la derecha).
+     ~185px por tarjeta hace que quepan 5 en el ancho disponible. */
+  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
   gap: 12px;
   margin-top: 4px;
 }
@@ -949,6 +969,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .carrito-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   padding: 14px 16px 10px;
   font-size: 12px;
   font-weight: 700;
@@ -957,6 +981,27 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
 }
+
+/* Botón "En espera" junto al resumen de artículos del carrito */
+.carrito-header-espera {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-soft);
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.carrito-header-espera:hover { background: var(--orange-dim); color: var(--orange); border-color: var(--orange); }
+.carrito-header-espera:disabled { opacity: 0.4; pointer-events: none; }
+.carrito-header-espera svg { flex-shrink: 0; }
 
 .carrito-vacio {
   flex: 1;
@@ -3044,7 +3089,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .sc-trigger:hover { border-color: var(--orange); }
 
-.sc-icon    { font-size: 15px; flex-shrink: 0; }
+.sc-icon    { display: inline-flex; align-items: center; color: var(--text-soft); flex-shrink: 0; }
 .sc-chevron { font-size: 9px; color: var(--text-muted); flex-shrink: 0; margin-left: auto; }
 
 .sc-publico {
@@ -7415,6 +7460,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .barra-comandos-grupo { display: flex; align-items: center; gap: 8px; }
 .barra-comandos-grupo--fin { margin-left: auto; }
 
+/* Separador vertical entre el selector de cliente y los atajos. */
+.barra-comandos-sep {
+  width: 1px; height: 26px; background: var(--border); margin: 0 4px; flex-shrink: 0;
+}
+
+/* El selector de cliente dentro de la barra: algo más compacto que en el header. */
+.barra-comandos .sc-trigger { min-width: 200px; max-width: 280px; }
+
 .cmd-btn {
   position: relative;
   display: inline-flex; align-items: center; gap: 7px;
@@ -7633,3 +7686,174 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   .cmd-btn { padding: 0 12px; }
   .pos-sesion-turno, .pos-sesion-sep:last-of-type { display: none; }
 }
+
+/* ============================================================
+   COTIZACIONES (2026-06-04)
+   ============================================================ */
+
+/* ---- Carrito en modo cotización ---- */
+.carrito--cotizacion .carrito-header { color: #9a3412; }
+.carrito-banner-cotizacion {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 14px 8px; padding: 8px 11px;
+  background: var(--orange-dim); color: #9a3412;
+  border-radius: 9px; font-size: 12.5px; font-weight: 600;
+}
+.carrito-banner-cotizacion svg { color: var(--orange); flex-shrink: 0; }
+
+.btn-toggle-cotizacion {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: 42px; margin-bottom: 8px;
+  background: var(--bg-panel); color: var(--text-soft);
+  border: 1px dashed var(--border); border-radius: 10px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.btn-toggle-cotizacion:hover { background: var(--bg-hover); border-color: var(--orange); color: var(--orange); }
+.btn-toggle-cotizacion svg { flex-shrink: 0; }
+.btn-toggle-cotizacion.activo {
+  background: var(--orange-dim); color: #9a3412; border-style: solid; border-color: rgba(249,99,2,0.3);
+}
+.btn-toggle-cotizacion:disabled { opacity: 0.4; pointer-events: none; }
+
+/* El botón principal en modo cotización (Imprimir cotización) */
+.btn-cobrar.btn-cotizar {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  background: #9a3412;
+}
+.btn-cobrar.btn-cotizar:hover { background: #7c2d12; }
+
+/* ---- Popup cargar cotización (cristal) y modal de cambios ---- */
+.cotpop-overlay {
+  position: fixed; inset: 0; z-index: 1580;
+  background: rgba(17,24,39,0.42); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.cotpop-panel {
+  width: 560px; max-width: 100%; max-height: 82vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  border-radius: 16px;
+  /* Si no trae .pk-sel-popup (cristal), cae a panel sólido. */
+  background: var(--bg-panel);
+  box-shadow: 0 24px 60px rgba(0,0,0,0.28);
+}
+/* El cristal lo aporta .pk-sel-popup (ya en pos.css). Reforzamos el redondeo. */
+.cotpop-panel.pk-sel-popup { border-radius: 16px; }
+.cotpop-panel--cambios { width: 520px; }
+
+.cotpop-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 18px; border-bottom: 1px solid var(--border);
+}
+.cotpop-titulo {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 16px; font-weight: 700; color: var(--text);
+}
+.cotpop-titulo svg { color: var(--orange); }
+.cotpop-cerrar {
+  display: flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border-radius: 8px;
+  background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
+}
+.cotpop-cerrar:hover { background: var(--red-dim); color: var(--red); }
+
+.cotpop-buscador {
+  display: flex; align-items: center; gap: 8px;
+  margin: 14px 18px 6px; padding: 0 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--bg-input); min-height: 42px;
+}
+.cotpop-buscador svg { color: var(--text-muted); flex-shrink: 0; }
+.cotpop-buscador input {
+  flex: 1; border: none; outline: none; background: transparent;
+  font-size: 14px; color: var(--text);
+}
+
+.cotpop-lista { flex: 1; overflow-y: auto; padding: 8px 18px 18px; }
+.cotpop-vacio { text-align: center; color: var(--text-muted); padding: 30px; }
+.cotpop-vacio-box {
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+  padding: 40px 20px; text-align: center; color: var(--text-muted);
+}
+.cotpop-vacio-box svg { color: var(--border); }
+.cotpop-vacio-box p { margin: 0; font-size: 14px; }
+
+.cotpop-item {
+  display: flex; flex-direction: column; gap: 5px;
+  width: 100%; text-align: left;
+  padding: 12px; margin-top: 8px;
+  border: 1px solid var(--border); border-radius: 11px;
+  background: rgba(255,255,255,0.6); cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.cotpop-item:hover { border-color: var(--orange); background: rgba(255,255,255,0.85); }
+.cotpop-item:disabled { opacity: 0.5; pointer-events: none; }
+.cotpop-item-main { display: flex; align-items: center; justify-content: space-between; }
+.cotpop-item-folio { font-family: monospace; font-size: 14px; font-weight: 700; color: var(--text); }
+.cotpop-item-total { font-size: 15px; font-weight: 800; color: var(--text); }
+.cotpop-item-meta {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text-muted);
+}
+.cotpop-badge {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10.5px; font-weight: 700; padding: 1px 7px; border-radius: 999px;
+  margin-left: auto;
+}
+.cotpop-badge--vig { color: #b45309; background: rgba(245,158,11,0.16); }
+.cotpop-badge--conv { color: #15803d; background: rgba(22,163,74,0.14); }
+
+/* ---- Modal de comparación de precios ---- */
+.cotpop-cambios-sub {
+  margin: 14px 18px 0; font-size: 13px; color: var(--text-soft); line-height: 1.45;
+}
+.cotpop-cambios-tabla { margin: 12px 18px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.cotpop-cambios-thead, .cotpop-cambios-fila {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px;
+  padding: 8px 12px; align-items: center;
+}
+.cotpop-cambios-thead {
+  background: var(--bg-hover); font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-muted);
+}
+.cotpop-cambios-thead span:not(:first-child),
+.cotpop-cambios-fila span:not(.cotpop-cambios-desc) { text-align: right; font-variant-numeric: tabular-nums; }
+.cotpop-cambios-fila { border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text); }
+.cotpop-cambios-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cotpop-cambios-num { color: var(--text-soft); }
+.cotpop-cambios-delta { font-weight: 700; }
+.cotpop-cambios-delta.sube { color: #dc2626; }
+.cotpop-cambios-delta.baja { color: #16a34a; }
+
+.cotpop-cambios-totales { margin: 14px 18px 0; padding-top: 10px; border-top: 1px dashed var(--border); }
+.cotpop-cambios-totales > div {
+  display: flex; justify-content: space-between; font-size: 13px; color: var(--text-soft); padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+}
+.cotpop-cambios-total-actual { font-weight: 700; color: var(--text) !important; }
+.cotpop-cambios-total-actual em { font-style: normal; font-size: 12px; }
+.cotpop-cambios-total-actual em.sube { color: #dc2626; }
+.cotpop-cambios-total-actual em.baja { color: #16a34a; }
+
+.cotpop-cambios-acciones { display: flex; gap: 10px; padding: 18px; }
+.cotpop-cambios-acciones > button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+
+/* ---- Ticket: etiqueta de tipo de documento (COTIZACIÓN) ---- */
+.ticket-tipo-doc {
+  margin-top: 4px; font-weight: 900; letter-spacing: 2px; font-size: 13px;
+  border: 1.5px solid currentColor; display: inline-block; padding: 1px 8px; border-radius: 4px;
+}
+
+/* ---- Toasts de la pantalla de venta ---- */
+.venta-toasts {
+  position: fixed; bottom: 24px; right: 24px; z-index: 1700;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.venta-toast {
+  padding: 10px 16px; border-radius: 9px; color: #fff;
+  font-size: 13px; font-weight: 600; box-shadow: 0 6px 18px rgba(0,0,0,0.18);
+}
+.venta-toast--success { background: #16a34a; }
+.venta-toast--error { background: #dc2626; }
+.venta-toast--info { background: #374151; }
+.venta-toast--warning { background: #d97706; }

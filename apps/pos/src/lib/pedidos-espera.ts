@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import type { CartItem } from "./pos-store"
 import type { Cliente } from "./clientes"
+import { uuid } from "./utils"
 
 /**
  * Pedidos en espera / cotizaciones — almacén local por terminal.
@@ -35,6 +36,33 @@ export function leerEspera(): PedidoEspera[] {
 
 export function escribirEspera(lista: PedidoEspera[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(lista))
+}
+
+/**
+ * Guarda un carrito en la fila de espera y devuelve el registro creado.
+ * Nombre por defecto: la etiqueta dada → nombre del cliente → "Pedido HH:MM".
+ * Centraliza la lógica para que el botón del carrito y el panel la compartan.
+ */
+export function guardarEnEspera(
+  items: CartItem[],
+  cliente: Cliente | null,
+  total: number,
+  etiqueta?: string
+): PedidoEspera {
+  const nombre =
+    etiqueta?.trim() ||
+    cliente?.nombre ||
+    `Pedido ${new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`
+  const nuevo: PedidoEspera = {
+    id: uuid(),
+    nombre,
+    guardado_en: new Date().toISOString(),
+    items,
+    cliente,
+    total,
+  }
+  escribirEspera([nuevo, ...leerEspera()])
+  return nuevo
 }
 
 /**

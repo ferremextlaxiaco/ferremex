@@ -1,5 +1,6 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
+import { UserRound } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 import { loadClientes, type Cliente } from "../lib/clientes"
 
@@ -61,7 +62,7 @@ export function SelectorCliente() {
     <div className="sc-widget">
       {/* Trigger: siempre visible */}
       <button className="sc-trigger" onClick={abierto ? cerrar : abrir}>
-        <span className="sc-icon">👤</span>
+        <span className="sc-icon"><UserRound size={16} /></span>
         {cliente ? (
           <div className="sc-selected">
             <span className="sc-nombre">{cliente.nombre}</span>

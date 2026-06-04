@@ -62,6 +62,12 @@ interface PosState {
   items: CartItem[]
   ticketConfig: TicketConfig | null
   clienteActivo: Cliente | null
+  // Modo cotización: el carrito se trata como presupuesto (imprime cotización en
+  // vez de cobrar; no descuenta inventario). `cotizacionCargadaFolio` guarda el
+  // folio de la cotización que se cargó (si la transacción nació de una), para
+  // marcarla "convertida" al venderse.
+  modoCotizacion: boolean
+  cotizacionCargadaFolio: string | null
 }
 
 // Línea de un componente de paquete tal como entra al carrito: trae su precio
@@ -89,6 +95,12 @@ type PosAction =
   // Restaura un carrito completo (items + cliente) de una sola vez. Lo usa
   // "Pedidos en espera" al retomar un pedido/cotización guardado.
   | { type: "RESTORE_CART"; items: CartItem[]; cliente: Cliente | null }
+  // Alterna el modo cotización (toggle "Convertir a cotización" ↔ "Convertir a
+  // venta"). Al desactivarlo se olvida la cotización cargada (vuelve a venta limpia).
+  | { type: "SET_MODO_COTIZACION"; activo: boolean }
+  // Carga una cotización guardada al carrito: restaura items + cliente, entra en
+  // modo cotización y recuerda su folio para enlazarla si se convierte en venta.
+  | { type: "CARGAR_COTIZACION"; items: CartItem[]; cliente: Cliente | null; folio: string }
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -189,12 +201,30 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return { ...state, items: state.items.filter((i) => i.paquete_id !== action.paqueteId) }
 
     case "CLEAR":
-      // Al vaciar el carrito (o completar una venta) se reinicia el cliente activo
-      return { ...state, items: [], clienteActivo: null }
+      // Al vaciar el carrito (o completar una venta) se reinicia el cliente
+      // activo y se sale del modo cotización (transacción terminada).
+      return { ...state, items: [], clienteActivo: null, modoCotizacion: false, cotizacionCargadaFolio: null }
 
     case "RESTORE_CART":
       // Reemplaza el carrito y el cliente con un pedido en espera retomado.
       return { ...state, items: action.items, clienteActivo: action.cliente }
+
+    case "SET_MODO_COTIZACION":
+      // Al apagar el modo cotización se olvida la cotización cargada.
+      return {
+        ...state,
+        modoCotizacion: action.activo,
+        cotizacionCargadaFolio: action.activo ? state.cotizacionCargadaFolio : null,
+      }
+
+    case "CARGAR_COTIZACION":
+      return {
+        ...state,
+        items: action.items,
+        clienteActivo: action.cliente,
+        modoCotizacion: true,
+        cotizacionCargadaFolio: action.folio,
+      }
 
     default:
       return state
@@ -219,6 +249,8 @@ export function PosProvider({ children }: { children: ReactNode }) {
     items: [],
     ticketConfig: null,
     clienteActivo: null,
+    modoCotizacion: false,
+    cotizacionCargadaFolio: null,
   })
   const total = state.items.reduce((sum, i) => sum + efectivoPrecio(i) * i.cantidad, 0)
   return createElement(PosContext.Provider, { value: { state, dispatch, total } }, children)

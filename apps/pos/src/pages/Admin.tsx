@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins,
+  Coins, FileSignature,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -22,6 +22,8 @@ export function Admin() {
   const path = location.pathname
   const tab = path.includes("/admin/consulta-ventas")
     ? "ventas"
+    : path.includes("/admin/cotizaciones")
+    ? "cotizaciones"
     : path.includes("/admin/formatos") || path.includes("/admin/tickets")
     ? "formatos"
     : path.includes("/admin/perifericos")
@@ -103,6 +105,13 @@ export function Admin() {
           >
             <span className="admin-side-icon"><ReceiptText size={18} /></span>
             Consulta de ventas
+          </button>
+          <button
+            className={`admin-side-item${tab === "cotizaciones" ? " active" : ""}`}
+            onClick={() => navigate("/admin/cotizaciones")}
+          >
+            <span className="admin-side-icon"><FileSignature size={18} /></span>
+            Cotizaciones
           </button>
           <button
             className={`admin-side-item${tab === "formatos" ? " active" : ""}`}

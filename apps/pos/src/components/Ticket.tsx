@@ -6,10 +6,12 @@ interface TicketProps {
   venta: VentaResponse
   /** Cliente de la venta (para el gancho de facturación). Público = null. */
   cliente?: Cliente | null
+  /** Si true, se imprime como COTIZACIÓN (sin pago/cambio ni facturación). */
+  esCotizacion?: boolean
   onImpreso: () => void
 }
 
-export function Ticket({ venta, cliente, onImpreso }: TicketProps) {
+export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: TicketProps) {
   function handleImprimir() {
     window.print()
     // Cerrar la vista previa después de imprimir
@@ -19,7 +21,9 @@ export function Ticket({ venta, cliente, onImpreso }: TicketProps) {
   return (
     <div className="ticket-overlay">
       <div className="ticket-preview-box">
-        <p className="ticket-preview-titulo">Vista previa del ticket</p>
+        <p className="ticket-preview-titulo">
+          Vista previa de {esCotizacion ? "la cotización" : "el ticket"}
+        </p>
 
         {/* Este div es el que se imprime */}
         <div className="ticket">
@@ -27,6 +31,7 @@ export function Ticket({ venta, cliente, onImpreso }: TicketProps) {
             <p className="ticket-negocio">FERREMEX</p>
             <p className="ticket-sub">Tlaxiaco, Oaxaca</p>
             <p className="ticket-sub">Tel: (953) 555-0000</p>
+            {esCotizacion && <p className="ticket-tipo-doc">COTIZACIÓN</p>}
           </div>
 
           <div className="ticket-separador">————————————————</div>
@@ -64,28 +69,43 @@ export function Ticket({ venta, cliente, onImpreso }: TicketProps) {
             <span>TOTAL</span>
             <span>${venta.total.toFixed(2)}</span>
           </div>
-          <div className="ticket-fila-resumen">
-            <span>Efectivo</span>
-            <span>${venta.pago_efectivo.toFixed(2)}</span>
-          </div>
-          <div className="ticket-fila-resumen ticket-cambio">
-            <span>Cambio</span>
-            <span>${venta.cambio.toFixed(2)}</span>
-          </div>
+          {/* Pago/cambio solo en ventas; una cotización es un presupuesto. */}
+          {!esCotizacion && (
+            <>
+              <div className="ticket-fila-resumen">
+                <span>Efectivo</span>
+                <span>${venta.pago_efectivo.toFixed(2)}</span>
+              </div>
+              <div className="ticket-fila-resumen ticket-cambio">
+                <span>Cambio</span>
+                <span>${venta.cambio.toFixed(2)}</span>
+              </div>
+            </>
+          )}
 
           <div className="ticket-separador">————————————————</div>
 
-          <p className="ticket-gracias">¡Gracias por su compra!</p>
-          <p className="ticket-gracias">Conserve su ticket</p>
+          {esCotizacion ? (
+            <>
+              <p className="ticket-gracias">Cotización — no es comprobante de pago</p>
+              <p className="ticket-gracias">Precios sujetos a cambio sin previo aviso</p>
+            </>
+          ) : (
+            <>
+              <p className="ticket-gracias">¡Gracias por su compra!</p>
+              <p className="ticket-gracias">Conserve su ticket</p>
+            </>
+          )}
         </div>
 
         <div className="ticket-preview-acciones">
           <button className="btn-secondary" onClick={onImpreso}>
             Cerrar
           </button>
-          <FacturarBoton folio={venta.folio} cliente={cliente} variant="full" />
+          {/* Una cotización no se factura; solo ventas. */}
+          {!esCotizacion && <FacturarBoton folio={venta.folio} cliente={cliente} variant="full" />}
           <button className="btn-confirmar" onClick={handleImprimir}>
-            🖨 Imprimir ticket
+            🖨 Imprimir {esCotizacion ? "cotización" : "ticket"}
           </button>
         </div>
       </div>

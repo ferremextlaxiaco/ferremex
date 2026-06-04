@@ -6,6 +6,7 @@ import { formatMXN } from "../lib/format"
 import { uuid } from "../lib/utils"
 import {
   usePedidosEnEspera,
+  guardarEnEspera,
   leerEspera,
   escribirEspera,
   type PedidoEspera,
@@ -57,19 +58,7 @@ export function PedidosEnEspera({ abierto, onCerrar, onCambio }: PedidosEnEspera
 
   function guardarActual() {
     if (carritoVacio) return
-    const nombre =
-      etiqueta.trim() ||
-      state.clienteActivo?.nombre ||
-      `Pedido ${new Date().toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" })}`
-    const nuevo: PedidoEspera = {
-      id: uuid(),
-      nombre,
-      guardado_en: new Date().toISOString(),
-      items: state.items,
-      cliente: state.clienteActivo,
-      total,
-    }
-    escribirEspera([nuevo, ...leerEspera()])
+    guardarEnEspera(state.items, state.clienteActivo, total, etiqueta)
     dispatch({ type: "CLEAR" })   // libera la caja para el siguiente cliente
     refrescar()
     onCambio()

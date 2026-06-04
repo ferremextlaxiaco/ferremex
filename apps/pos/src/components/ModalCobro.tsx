@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { registrarVenta, type VentaResponse } from "../lib/client"
+import { registrarVenta, marcarCotizacionConvertida, type VentaResponse } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { formatMXN as fmt } from "../lib/format"
@@ -79,6 +79,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             }
           : {}),
       })
+      // Si la venta nació de una cotización cargada, enlázala (trazabilidad).
+      // No es crítico para la venta: si falla, la venta ya quedó registrada.
+      if (state.cotizacionCargadaFolio) {
+        try {
+          await marcarCotizacionConvertida(state.cotizacionCargadaFolio, venta.folio)
+        } catch { /* la venta es lo importante; el enlace es best-effort */ }
+      }
       if (pEfectivo > 0) {
         try { await abrirCajon() } catch { /* sin cajón, continuar */ }
       }

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { List } from "lucide-react"
+import { List, FileText, ShoppingCart, Bookmark } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
@@ -8,11 +8,15 @@ import type { Paquete } from "../lib/client"
 
 interface CarritoProps {
   onCobrar: () => void
+  /** Imprime+guarda la cotización (modo cotización). Si falta, se oculta el toggle. */
+  onImprimirCotizacion?: () => void
+  /** Pone el carrito actual en espera (guardar y liberar la caja). */
+  onPonerEnEspera?: () => void
 }
 
-export function Carrito({ onCobrar }: CarritoProps) {
+export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: CarritoProps) {
   const { state, dispatch, total } = usePOS()
-  const { items } = state
+  const { items, modoCotizacion } = state
 
   // draft values while the user is typing (sku → string)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -75,8 +79,28 @@ export function Carrito({ onCobrar }: CarritoProps) {
   }
 
   return (
-    <div className="carrito">
-      <div className="carrito-header">Carrito ({items.length} productos)</div>
+    <div className={`carrito${modoCotizacion ? " carrito--cotizacion" : ""}`}>
+      <div className="carrito-header">
+        <span>{modoCotizacion ? "Cotización" : "Carrito"} ({items.length} productos)</span>
+        {/* Poner en espera: junto al resumen. Solo en modo venta con items. */}
+        {onPonerEnEspera && !modoCotizacion && (
+          <button
+            className="carrito-header-espera"
+            onClick={onPonerEnEspera}
+            disabled={items.length === 0}
+            title="Guardar este carrito en espera y liberar la caja"
+          >
+            <Bookmark size={14} /> En espera
+          </button>
+        )}
+      </div>
+
+      {/* Banner de modo cotización: aclara que es un presupuesto, no una venta. */}
+      {modoCotizacion && (
+        <div className="carrito-banner-cotizacion">
+          <FileText size={14} /> Modo cotización — no descuenta inventario
+        </div>
+      )}
 
       {/* Sugerencia de paquete (si aplica) */}
       <SugerenciaPaquete />
@@ -246,6 +270,18 @@ export function Carrito({ onCobrar }: CarritoProps) {
           <span className="carrito-total-label">Total</span>
           <span className="carrito-total-valor">${total.toFixed(2)}</span>
         </div>
+        {/* Toggle venta ↔ cotización (solo si el contenedor cableó la impresión) */}
+        {onImprimirCotizacion && (
+          <button
+            className={`btn-toggle-cotizacion${modoCotizacion ? " activo" : ""}`}
+            onClick={() => dispatch({ type: "SET_MODO_COTIZACION", activo: !modoCotizacion })}
+            disabled={items.length === 0}
+          >
+            {modoCotizacion
+              ? <><ShoppingCart size={15} /> Convertir a venta</>
+              : <><FileText size={15} /> Convertir a cotización</>}
+          </button>
+        )}
         <div className="carrito-acciones">
           <button
             className="btn-vaciar"
@@ -254,9 +290,19 @@ export function Carrito({ onCobrar }: CarritoProps) {
           >
             🗑 Vaciar
           </button>
-          <button className="btn-cobrar" onClick={onCobrar} disabled={items.length === 0}>
-            COBRAR →
-          </button>
+          {modoCotizacion ? (
+            <button
+              className="btn-cobrar btn-cotizar"
+              onClick={onImprimirCotizacion}
+              disabled={items.length === 0}
+            >
+              <FileText size={16} /> Imprimir cotización
+            </button>
+          ) : (
+            <button className="btn-cobrar" onClick={onCobrar} disabled={items.length === 0}>
+              COBRAR →
+            </button>
+          )}
         </div>
       </div>
 

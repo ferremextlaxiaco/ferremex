@@ -573,6 +573,94 @@ export async function cerrarCorte(input: CerrarCorteInput): Promise<CerrarCorteR
   })
 }
 
+// ── Cotizaciones ───────────────────────────────────────────────────────────────
+
+export interface ItemCotizacion {
+  sku: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+  impuesto?: boolean
+  paquete_id?: string
+  paquete_nombre?: string
+}
+
+export interface CotizacionRequest {
+  cajero: string
+  turno_id: string
+  items: ItemCotizacion[]
+  cliente_id?: string | null
+  cliente_nombre?: string | null
+  num_precio?: number | null
+}
+
+export interface Cotizacion {
+  folio: string
+  fecha: string
+  cajero: string
+  turno_id: string
+  items: (ItemCotizacion & { subtotal: number })[]
+  total: number
+  cliente_id: string | null
+  cliente_nombre: string | null
+  num_precio: number | null
+  estado: "vigente" | "convertida"
+  folio_venta?: string | null
+  convertida_en?: string | null
+}
+
+/** Lista cotizaciones. Filtros opcionales por fecha y estado. Reciente primero. */
+export async function listarCotizaciones(opts: {
+  desde?: string
+  hasta?: string
+  estado?: "vigente" | "convertida"
+} = {}): Promise<Cotizacion[]> {
+  const params = new URLSearchParams()
+  if (opts.desde) params.set("desde", opts.desde)
+  if (opts.hasta) params.set("hasta", opts.hasta)
+  if (opts.estado) params.set("estado", opts.estado)
+  return apiFetch<Cotizacion[]>(`/caja/cotizaciones?${params}`)
+}
+
+/** Una cotización por folio. null si no existe. */
+export async function obtenerCotizacion(folio: string): Promise<Cotizacion | null> {
+  try {
+    return await apiFetch<Cotizacion>(`/caja/cotizaciones/${encodeURIComponent(folio)}`)
+  } catch {
+    return null
+  }
+}
+
+/** Guarda una cotización (genera folio COT-). No descuenta inventario. */
+export async function crearCotizacion(cot: CotizacionRequest): Promise<Cotizacion> {
+  return apiFetch<Cotizacion>("/caja/cotizaciones", {
+    method: "POST",
+    body: JSON.stringify(cot),
+  })
+}
+
+/** Actualiza una cotización existente (mismo folio). Para reimprimir tras editar. */
+export async function actualizarCotizacion(
+  folio: string,
+  datos: Omit<CotizacionRequest, "cajero" | "turno_id">
+): Promise<Cotizacion> {
+  return apiFetch<Cotizacion>(`/caja/cotizaciones/${encodeURIComponent(folio)}`, {
+    method: "PUT",
+    body: JSON.stringify(datos),
+  })
+}
+
+/** Marca una cotización como convertida en venta y la enlaza al folio de venta. */
+export async function marcarCotizacionConvertida(
+  folio: string,
+  folio_venta: string
+): Promise<Cotizacion> {
+  return apiFetch<Cotizacion>(`/caja/cotizaciones/${encodeURIComponent(folio)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ estado: "convertida", folio_venta }),
+  })
+}
+
 // ── Movimientos de caja ────────────────────────────────────────────────────────
 
 export interface MovimientosFiltro {

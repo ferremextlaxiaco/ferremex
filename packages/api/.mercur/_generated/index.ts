@@ -720,6 +720,9 @@ export type Routes = {
             $id: typeof import("../../src/api/caja/compras/[id]/route");
         };
         corte: typeof import("../../src/api/caja/corte/route");
+        cotizaciones: typeof import("../../src/api/caja/cotizaciones/route") & {
+            $folio: typeof import("../../src/api/caja/cotizaciones/[folio]/route");
+        };
         folioContador: typeof import("../../src/api/caja/folio-contador/route");
         generarOc: typeof import("../../src/api/caja/generar-oc/route");
         grupos: typeof import("../../src/api/caja/grupos/route");

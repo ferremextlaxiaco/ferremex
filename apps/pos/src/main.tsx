@@ -21,6 +21,7 @@ import { AdminConsultarCompras } from "./pages/AdminConsultarCompras"
 import { AdminPedidos } from "./pages/AdminPedidos"
 import { AdminCatalogos } from "./pages/AdminCatalogos"
 import { AdminConsultaVentas } from "./pages/AdminConsultaVentas"
+import { AdminCotizaciones } from "./pages/AdminCotizaciones"
 import { AdminPerifericos } from "./pages/AdminPerifericos"
 import { GeneradorTickets } from "./pages/GeneradorTickets"
 import { AdminEmpleados } from "./pages/AdminEmpleados"
@@ -39,6 +40,7 @@ createRoot(document.getElementById("root")!).render(
           <Route path="/admin" element={<Admin />}>
             <Route index element={<Navigate to="/admin/consulta-ventas" replace />} />
             <Route path="consulta-ventas" element={<AdminConsultaVentas />} />
+            <Route path="cotizaciones" element={<AdminCotizaciones />} />
             <Route path="formatos" element={<AdminFormatos />} />
             <Route path="tickets" element={<AdminTickets />} />
             <Route path="usuarios" element={<Navigate to="/admin/empleados" replace />} />
