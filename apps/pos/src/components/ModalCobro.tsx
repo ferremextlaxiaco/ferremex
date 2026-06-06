@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react"
 import { registrarVenta, marcarCotizacionConvertida, type VentaResponse } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { claveLinea } from "../lib/promociones"
 import { formatMXN as fmt } from "../lib/format"
 
 interface ModalCobroProps {
@@ -18,7 +19,16 @@ const METODOS: { id: Metodo; label: string; icon: string }[] = [
 ]
 
 export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
-  const { state, total, dispatch } = usePOS()
+  const { state, total, dispatch, promosCarrito } = usePOS()
+
+  // Precio unitario efectivo de una línea, ya con promociones aplicadas. Para
+  // NxM/volumen el descuento no es un precio uniforme, así que se reparte el
+  // importe total de la línea entre sus unidades (lo que se persiste y se imprime).
+  function precioUnitEfectivo(i: (typeof state.items)[number]): number {
+    const linea = promosCarrito.get(claveLinea(i))
+    if (linea && i.cantidad > 0) return Math.round((linea.importe / i.cantidad) * 100) / 100
+    return efectivoPrecio(i)
+  }
   const [pagos, setPagos] = useState<Record<Metodo, string>>({ efectivo: "", transferencia: "", credito: "" })
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +74,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           sku: i.sku,
           descripcion: i.descripcion,
           cantidad: i.cantidad,
-          precio_unitario: efectivoPrecio(i),
+          // Precio unitario ya con promoción aplicada (gana sobre mayoreo).
+          precio_unitario: precioUnitEfectivo(i),
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
         })),
@@ -107,12 +118,19 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         <h2 className="modal-titulo">Cobro</h2>
 
         <div className="cobro-resumen">
-          {state.items.map((i) => (
-            <div key={i.sku} className="cobro-item">
-              <span>{i.descripcion} × {i.cantidad}</span>
-              <span>${(i.precio * i.cantidad).toFixed(2)}</span>
-            </div>
-          ))}
+          {state.items.map((i) => {
+            const linea = promosCarrito.get(claveLinea(i))
+            const importe = linea ? linea.importe : efectivoPrecio(i) * i.cantidad
+            return (
+              <div key={i.sku} className="cobro-item">
+                <span>
+                  {i.descripcion} × {i.cantidad}
+                  {linea?.promo && <span className="cobro-item-promo"> · {linea.etiqueta}</span>}
+                </span>
+                <span>${importe.toFixed(2)}</span>
+              </div>
+            )
+          })}
         </div>
 
         <div className="cobro-total">

@@ -10,6 +10,7 @@ import { PedidosEnEspera } from "../components/PedidosEnEspera"
 import { CargarCotizacionPopup } from "../components/CargarCotizacionPopup"
 import { usePedidosEnEspera, guardarEnEspera } from "../lib/pedidos-espera"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { claveLinea } from "../lib/promociones"
 import { useToasts } from "../hooks/useToasts"
 import { crearCotizacion, actualizarCotizacion, type VentaResponse, type Cotizacion } from "../lib/client"
 
@@ -18,7 +19,7 @@ import { crearCotizacion, actualizarCotizacion, type VentaResponse, type Cotizac
 const ANCHO_CARRITO_FIJO = 1100
 
 export function Venta() {
-  const { state, dispatch, total } = usePOS()
+  const { state, dispatch, total, promosCarrito } = usePOS()
   const navigate = useNavigate()
   const [mostrarCobro, setMostrarCobro] = useState(false)
   const [ventaCompletada, setVentaCompletada] = useState<VentaResponse | null>(null)
@@ -107,14 +108,21 @@ export function Venta() {
     if (!cajero || state.items.length === 0 || guardandoCot) return
     setGuardandoCot(true)
     try {
-      const items = state.items.map((i) => ({
-        sku: i.sku,
-        descripcion: i.descripcion,
-        cantidad: i.cantidad,
-        precio_unitario: efectivoPrecio(i),
-        impuesto: i.impuesto,
-        ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
-      }))
+      const items = state.items.map((i) => {
+        // Precio unitario ya con promoción aplicada (consistente con la venta).
+        const linea = promosCarrito.get(claveLinea(i))
+        const precioUnit = linea && i.cantidad > 0
+          ? Math.round((linea.importe / i.cantidad) * 100) / 100
+          : efectivoPrecio(i)
+        return {
+          sku: i.sku,
+          descripcion: i.descripcion,
+          cantidad: i.cantidad,
+          precio_unitario: precioUnit,
+          impuesto: i.impuesto,
+          ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
+        }
+      })
       const datosCliente = {
         cliente_id: state.clienteActivo?.id ?? null,
         cliente_nombre: state.clienteActivo?.nombre ?? null,

@@ -734,6 +734,9 @@ export type Routes = {
         paquetes: typeof import("../../src/api/caja/paquetes/route");
         pedidos: typeof import("../../src/api/caja/pedidos/route");
         productos: typeof import("../../src/api/caja/productos/route");
+        promociones: typeof import("../../src/api/caja/promociones/route") & {
+            $id: typeof import("../../src/api/caja/promociones/[id]/route");
+        };
         proveedores: typeof import("../../src/api/caja/proveedores/route") & {
             $id: typeof import("../../src/api/caja/proveedores/[id]/route") & {
                 facturas: typeof import("../../src/api/caja/proveedores/[id]/facturas/route") & {

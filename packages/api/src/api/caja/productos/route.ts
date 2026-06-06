@@ -36,7 +36,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number }
   const variantesBase: VarianteBase[] = []
   // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
   // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
@@ -70,6 +70,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let mayoreoActivo = false
       let mayoreoMin = 0
       let precio2 = 0
+      let precio3 = 0
+      let precio4 = 0
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
@@ -82,9 +84,11 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           mayoreoActivo = !!meta.mayoreoActivo
           mayoreoMin = Number(meta.mayoreoMin) || 0
           precio2 = Number(meta.precio2) || 0
+          precio3 = Number(meta.precio3) || 0
+          precio4 = Number(meta.precio4) || 0
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones, mayoreoActivo, mayoreoMin, precio2 })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4 })
       matchExacto = true
     }
   }
@@ -124,6 +128,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
               especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
               mayoreoActivo: !!meta.mayoreoActivo, mayoreoMin: Number(meta.mayoreoMin) || 0,
               precio2: Number(meta.precio2) || 0,
+              precio3: Number(meta.precio3) || 0,
+              precio4: Number(meta.precio4) || 0,
             })
           }
         }
@@ -209,8 +215,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const vMayoreoActivo = !!meta.mayoreoActivo
       const vMayoreoMin = Number(meta.mayoreoMin) || 0
       const vPrecio2 = Number(meta.precio2) || 0
+      const vPrecio3 = Number(meta.precio3) || 0
+      const vPrecio4 = Number(meta.precio4) || 0
       for (const v of p.variants ?? []) {
-        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2 })
+        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
       }
     }
   }
@@ -276,11 +284,15 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       // Si el producto tiene impuesto, el precio base es sin IVA → aplicar 16%
       const precio = v.impuesto ? Math.round(precioBase * 1.16 * 100) / 100 : precioBase
       const precio2 = v.precio2 > 0 && v.impuesto ? Math.round(v.precio2 * 1.16 * 100) / 100 : v.precio2
+      const precio3 = v.precio3 > 0 && v.impuesto ? Math.round(v.precio3 * 1.16 * 100) / 100 : v.precio3
+      const precio4 = v.precio4 > 0 && v.impuesto ? Math.round(v.precio4 * 1.16 * 100) / 100 : v.precio4
       return {
         sku: v.sku ?? "",
         descripcion: v.title ?? "",
         precio,
         precio2,
+        precio3,
+        precio4,
         // Si lleva IVA, `precio`/`precio2` ya vienen con el 16% incluido. El POS
         // usa este flag para desglosar base+IVA en el carrito y en el CFDI.
         impuesto: !!v.impuesto,

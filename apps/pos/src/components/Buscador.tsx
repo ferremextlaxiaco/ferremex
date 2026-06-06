@@ -190,7 +190,7 @@ export function Buscador() {
             onSeleccionar={setSeleccionado}
             cartMap={cartMap}
             skusEnPaquete={skusEnPaquete}
-            onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin } })}
+            onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
           />
         </>

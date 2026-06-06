@@ -1,6 +1,9 @@
 import { useState } from "react"
+import { Tag } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
-import type { ProductoPOS } from "../lib/client"
+import { promosDeArticulo, describirPromo, contextoDeCliente } from "../lib/promociones"
+import { DetallePromoModal } from "./DetallePromoModal"
+import type { ProductoPOS, Promocion } from "../lib/client"
 
 interface ProductoDetalleProps {
   producto: ProductoPOS
@@ -8,11 +11,16 @@ interface ProductoDetalleProps {
 }
 
 export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
-  const { dispatch } = usePOS()
+  const { dispatch, state, promos } = usePOS()
   const [cantidad, setCantidad] = useState(1)
   const [agregado, setAgregado] = useState(false)
+  const [promoDetalle, setPromoDetalle] = useState<Promocion | null>(null)
 
   const sinStock = producto.existencia <= 0
+  // Promociones vigentes en las que participa este artículo (segmento del cliente
+  // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
+  const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
+  const skusEnCarrito = new Set(state.items.map((i) => i.sku))
 
   function handleAgregar() {
     for (let i = 0; i < cantidad; i++) {
@@ -23,6 +31,8 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           descripcion: producto.descripcion,
           precio: producto.precio,
           precio2: producto.precio2,
+          precio3: producto.precio3,
+          precio4: producto.precio4,
           impuesto: producto.impuesto,
           existencia: producto.existencia,
           mayoreoActivo: producto.mayoreoActivo,
@@ -69,6 +79,31 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           {producto.mayoreoActivo && producto.precio2 && producto.mayoreoMin && (
             <div className="detalle-mayoreo-badge">
               Mayoreo: {producto.mayoreoMin}+ piezas → ${producto.precio2.toFixed(2)} c/u
+            </div>
+          )}
+
+          {/* Aviso de promoción(es) en las que participa el artículo.
+              Clic en cada promo abre el detalle (artículos requeridos). */}
+          {promosArt.length > 0 && (
+            <div className="detalle-promo-banner">
+              <Tag size={16} className="detalle-promo-icon" />
+              <div className="detalle-promo-body">
+                <span className="detalle-promo-titulo">
+                  {promosArt.length === 1 ? "En promoción" : `En ${promosArt.length} promociones`}
+                </span>
+                {promosArt.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="detalle-promo-linea detalle-promo-linea--btn"
+                    onClick={() => setPromoDetalle(p)}
+                    title="Ver qué se requiere para activar la promoción"
+                  >
+                    {p.etiqueta || p.nombre} · {describirPromo(p, producto.sku)}
+                    <span className="detalle-promo-vermas">Ver requisitos ›</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -131,6 +166,8 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           <p className="detalle-specs-vacio">Sin especificaciones registradas.</p>
         )}
       </div>
+
+      <DetallePromoModal promo={promoDetalle} skusEnCarrito={skusEnCarrito} onClose={() => setPromoDetalle(null)} />
     </div>
   )
 }

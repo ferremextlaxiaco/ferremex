@@ -1,10 +1,12 @@
 import { useRef, useState } from "react"
 import { List, FileText, ShoppingCart, Bookmark } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
+import { DetallePromoModal } from "./DetallePromoModal"
 import { formatMXN } from "../lib/format"
-import type { Paquete } from "../lib/client"
+import type { Paquete, Promocion } from "../lib/client"
 
 interface CarritoProps {
   onCobrar: () => void
@@ -15,14 +17,18 @@ interface CarritoProps {
 }
 
 export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: CarritoProps) {
-  const { state, dispatch, total } = usePOS()
+  const { state, dispatch, total, promosCarrito, ahorroPromos, promos } = usePOS()
   const { items, modoCotizacion } = state
+  const ctxPromo = contextoDeCliente(state.clienteActivo)
 
   // draft values while the user is typing (sku → string)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   // Paquete cuyo desglose se está viendo (reconstruido desde las líneas del carrito)
   const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
+  // Promoción cuyo detalle (artículos requeridos) se está viendo.
+  const [promoDetalle, setPromoDetalle] = useState<Promocion | null>(null)
+  const skusEnCarrito = new Set(items.map((i) => i.sku))
 
   function startDraft(sku: string, current: number) {
     setDrafts((prev) => ({ ...prev, [sku]: String(current) }))
@@ -168,20 +174,53 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const displayValue = draft !== undefined ? draft : String(item.cantidad)
 
             const precioEfectivo = efectivoPrecio(item)
-            const esMayoreo = item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin
-            const faltanMayoreo = item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
+            // Promo aplicada a la línea (gana sobre el mayoreo). importeSinPromo =
+            // mayoreo/base; si hay promo, lineaPromo.importe trae el total ya con
+            // descuento. Sin promos, lineaPromo es undefined → comportamiento previo.
+            const lineaPromo = promosCarrito.get(claveLinea(item))
+            const tienePromo = !!lineaPromo?.promo
+            const importeSinPromo = precioEfectivo * item.cantidad
+            const importeLinea = tienePromo ? lineaPromo!.importe : importeSinPromo
+            // Promo DISPONIBLE para este artículo que aún NO aplica (faltan
+            // condiciones: cantidad, requeridos de una cruzada…). Solo informativo.
+            const promoDisponible = !tienePromo && !item.paquete_id
+              ? promosDeArticulo(item.sku, promos, ctxPromo)[0] ?? null
+              : null
+            // El mayoreo solo se rotula si NO lo eclipsó una promo.
+            const esMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin
+            const faltanMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
               ? item.mayoreoMin - item.cantidad : 0
 
             return (
               <div
                 key={item.sku}
-                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}`}
+                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}`}
                 onClick={() => inputRefs.current[item.sku]?.focus()}
               >
                 <div className="carrito-item-desc">
                   <span className="carrito-item-nombre">{item.descripcion}</span>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                     <span className="carrito-item-sku">{item.sku}</span>
+                    {tienePromo && (
+                      <button
+                        type="button"
+                        className="badge-promo badge-promo--btn"
+                        title="Ver detalle de la promoción"
+                        onClick={(e) => { e.stopPropagation(); setPromoDetalle(lineaPromo!.promo!) }}
+                      >
+                        🏷️ {lineaPromo!.etiqueta}
+                      </button>
+                    )}
+                    {promoDisponible && (
+                      <button
+                        type="button"
+                        className="badge-promo-disp badge-promo--btn"
+                        title="Ver qué se requiere para activar la promoción"
+                        onClick={(e) => { e.stopPropagation(); setPromoDetalle(promoDisponible) }}
+                      >
+                        🏷️ Promo: {describirPromo(promoDisponible, item.sku)}
+                      </button>
+                    )}
                     {esMayoreo && <span className="badge-mayoreo">Mayoreo</span>}
                     {faltanMayoreo > 0 && (
                       <span className="badge-mayoreo-hint">+{faltanMayoreo} para ${item.precio2!.toFixed(2)}</span>
@@ -219,10 +258,12 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                   </button>
                 </div>
                 <div className="carrito-item-subtotal">
-                  {esMayoreo && (
+                  {tienePromo ? (
+                    <span className="carrito-precio-tachado">${importeSinPromo.toFixed(2)}</span>
+                  ) : esMayoreo ? (
                     <span className="carrito-precio-tachado">${(item.precio * item.cantidad).toFixed(2)}</span>
-                  )}
-                  ${(precioEfectivo * item.cantidad).toFixed(2)}
+                  ) : null}
+                  ${importeLinea.toFixed(2)}
                 </div>
                 <button
                   className="btn-eliminar"
@@ -244,7 +285,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
         {items.length > 0 && (() => {
           let base = 0, iva = 0
           for (const it of items) {
-            const importe = efectivoPrecio(it) * it.cantidad
+            // El importe usa el resultado de promociones (gana sobre mayoreo);
+            // sin promo, equivale a efectivoPrecio × cantidad como antes.
+            const importe = promosCarrito.get(claveLinea(it))?.importe ?? efectivoPrecio(it) * it.cantidad
             if (it.impuesto) {
               const b = importe / 1.16
               base += b
@@ -259,6 +302,12 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                 <span>Subtotal</span>
                 <span>${base.toFixed(2)}</span>
               </div>
+              {ahorroPromos > 0 && (
+                <div className="carrito-desglose-fila carrito-desglose-fila--ahorro">
+                  <span>Ahorro en promociones</span>
+                  <span>−${ahorroPromos.toFixed(2)}</span>
+                </div>
+              )}
               <div className="carrito-desglose-fila">
                 <span>IVA (16%)</span>
                 <span>${iva.toFixed(2)}</span>
@@ -308,6 +357,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
       {/* Modal de desglose del paquete */}
       <DesglosePaqueteModal paquete={paqueteDesglose} onClose={() => setPaqueteDesglose(null)} />
+      <DetallePromoModal promo={promoDetalle} skusEnCarrito={skusEnCarrito} onClose={() => setPromoDetalle(null)} />
     </div>
   )
 }

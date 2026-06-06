@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   listarArticulos,
   listarArticulosDeCatalogo,
@@ -69,6 +70,7 @@ const PAGE_SIZE = 40
 
 export default function ArticlesModule({ vista = "articulos" }) {
   const { toasts, push: pushToast } = useToasts()
+  const navigate = useNavigate()
   // La vista activa (articulos | paquetes) la determina la ruta; las pestañas
   // viven en el topbar del panel (Admin.tsx), no aquí.
   const tab = vista
@@ -628,6 +630,13 @@ export default function ArticlesModule({ vista = "articulos" }) {
         onSave={handleSave}
         onClose={() => setDrawerOpen(false)}
         getNextClave={getNextClave}
+        onCrearPromocion={({ sku, descripcion }) => {
+          // Deep-link al módulo de promociones con este SKU precargado (mismo
+          // patrón que "Cargar en venta" de cotizaciones: ?param en la URL).
+          const params = new URLSearchParams({ sku: sku || "" })
+          if (descripcion) params.set("desc", descripcion)
+          navigate(`/admin/promociones?${params.toString()}`)
+        }}
       />
 
       {deleteOpen && selected && (

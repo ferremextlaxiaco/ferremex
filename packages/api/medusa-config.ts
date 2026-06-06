@@ -50,6 +50,13 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-compras",
     },
     {
+      // Promociones del POS (reglas de descuento por artículo: %, nivel de
+      // precio, NxM, volumen + segmentación y promos cruzadas A→B). Dato maestro
+      // compartido entre terminales. Se aplican en el carrito vía el motor del
+      // frontend (apps/pos/src/lib/promociones.ts). Ver src/modules/ferremex-promociones.
+      resolve: "./src/modules/ferremex-promociones",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

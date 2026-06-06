@@ -8,6 +8,10 @@ export interface ProductoPOS {
   descripcion: string
   precio: number
   precio2?: number
+  // Niveles 3 y 4 (Distribuidor / Especial). Se exponen para que las promos de
+  // tipo "nivel_precio" puedan forzar ese precio. Opcionales/retrocompatibles.
+  precio3?: number
+  precio4?: number
   /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para desglose fiscal. */
   impuesto?: boolean
   existencia: number
@@ -502,6 +506,17 @@ export async function buscarProductos(filtros: FiltrosBusqueda): Promise<Product
   if (filtros.category_id) params.set("category_id", filtros.category_id)
   if (filtros.departamento) params.set("departamento", filtros.departamento)
   return apiFetch<ProductoPOS[]>(`/caja/productos?${params}`)
+}
+
+/**
+ * Resuelve UN producto por su SKU exacto (≈10ms; cortocircuita la búsqueda).
+ * Útil para hidratar info ligera (descripción/imagen) de SKUs conocidos sin
+ * disparar la búsqueda fonética completa de `listarArticulos` (~1s por consulta).
+ * Devuelve null si no existe.
+ */
+export async function buscarProductoPorSku(sku: string): Promise<ProductoPOS | null> {
+  const res = await apiFetch<ProductoPOS[]>(`/caja/productos?sku=${encodeURIComponent(sku)}`)
+  return res.find((p) => p.sku === sku) ?? res[0] ?? null
 }
 
 export async function buscarCategorias(): Promise<CategoriasPOS> {
@@ -1004,6 +1019,73 @@ export async function actualizarCajaAPI(
 
 export async function eliminarCajaAPI(id: string): Promise<void> {
   await apiFetch(`/caja/cajas/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ── Promociones (módulo ferremex_promociones) ─────────────────────────────────
+
+export type TipoPromo = "porcentaje" | "nivel_precio" | "nxm" | "volumen"
+export type ModoArticulosPromo = "mismos" | "cruzada"
+export type SegmentoPromo = "todos" | "cliente" | "grupo"
+export type AlcanceVolumen = "todas" | "excedente"
+
+/**
+ * Una promoción del POS (regla de descuento aplicable en el carrito). Dato
+ * maestro compartido (BD, módulo ferremex_promociones). La APLICACIÓN vive en el
+ * motor lib/promociones.ts (`calcularLineaConPromo`); aquí solo es transporte.
+ */
+export interface Promocion {
+  id: string
+  nombre: string
+  activa: boolean
+  /** Vigencia opcional (YYYY-MM-DD). null = sin límite por ese extremo. */
+  inicio: string | null
+  fin: string | null
+  /** Desempate cuando varias promos aplican a una misma línea: mayor gana. */
+  prioridad: number
+  tipo: TipoPromo
+  porcentaje: number | null
+  nivel_precio: number | null
+  nxm_lleva: number | null
+  nxm_paga: number | null
+  volumen_min: number | null
+  volumen_desc: number | null
+  volumen_alcance: AlcanceVolumen | null
+  modo_articulos: ModoArticulosPromo
+  /** SKUs que activan la promo (y que reciben el descuento si modo="mismos"). */
+  skus_requeridos: string[]
+  /** SKUs que reciben el descuento (= requeridos cuando modo="mismos"). */
+  skus_beneficiados: string[]
+  segmento: SegmentoPromo
+  cliente_id: string | null
+  grupo: string | null
+  cantidad_minima: number | null
+  max_unidades: number | null
+  etiqueta: string | null
+}
+
+/** Cuerpo para crear/editar (el servidor pone id y revalida todo). */
+export type PromocionInput = Omit<Promocion, "id">
+
+export async function listarPromociones(): Promise<Promocion[]> {
+  return apiFetch<Promocion[]>("/caja/promociones")
+}
+
+export async function crearPromocion(promo: PromocionInput): Promise<Promocion> {
+  return apiFetch<Promocion>("/caja/promociones", {
+    method: "POST",
+    body: JSON.stringify(promo),
+  })
+}
+
+export async function actualizarPromocion(id: string, promo: PromocionInput): Promise<Promocion> {
+  return apiFetch<Promocion>(`/caja/promociones/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(promo),
+  })
+}
+
+export async function eliminarPromocion(id: string): Promise<void> {
+  await apiFetch(`/caja/promociones/${encodeURIComponent(id)}`, { method: "DELETE" })
 }
 
 // ── Proveedores + facturas (módulo ferremex_proveedores) ──────────────────────

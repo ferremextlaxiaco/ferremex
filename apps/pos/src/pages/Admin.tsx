@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature,
+  Coins, FileSignature, Tag,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -32,6 +32,8 @@ export function Admin() {
     ? "clientes"
     : path.includes("/admin/articulos") || path.includes("/admin/paquetes")
     ? "articulos"
+    : path.includes("/admin/promociones")
+    ? "promociones"
     : path.includes("/admin/inventario")
     ? "inventario"
     : path.includes("/admin/proveedores")
@@ -140,6 +142,13 @@ export function Admin() {
           >
             <span className="admin-side-icon"><Package size={18} /></span>
             Artículos
+          </button>
+          <button
+            className={`admin-side-item${tab === "promociones" ? " active" : ""}`}
+            onClick={() => navigate("/admin/promociones")}
+          >
+            <span className="admin-side-icon"><Tag size={18} /></span>
+            Promociones
           </button>
           <button
             className={`admin-side-item${tab === "inventario" ? " active" : ""}`}

@@ -1174,6 +1174,58 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   margin-right: 4px;
 }
 
+/* ── Promociones en el carrito (naranja Ferremex; gana sobre el mayoreo) ── */
+.carrito-item--promo {
+  border-left-color: #ea580c !important;
+  background: rgba(234,88,12,0.05) !important;
+}
+
+.badge-promo {
+  font-size: 10px;
+  font-weight: 700;
+  background: #ea580c;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Promo DISPONIBLE pero aún no aplicada (outline, no relleno) — solo aviso */
+.badge-promo-disp {
+  font-size: 10px;
+  font-weight: 700;
+  background: rgba(234,88,12,0.10);
+  color: #c2410c;
+  border: 1px solid rgba(234,88,12,0.45);
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Los badges de promo son botones clicables (abren el detalle de requisitos) */
+.badge-promo--btn {
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1.4;
+  transition: filter .12s, background .12s;
+}
+.badge-promo--btn:hover { filter: brightness(0.95); }
+.badge-promo-disp.badge-promo--btn:hover { background: rgba(234,88,12,0.18); }
+
+.carrito-desglose-fila--ahorro {
+  color: #ea580c;
+  font-weight: 600;
+}
+
 .detalle-mayoreo-badge {
   margin-top: 6px;
   font-size: 12px;
@@ -1185,6 +1237,63 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 4px 10px;
   display: inline-block;
 }
+
+/* Banner de promoción en el detalle del artículo (naranja Ferremex) */
+.detalle-promo-banner {
+  margin-top: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: rgba(234,88,12,0.07);
+  border: 1px solid rgba(234,88,12,0.3);
+  border-left: 3px solid #ea580c;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.detalle-promo-icon { color: #ea580c; flex-shrink: 0; margin-top: 1px; }
+.detalle-promo-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.detalle-promo-titulo { font-size: 13px; font-weight: 700; color: #c2410c; }
+.detalle-promo-linea { font-size: 12px; color: #9a3412; }
+.detalle-promo-linea--btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  text-align: left; background: none; border: none; padding: 0;
+  font-family: inherit; cursor: pointer; width: fit-content;
+}
+.detalle-promo-linea--btn:hover { text-decoration: underline; }
+.detalle-promo-vermas { font-size: 11px; font-weight: 700; color: #ea580c; white-space: nowrap; }
+
+/* ── Modal de detalle de promoción (reusa .dpk-* del modal de paquete) ── */
+.prm-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 4px; border-bottom: 1px solid rgba(0,0,0,.05);
+}
+.prm-row .dpk-art { flex: 1; }
+.prm-art-sku { font-size: 11px; font-weight: 700; color: #ea580c; }
+.prm-seccion-titulo {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.4px;
+  color: var(--text-muted, #9ca3af); margin: 14px 2px 6px;
+}
+.prm-estado {
+  display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+  font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+}
+.prm-estado--ok { background: rgba(22,163,74,0.12); color: #16a34a; }
+.prm-estado--falta { background: rgba(234,88,12,0.12); color: #c2410c; }
+.prm-btn-agregar {
+  display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0;
+  font-size: 12px; font-weight: 700; font-family: inherit; cursor: pointer;
+  background: var(--at-orange, #ea580c); color: #fff;
+  border: none; border-radius: 8px; padding: 7px 12px;
+  transition: background .12s;
+}
+.prm-btn-agregar:hover:not(:disabled) { background: var(--at-orange-hover, #c2410c); }
+.prm-btn-agregar:disabled { background: #e5e7eb; color: #9ca3af; cursor: default; }
+.prm-aviso {
+  font-size: 12.5px; font-weight: 600; line-height: 1.4;
+  border-radius: 8px; padding: 10px 12px;
+}
+.prm-aviso--ok { background: rgba(22,163,74,0.08); color: #15803d; border: 1px solid rgba(22,163,74,0.25); }
+.prm-aviso--pend { background: rgba(234,88,12,0.08); color: #c2410c; border: 1px solid rgba(234,88,12,0.3); }
 
 /* ---- Footer del carrito ---- */
 .carrito-footer {
@@ -1299,6 +1408,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-size: 13px;
   color: var(--text-soft);
   padding: 2px 0;
+}
+
+.cobro-item-promo {
+  color: #ea580c;
+  font-weight: 600;
 }
 
 .cobro-total {

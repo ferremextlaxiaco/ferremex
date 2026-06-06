@@ -1,6 +1,23 @@
-import { createElement, createContext, useContext, useReducer, type ReactNode } from "react"
-import type { TicketConfig } from "./client"
+import {
+  createElement,
+  createContext,
+  useContext,
+  useReducer,
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  type ReactNode,
+} from "react"
+import type { TicketConfig, Promocion } from "./client"
+import { listarPromociones } from "./client"
 import type { Cliente } from "./clientes"
+import {
+  calcularPromosCarrito,
+  contextoDeCliente,
+  claveLinea,
+  type LineaPromo,
+} from "./promociones"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -11,6 +28,11 @@ export interface CartItem {
   descripcion: string
   precio: number
   precio2?: number
+  // Niveles de precio 3 y 4 (Distribuidor / Especial). Solo se cargan cuando el
+  // backend los expone (para promos de tipo "nivel_precio"); opcionales y
+  // retrocompatibles — su ausencia no afecta el precio base ni el mayoreo.
+  precio3?: number
+  precio4?: number
   cantidad: number
   existencia: number
   /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para el desglose fiscal. */
@@ -238,7 +260,16 @@ function posReducer(state: PosState, action: PosAction): PosState {
 interface PosContextValue {
   state: PosState
   dispatch: React.Dispatch<PosAction>
+  /** Total del carrito YA con promociones aplicadas (igual a base/mayoreo si no hay promos). */
   total: number
+  /** Resultado de promociones por línea (sku → LineaPromo). Para badges/desglose. */
+  promosCarrito: Map<string, LineaPromo>
+  /** Suma de descuentos de promoción aplicados al carrito (0 si ninguno). */
+  ahorroPromos: number
+  /** Catálogo completo de promociones activas (para consultar si un SKU participa). */
+  promos: Promocion[]
+  /** Recarga el catálogo de promociones (llamar tras crear/editar/borrar en admin). */
+  refrescarPromos: () => void
 }
 
 const PosContext = createContext<PosContextValue | null>(null)
@@ -252,8 +283,50 @@ export function PosProvider({ children }: { children: ReactNode }) {
     modoCotizacion: false,
     cotizacionCargadaFolio: null,
   })
-  const total = state.items.reduce((sum, i) => sum + efectivoPrecio(i) * i.cantidad, 0)
-  return createElement(PosContext.Provider, { value: { state, dispatch, total } }, children)
+
+  // Catálogo de promociones activas. Se carga una vez al montar y se puede
+  // refrescar tras editar promos en el admin. Si falla la carga, queda vacío
+  // (degradación segura: el carrito funciona como antes, sin promos).
+  const [promos, setPromos] = useState<Promocion[]>([])
+
+  // Carga interna: devuelve su propia función de cancelación para el efecto de
+  // montaje (evita setState tras desmontar en StrictMode).
+  const cargarPromos = useCallback(() => {
+    let cancelado = false
+    listarPromociones()
+      .then((p) => { if (!cancelado) setPromos(p) })
+      .catch(() => { if (!cancelado) setPromos([]) })
+    return () => { cancelado = true }
+  }, [])
+
+  // Pública (para el admin tras editar): dispara la recarga sin exponer cleanup.
+  const refrescarPromos = useCallback(() => { cargarPromos() }, [cargarPromos])
+
+  useEffect(() => cargarPromos(), [cargarPromos])
+
+  // Cálculo de promociones por línea + total, memorizado sobre items/cliente/promos.
+  const { promosCarrito, total, ahorroPromos } = useMemo(() => {
+    const ctx = contextoDeCliente(state.clienteActivo)
+    const mapa = calcularPromosCarrito(state.items, promos, ctx)
+    let t = 0
+    let ahorro = 0
+    for (const item of state.items) {
+      const linea = mapa.get(claveLinea(item))
+      t += linea ? linea.importe : efectivoPrecio(item) * item.cantidad
+      ahorro += linea?.descuento ?? 0
+    }
+    return {
+      promosCarrito: mapa,
+      total: Math.round(t * 100) / 100,
+      ahorroPromos: Math.round(ahorro * 100) / 100,
+    }
+  }, [state.items, state.clienteActivo, promos])
+
+  return createElement(
+    PosContext.Provider,
+    { value: { state, dispatch, total, promosCarrito, ahorroPromos, promos, refrescarPromos } },
+    children
+  )
 }
 
 export function usePOS() {
