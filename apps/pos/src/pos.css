@@ -5315,32 +5315,56 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* Popup */
 .cpx-search-popup {
   position: absolute; top: calc(100% + 6px); left: 0;
-  right: 0; min-width: 640px; background: var(--at-bg-panel);
-  border: 1px solid var(--at-border); border-radius: 8px;
-  box-shadow: 0 8px 40px rgba(0,0,0,.13); z-index: 500;
-  display: flex; flex-direction: column; overflow: hidden;
+  right: 0; min-width: 640px;
+  border-radius: 14px; z-index: 500;
+  display: flex; flex-direction: column;
+  /* overflow: clip (NO hidden) para no recortar el backdrop-filter del cristal. */
+  overflow: clip;
+  /* Fallback sólido (navegadores sin backdrop-filter o "reduce transparency"). */
+  background: var(--at-bg-panel);
+  border: 1px solid var(--at-border);
+  box-shadow: 0 8px 40px rgba(0,0,0,.13);
+  animation: cpx-popup-in 0.16s ease-out;
+}
+@keyframes cpx-popup-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Efecto cristal (glassmorphism) solo donde backdrop-filter está soportado.
+   Patrón validado: blur ≤20px (rendimiento), saturación realzada, borde claro,
+   highlight superior tipo iOS. Igual al .pk-sel-popup del resto del POS. */
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .cpx-search-popup {
+    /* Más translúcido para que se vea el contenido detrás (sin overlay). */
+    background:
+      linear-gradient(180deg, rgba(255,255,255,0.38) 0%, rgba(255,255,255,0.24) 100%);
+    -webkit-backdrop-filter: blur(18px) saturate(180%);
+    backdrop-filter: blur(18px) saturate(180%);
+    border: 1px solid rgba(255,255,255,0.5);
+    box-shadow:
+      0 20px 60px rgba(0,0,0,.28),
+      inset 0 1px 0 rgba(255,255,255,0.6);
+  }
 }
 .cpx-popup-header {
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px; border-bottom: 1px solid var(--at-border);
-  background: var(--at-bg-hover); flex-shrink: 0;
+  padding: 8px 14px; border-bottom: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.25); flex-shrink: 0;
 }
 .cpx-popup-count  { font-size: 11px; font-weight: 700; color: var(--at-text-muted); text-transform: uppercase; letter-spacing: .04em; }
 .cpx-popup-hint-txt { font-size: 10px; color: var(--at-text-muted); margin-left: 8px; }
 .cpx-popup-close  {
-  margin-left: auto; background: var(--at-bg); border: 1px solid var(--at-border);
-  color: var(--at-text-muted); border-radius: 4px; padding: 2px 8px;
+  margin-left: auto; background: rgba(255,255,255,0.55); border: 1px solid rgba(0,0,0,0.08);
+  color: var(--at-text-muted); border-radius: 6px; padding: 2px 8px;
   font-size: 11px; cursor: pointer;
 }
-.cpx-popup-close:hover { color: var(--at-text); }
+.cpx-popup-close:hover { color: var(--at-text); background: rgba(255,255,255,0.8); }
 .cpx-popup-list   { overflow-y: auto; max-height: 380px; }
 .cpx-popup-list::-webkit-scrollbar { width: 4px; }
 .cpx-popup-list::-webkit-scrollbar-thumb { background: var(--at-border); border-radius: 2px; }
 .cpx-popup-empty  { padding: 28px 20px; text-align: center; color: var(--at-text-muted); font-size: 13px; }
 .cpx-popup-footer {
   display: flex; align-items: center; gap: 10px;
-  padding: 8px 14px; border-top: 1px solid var(--at-border);
-  background: var(--at-bg-hover); flex-shrink: 0;
+  padding: 8px 14px; border-top: 1px solid rgba(0,0,0,0.06);
+  background: rgba(255,255,255,0.25); flex-shrink: 0;
 }
 .cpx-pag-nav {
   background: var(--at-bg); border: 1px solid var(--at-border);
@@ -5355,16 +5379,16 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .cpx-popup-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 14px; cursor: pointer;
-  border-bottom: 1px solid var(--at-border); transition: background .1s;
+  border-bottom: 1px solid rgba(0,0,0,0.05); transition: background .1s;
 }
 .cpx-popup-item:last-child { border-bottom: none; }
-.cpx-popup-item:hover { background: var(--at-bg-hover); }
+.cpx-popup-item:hover { background: rgba(255,255,255,0.45); }
 .cpx-popup-item.hi    { background: rgba(249,99,2,.07) !important; border-left: 3px solid var(--at-orange); padding-left: 11px; }
 .cpx-popup-item.added { opacity: .55; cursor: default; }
 .cpx-pi-thumb  { width: 36px; height: 36px; flex-shrink: 0; border-radius: 4px; border: 1px solid var(--at-border); object-fit: contain; background: var(--at-bg-hover); overflow: hidden; display: flex; align-items: center; justify-content: center; }
 .cpx-pi-thumb img { width: 100%; height: 100%; object-fit: cover; }
 .cpx-pi-noimg  { color: var(--at-text-muted); }
-.cpx-pi-sku    { font-family: monospace; font-size: 11px; color: var(--at-text-muted); width: 68px; flex-shrink: 0; }
+.cpx-pi-sku    { font-family: monospace; font-size: 11px; font-weight: 700; color: var(--at-orange, #ea580c); width: 68px; flex-shrink: 0; }
 .cpx-pi-desc   { flex: 1; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cpx-pi-stock  { flex-shrink: 0; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; }
 .cpx-pi-stock.ok   { background: rgba(22,163,74,.1); color: #16a34a; }
