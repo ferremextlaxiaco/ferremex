@@ -626,7 +626,8 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
 
   const imagenesUpd: string[] = Array.isArray(body.imagenes) ? body.imagenes : []
 
-  await productModule.updateProducts(body.id, {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const updateData: Record<string, any> = {
     title: body.descripcion,
     weight: body.peso > 0 ? Math.round(body.peso * 1000) : 0,
     category_ids: categoryId ? [categoryId] : [],
@@ -634,9 +635,6 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
     // Si no (p.ej. productos importados sin images[]), conservar body.thumbnail para
     // no borrar el thumbnail que asignó attach:imagenes al importar el catálogo.
     thumbnail: imagenesUpd[0] ?? (body.thumbnail || null),
-    images: imagenesUpd.length > 0
-      ? imagenesUpd.map((url) => ({ url }))
-      : undefined,   // sin imágenes nuevas → no tocar el array existente
     metadata: {
       departamento: body.departamento ?? "",
       unidadCompra: body.unidadCompra ?? "Pieza",
@@ -660,7 +658,16 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       mayoreoActivo: body.mayoreoActivo ?? false,
       mayoreoMin: body.mayoreoMin ?? 0,
     },
-  })
+  }
+
+  // Solo incluir `images` si el frontend mandó imágenes nuevas. Pasar `images: undefined`
+  // rompe en @medusajs/product 2.13.5 (MikroORM rechaza un valor undefined en assign),
+  // así que omitimos la propiedad para conservar el array existente sin tocarlo.
+  if (imagenesUpd.length > 0) {
+    updateData.images = imagenesUpd.map((url) => ({ url }))
+  }
+
+  await productModule.updateProducts(body.id, updateData)
 
   // Actualizar variante
   const productWithVariants = await productModule.retrieveProduct(body.id, {
