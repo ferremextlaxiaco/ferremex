@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { createPortal } from "react-dom"
 import { X, Tag, ImageOff, Check, Plus } from "lucide-react"
 import { buscarProductoPorSku, type Promocion, type ProductoPOS } from "../lib/client"
-import { describirPromo } from "../lib/promociones"
+import { describirPromo, diagnosticoPromo, contextoDeCliente } from "../lib/promociones"
 import { usePOS } from "../lib/pos-store"
 
 /**
@@ -27,7 +27,7 @@ export function DetallePromoModal({
   skusEnCarrito: Set<string>
   onClose: () => void
 }) {
-  const { dispatch } = usePOS()
+  const { state, promos, dispatch } = usePOS()
   // Cache sku → ProductoPOS completo (precio/existencia para agregar al carrito).
   const [info, setInfo] = useState<Record<string, ProductoPOS>>({})
   const [cargando, setCargando] = useState(false)
@@ -65,9 +65,10 @@ export function DetallePromoModal({
   if (!promo) return null
 
   const esCruzada = promo.modo_articulos === "cruzada"
-  // En "mismos", requeridos == beneficiados: solo mostramos una lista.
-  const faltantes = promo.skus_requeridos.filter((s) => !skusEnCarrito.has(s))
-  const activable = faltantes.length === 0
+  // Diagnóstico REAL contra el motor: no basta con que los SKUs estén en el
+  // carrito; también debe cumplirse la cantidad mínima (y que el descuento baje
+  // el precio). Así el aviso dice exactamente qué falta (artículos o piezas).
+  const diag = diagnosticoPromo(promo, state.items, contextoDeCliente(state.clienteActivo))
 
   function agregar(p: ProductoPOS) {
     dispatch({
@@ -136,11 +137,12 @@ export function DetallePromoModal({
 
         {/* Body */}
         <div className="dpk-body">
-          {/* Aviso de activación */}
-          <div className={`prm-aviso ${activable ? "prm-aviso--ok" : "prm-aviso--pend"}`}>
-            {activable
-              ? "✓ La promoción está activa: ya tienes los artículos necesarios."
-              : `Para activarla, agrega al carrito ${faltantes.length} artículo${faltantes.length !== 1 ? "s" : ""} requerido${faltantes.length !== 1 ? "s" : ""}.`}
+          {/* Aviso de activación — refleja el estado REAL del motor (presencia de
+              artículos + cantidad mínima + que el descuento aplique). */}
+          <div className={`prm-aviso ${diag.aplicada ? "prm-aviso--ok" : "prm-aviso--pend"}`}>
+            {diag.aplicada
+              ? "✓ La promoción está activa: se está aplicando el descuento."
+              : diag.motivo || "Esta promoción aún no se está aplicando."}
           </div>
 
           {/* Artículos requeridos */}

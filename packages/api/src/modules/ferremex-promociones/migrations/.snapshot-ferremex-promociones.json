@@ -73,7 +73,8 @@
             "porcentaje",
             "nivel_precio",
             "nxm",
-            "volumen"
+            "volumen",
+            "personalizado"
           ],
           "mappedType": "enum"
         },
@@ -143,6 +144,15 @@
             "excedente"
           ],
           "mappedType": "enum"
+        },
+        "descuentos_articulo": {
+          "name": "descuentos_articulo",
+          "type": "jsonb",
+          "unsigned": false,
+          "autoincrement": false,
+          "primary": false,
+          "nullable": true,
+          "mappedType": "json"
         },
         "modo_articulos": {
           "name": "modo_articulos",

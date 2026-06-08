@@ -1,6 +1,34 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_PROMOCIONES } from "../../../modules/ferremex-promociones"
 import type FerremexPromocionesService from "../../../modules/ferremex-promociones/service"
+import { resolverPreciosPorSku, validarPisoPrecio4 } from "./precios"
+
+/**
+ * Regla de negocio: ningún artículo puede quedar por debajo de su precio 4
+ * (precio especial / piso). Resuelve los precios de los SKUs beneficiados y
+ * valida que la promo no los rebase. Devuelve un mensaje de error (con el
+ * descuento máximo permitido) o null si todo OK.
+ */
+export async function validarPiso(scope: any, data: Record<string, any>): Promise<string | null> {
+  const skus: string[] =
+    data.modo_articulos === "cruzada" ? data.skus_beneficiados ?? [] : data.skus_requeridos ?? []
+  if (skus.length === 0) return null
+  const precios = await resolverPreciosPorSku(scope, skus)
+  const violaciones = validarPisoPrecio4(
+    data,
+    precios,
+    (sku, n) => {
+      const pr = precios.get(sku)
+      if (!pr) return undefined
+      return n === 2 ? pr.precio2 : n === 3 ? pr.precio3 : n === 4 ? pr.precio4 : undefined
+    }
+  )
+  if (violaciones.length === 0) return null
+  const detalle = violaciones
+    .map((v) => `${v.sku} (máx. ${v.descuentoMaxPct}% → no menos de $${v.precio4.toFixed(2)})`)
+    .join(", ")
+  return `El descuento deja ${violaciones.length === 1 ? "un artículo" : "artículos"} por debajo de su precio 4 (precio especial): ${detalle}.`
+}
 
 /**
  * /caja/promociones — CRUD de promociones del POS (módulo ferremex_promociones).
@@ -11,10 +39,20 @@ import type FerremexPromocionesService from "../../../modules/ferremex-promocion
  * artículo), y leído por la pantalla de venta para evaluar descuentos en vivo.
  */
 
-export type TipoPromo = "porcentaje" | "nivel_precio" | "nxm" | "volumen"
+export type TipoPromo = "porcentaje" | "nivel_precio" | "nxm" | "volumen" | "personalizado"
 export type ModoArticulos = "mismos" | "cruzada"
 export type Segmento = "todos" | "cliente" | "grupo"
 export type AlcanceVolumen = "todas" | "excedente"
+
+/**
+ * Descuento individual de un artículo. Se usa en:
+ *  - tipo "personalizado": cada beneficiado lleva "porcentaje" o "precio_fijo".
+ *  - tipo "nivel_precio" + cruzada: cada beneficiado lleva "nivel_precio" (valor 2|3|4).
+ */
+export interface DescuentoArticulo {
+  tipo: "porcentaje" | "precio_fijo" | "nivel_precio"
+  valor: number // % si porcentaje; precio MXN si precio_fijo; nivel 2|3|4 si nivel_precio
+}
 
 export interface PromocionPOS {
   id: string
@@ -34,6 +72,8 @@ export interface PromocionPOS {
   modo_articulos: ModoArticulos
   skus_requeridos: string[]
   skus_beneficiados: string[]
+  /** Solo tipo "personalizado": descuento por SKU. {} para los demás tipos. */
+  descuentos_articulo: Record<string, DescuentoArticulo>
   segmento: Segmento
   cliente_id: string | null
   grupo: string | null
@@ -62,6 +102,8 @@ export function aPromocionPOS(p: any): PromocionPOS {
     modo_articulos: p.modo_articulos ?? "mismos",
     skus_requeridos: Array.isArray(p.skus_requeridos) ? p.skus_requeridos : [],
     skus_beneficiados: Array.isArray(p.skus_beneficiados) ? p.skus_beneficiados : [],
+    descuentos_articulo: (p.descuentos_articulo && typeof p.descuentos_articulo === "object")
+      ? p.descuentos_articulo : {},
     segmento: p.segmento ?? "todos",
     cliente_id: p.cliente_id ?? null,
     grupo: p.grupo ?? null,
@@ -71,7 +113,7 @@ export function aPromocionPOS(p: any): PromocionPOS {
   }
 }
 
-const TIPOS: TipoPromo[] = ["porcentaje", "nivel_precio", "nxm", "volumen"]
+const TIPOS: TipoPromo[] = ["porcentaje", "nivel_precio", "nxm", "volumen", "personalizado"]
 const SEGMENTOS: Segmento[] = ["todos", "cliente", "grupo"]
 
 /** Limpia y valida el cuerpo a un objeto persistible. Devuelve {data} o {error}. */
@@ -98,6 +140,12 @@ export function sanearPromocion(
     if (skus_beneficiados.length === 0) {
       return { error: "En una promoción cruzada debes elegir los artículos que reciben el descuento" }
     }
+    // Regla: los beneficiados deben ser SIEMPRE un subconjunto de los requeridos.
+    const setReq = new Set(skus_requeridos)
+    const fuera = skus_beneficiados.filter((s) => !setReq.has(s))
+    if (fuera.length > 0) {
+      return { error: `Los artículos con descuento deben estar entre los requeridos. Sobran: ${fuera.join(", ")}` }
+    }
   } else {
     // Modo "mismos": lo requerido ES lo beneficiado.
     skus_beneficiados = skus_requeridos
@@ -111,6 +159,7 @@ export function sanearPromocion(
   let volumen_min: number | null = null
   let volumen_desc: number | null = null
   let volumen_alcance: AlcanceVolumen | null = null
+  let descuentos_articulo: Record<string, DescuentoArticulo> | null = null
 
   if (tipo === "porcentaje") {
     porcentaje = Math.round(Number(body.porcentaje))
@@ -121,6 +170,22 @@ export function sanearPromocion(
     nivel_precio = Math.round(Number(body.nivel_precio))
     if (![2, 3, 4].includes(nivel_precio)) {
       return { error: "El nivel de precio debe ser 2, 3 o 4" }
+    }
+    // En CRUZADA se puede fijar el nivel POR ARTÍCULO. Construye el mapa con los
+    // niveles enviados (cae al nivel global para los que no traigan override).
+    if (modo === "cruzada") {
+      const raw = (body.descuentos_articulo && typeof body.descuentos_articulo === "object")
+        ? body.descuentos_articulo : {}
+      const niveles: Record<string, DescuentoArticulo> = {}
+      for (const sku of skus_beneficiados) {
+        const d = (raw as Record<string, any>)[sku]
+        const nv = d && d.tipo === "nivel_precio" ? Math.round(Number(d.valor)) : nivel_precio
+        if (![2, 3, 4].includes(nv)) {
+          return { error: `El nivel de precio del artículo ${sku} debe ser 2, 3 o 4` }
+        }
+        niveles[sku] = { tipo: "nivel_precio", valor: nv }
+      }
+      descuentos_articulo = niveles
     }
   } else if (tipo === "nxm") {
     nxm_lleva = Math.round(Number(body.nxm_lleva))
@@ -141,6 +206,32 @@ export function sanearPromocion(
     if (!Number.isFinite(volumen_desc) || volumen_desc <= 0 || volumen_desc > 100) {
       return { error: "El descuento por volumen debe estar entre 1 y 100%" }
     }
+  } else if (tipo === "personalizado") {
+    // Cada artículo beneficiado lleva su propio descuento (% o precio fijo).
+    const raw = (body.descuentos_articulo && typeof body.descuentos_articulo === "object")
+      ? body.descuentos_articulo : {}
+    const limpio: Record<string, DescuentoArticulo> = {}
+    for (const sku of skus_beneficiados) {
+      const d = (raw as Record<string, any>)[sku]
+      if (!d) continue // un artículo sin descuento definido simplemente no recibe promo
+      const tipoD = d.tipo === "precio_fijo" ? "precio_fijo" : "porcentaje"
+      const valor = Number(d.valor)
+      if (!Number.isFinite(valor) || valor <= 0) {
+        return { error: `El descuento del artículo ${sku} no es válido` }
+      }
+      if (tipoD === "porcentaje" && valor > 100) {
+        return { error: `El porcentaje del artículo ${sku} no puede ser mayor a 100` }
+      }
+      // Redondeo: % a entero; precio fijo a 2 decimales.
+      limpio[sku] = {
+        tipo: tipoD,
+        valor: tipoD === "porcentaje" ? Math.round(valor) : Math.round(valor * 100) / 100,
+      }
+    }
+    if (Object.keys(limpio).length === 0) {
+      return { error: "Define el descuento de al menos un artículo de la promoción" }
+    }
+    descuentos_articulo = limpio
   }
 
   // Segmentación.
@@ -191,6 +282,7 @@ export function sanearPromocion(
       volumen_min,
       volumen_desc,
       volumen_alcance,
+      descuentos_articulo,
       modo_articulos: modo,
       skus_requeridos,
       skus_beneficiados,
@@ -228,6 +320,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     if ("error" in saneado) {
       res.status(400).json({ error: saneado.error }); return
     }
+    const errPiso = await validarPiso(req.scope, saneado.data)
+    if (errPiso) { res.status(400).json({ error: errPiso }); return }
     const service: FerremexPromocionesService = req.scope.resolve(FERREMEX_PROMOCIONES)
     const creada = await service.createPromocions(saneado.data)
     res.status(201).json(aPromocionPOS(creada))

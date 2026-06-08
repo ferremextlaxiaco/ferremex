@@ -1023,10 +1023,19 @@ export async function eliminarCajaAPI(id: string): Promise<void> {
 
 // ── Promociones (módulo ferremex_promociones) ─────────────────────────────────
 
-export type TipoPromo = "porcentaje" | "nivel_precio" | "nxm" | "volumen"
+export type TipoPromo = "porcentaje" | "nivel_precio" | "nxm" | "volumen" | "personalizado"
 export type ModoArticulosPromo = "mismos" | "cruzada"
 export type SegmentoPromo = "todos" | "cliente" | "grupo"
 export type AlcanceVolumen = "todas" | "excedente"
+
+/**
+ * Descuento individual de un artículo. Se usa en tipo "personalizado"
+ * (porcentaje/precio_fijo) y en "nivel_precio" + cruzada (nivel_precio: valor 2|3|4).
+ */
+export interface DescuentoArticulo {
+  tipo: "porcentaje" | "precio_fijo" | "nivel_precio"
+  valor: number // % si porcentaje; precio MXN si precio_fijo; nivel 2|3|4 si nivel_precio
+}
 
 /**
  * Una promoción del POS (regla de descuento aplicable en el carrito). Dato
@@ -1055,6 +1064,8 @@ export interface Promocion {
   skus_requeridos: string[]
   /** SKUs que reciben el descuento (= requeridos cuando modo="mismos"). */
   skus_beneficiados: string[]
+  /** Solo tipo "personalizado": descuento por SKU. {} para los demás tipos. */
+  descuentos_articulo: Record<string, DescuentoArticulo>
   segmento: SegmentoPromo
   cliente_id: string | null
   grupo: string | null

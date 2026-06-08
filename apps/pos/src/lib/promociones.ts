@@ -117,12 +117,26 @@ export function describirPromo(p: Promocion, sku?: string): string {
   switch (p.tipo) {
     case "porcentaje":
       return Number(p.porcentaje) >= 100 ? "Gratis en promoción" : `${p.porcentaje}% de descuento`
-    case "nivel_precio":
-      return `Precio especial (nivel ${p.nivel_precio})`
+    case "nivel_precio": {
+      // En cruzada el nivel puede fijarse por artículo (descuentos_articulo);
+      // si se pasa el sku y tiene override, mostramos ese nivel, no el global.
+      const ov = sku ? p.descuentos_articulo?.[sku] : undefined
+      const nivel = ov?.tipo === "nivel_precio" ? Number(ov.valor) : p.nivel_precio
+      return `Precio especial (nivel ${nivel})`
+    }
     case "nxm":
       return `Lleva ${p.nxm_lleva}, paga ${p.nxm_paga}`
     case "volumen":
       return `${p.volumen_desc}% al llevar ${p.volumen_min}+ piezas`
+    case "personalizado": {
+      const d = sku ? p.descuentos_articulo?.[sku] : undefined
+      if (d) {
+        return d.tipo === "precio_fijo"
+          ? `Precio especial $${Number(d.valor).toFixed(2)}`
+          : `${d.valor}% de descuento`
+      }
+      return "Descuento por artículo"
+    }
     default:
       return p.nombre
   }
@@ -155,20 +169,44 @@ function importeConPromo(item: CartItem, promo: Promocion, base: number): number
   // Tope de unidades con descuento (las demás van a precio base).
   const conTope = (unidadesDesc: number) => Math.min(unidadesDesc, promo.max_unidades ?? unidadesDesc)
 
+  // Piso de seguridad: ninguna pieza puede venderse por debajo del precio 4
+  // (precio especial). Red de seguridad por si existe una promo agresiva creada
+  // antes de la regla o por API. 0 = sin dato → no se aplica el clamp.
+  const piso = Number(item.precio4) || 0
+  const clampUnit = (p: number) => (piso > 0 ? Math.max(p, piso) : p)
+
   switch (promo.tipo) {
     case "porcentaje": {
       const pct = Number(promo.porcentaje) || 0
       if (pct <= 0) return null
       const unidadesDesc = conTope(cant)
-      const precioDesc = base * (1 - pct / 100)
+      const precioDesc = clampUnit(base * (1 - pct / 100))
       return precioDesc * unidadesDesc + base * (cant - unidadesDesc)
     }
     case "nivel_precio": {
-      const nivel = Number(promo.nivel_precio) || 0
+      // En cruzada se puede fijar el nivel POR ARTÍCULO (descuentos_articulo);
+      // si no hay override, se usa el nivel global de la promo.
+      const override = promo.descuentos_articulo?.[item.sku]
+      const nivel = override?.tipo === "nivel_precio"
+        ? Number(override.valor) || 0
+        : Number(promo.nivel_precio) || 0
       const pNivel = precioNivel(item, nivel)
       if (pNivel === undefined || pNivel <= 0 || pNivel >= base) return null
       const unidadesDesc = conTope(cant)
-      return pNivel * unidadesDesc + base * (cant - unidadesDesc)
+      return clampUnit(pNivel) * unidadesDesc + base * (cant - unidadesDesc)
+    }
+    case "personalizado": {
+      // Descuento propio de este SKU: porcentaje o precio fijo (con clamp a piso).
+      const d = promo.descuentos_articulo?.[item.sku]
+      if (!d) return null
+      const valor = Number(d.valor) || 0
+      if (valor <= 0) return null
+      const precioDesc = d.tipo === "precio_fijo"
+        ? clampUnit(valor)
+        : clampUnit(base * (1 - valor / 100))
+      if (precioDesc >= base) return null // no encarece ni iguala
+      const unidadesDesc = conTope(cant)
+      return precioDesc * unidadesDesc + base * (cant - unidadesDesc)
     }
     case "nxm": {
       const lleva = Number(promo.nxm_lleva) || 0
@@ -184,23 +222,26 @@ function importeConPromo(item: CartItem, promo: Promocion, base: number): number
       let gratis = grupos * (lleva - paga)
       if (promo.max_unidades != null) gratis = Math.min(gratis, promo.max_unidades)
       void resto
-      return base * (cant - gratis)
+      const importe = base * (cant - gratis)
+      // Clamp NxM: el precio efectivo por pieza no puede caer bajo el piso.
+      return piso > 0 ? Math.max(importe, piso * cant) : importe
     }
     case "volumen": {
       const min = Number(promo.volumen_min) || 0
       const desc = Number(promo.volumen_desc) || 0
       if (min < 2 || desc <= 0) return null
       if (cant < min) return null
-      const factor = 1 - desc / 100
+      // Precio con descuento por pieza, clampeado al piso (precio 4).
+      const precioDesc = clampUnit(base * (1 - desc / 100))
       if (promo.volumen_alcance === "excedente") {
         // Solo las piezas por ENCIMA del mínimo reciben descuento.
         let conDesc = cant - min
         conDesc = conTope(conDesc)
-        return base * (cant - conDesc) + base * factor * conDesc
+        return base * (cant - conDesc) + precioDesc * conDesc
       }
       // "todas": todas las piezas reciben descuento (respetando tope).
       const conDesc = conTope(cant)
-      return base * factor * conDesc + base * (cant - conDesc)
+      return precioDesc * conDesc + base * (cant - conDesc)
     }
     default:
       return null
@@ -287,6 +328,90 @@ export function calcularPromosCarrito(
   }
 
   return resultado
+}
+
+/** Estado de aplicación de una promo respecto al carrito actual. */
+export interface DiagnosticoPromo {
+  /** ¿La promo se está APLICANDO de verdad a alguna línea del carrito? */
+  aplicada: boolean
+  /** SKUs requeridos que aún NO están en el carrito (cruzada o mismos). */
+  faltanSkus: string[]
+  /**
+   * Piezas mínimas exigidas por la promo (`cantidad_minima`) y cuántas hay hoy
+   * en la línea más cargada de los beneficiados. null si la promo no exige mínimo.
+   */
+  minimoPiezas: number | null
+  /** Piezas que faltan para alcanzar el mínimo en el artículo con descuento más cercano (0 si ya se cumple). */
+  faltanPiezas: number
+  /** Motivo legible de por qué no aplica (vacío si aplicada). */
+  motivo: string
+}
+
+/**
+ * Diagnostica por qué una promo NO se aplica al carrito (o confirma que sí),
+ * para mostrarle al cajero qué le falta: agregar un artículo requerido, o llevar
+ * más piezas para alcanzar la cantidad mínima. Reproduce la misma elegibilidad
+ * que `calcularPromosCarrito` (vigencia, segmento, requeridos presentes,
+ * cantidad mínima) pero reportando la causa en vez del importe.
+ */
+export function diagnosticoPromo(
+  promo: Promocion,
+  items: CartItem[],
+  ctx: ContextoCliente
+): DiagnosticoPromo {
+  const vacio: DiagnosticoPromo = {
+    aplicada: false, faltanSkus: [], minimoPiezas: null, faltanPiezas: 0, motivo: "",
+  }
+
+  if (!promoVigente(promo) || !aplicaSegmento(promo, ctx)) {
+    return { ...vacio, motivo: "La promoción no está vigente para este cliente." }
+  }
+
+  // ¿Se está aplicando ya a alguna línea? (fuente de verdad: el motor real).
+  const mapa = calcularPromosCarrito(items, promos1(promo), ctx)
+  const aplicada = items.some((it) => mapa.get(claveLinea(it))?.promo?.id === promo.id)
+  if (aplicada) return { ...vacio, aplicada: true }
+
+  // No aplica: averiguar por qué. 1) ¿faltan SKUs requeridos en el carrito?
+  const skusEnCarrito = new Set(items.map((i) => i.sku))
+  const faltanSkus = promo.skus_requeridos.filter((s) => !skusEnCarrito.has(s))
+  if (faltanSkus.length > 0) {
+    return { ...vacio, faltanSkus, motivo: `Faltan ${faltanSkus.length} artículo(s) requerido(s) en el carrito.` }
+  }
+
+  // 2) Todos los requeridos están, pero no aplica → casi siempre es la cantidad
+  //    mínima por línea. Calcular cuántas piezas tiene el beneficiado con MÁS
+  //    piezas y cuántas faltan para el mínimo.
+  const minimo = Number(promo.cantidad_minima) || 0
+  if (minimo > 1) {
+    const benSet = new Set(promo.skus_beneficiados)
+    // Piezas máximas en una sola línea beneficiada (la promo se evalúa por línea).
+    let maxEnLinea = 0
+    for (const it of items) {
+      if (benSet.has(it.sku) && !it.paquete_id) maxEnLinea = Math.max(maxEnLinea, it.cantidad)
+    }
+    const faltanPiezas = Math.max(0, minimo - maxEnLinea)
+    if (faltanPiezas > 0) {
+      return {
+        ...vacio,
+        minimoPiezas: minimo,
+        faltanPiezas,
+        motivo: `Requiere ${minimo} piezas del artículo con descuento para activarse (tienes ${maxEnLinea}). Agrega ${faltanPiezas} más.`,
+      }
+    }
+  }
+
+  // 3) Todo presente y el mínimo se cumple, pero el motor igual no la aplicó:
+  //    el descuento no baja el precio (nivel no disponible, precio ≥ base, etc.).
+  return {
+    ...vacio,
+    motivo: "Con los precios actuales esta promoción no reduce el precio. Revisa su configuración.",
+  }
+}
+
+/** Helper: envuelve una sola promo en arreglo para reusar el motor del carrito. */
+function promos1(p: Promocion): Promocion[] {
+  return [p]
 }
 
 /** Total del carrito aplicando promociones. Sin promos = suma base/mayoreo. */

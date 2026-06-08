@@ -1,7 +1,7 @@
 import { useRef, useState } from "react"
 import { List, FileText, ShoppingCart, Bookmark } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
-import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente } from "../lib/promociones"
+import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
 import { DetallePromoModal } from "./DetallePromoModal"
@@ -186,6 +186,18 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const promoDisponible = !tienePromo && !item.paquete_id
               ? promosDeArticulo(item.sku, promos, ctxPromo)[0] ?? null
               : null
+            // Pista corta de qué falta para activarla (piezas o artículos), para
+            // que el cajero lo vea sin abrir el detalle.
+            const diagDisp = promoDisponible
+              ? diagnosticoPromo(promoDisponible, items, ctxPromo)
+              : null
+            const pistaPromo = diagDisp && !diagDisp.aplicada
+              ? diagDisp.faltanPiezas > 0
+                ? `faltan ${diagDisp.faltanPiezas} pza${diagDisp.faltanPiezas !== 1 ? "s" : ""}`
+                : diagDisp.faltanSkus.length > 0
+                ? `faltan ${diagDisp.faltanSkus.length} art.`
+                : ""
+              : ""
             // El mayoreo solo se rotula si NO lo eclipsó una promo.
             const esMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad >= item.mayoreoMin
             const faltanMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
@@ -219,6 +231,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                         onClick={(e) => { e.stopPropagation(); setPromoDetalle(promoDisponible) }}
                       >
                         🏷️ Promo: {describirPromo(promoDisponible, item.sku)}
+                        {pistaPromo && <span className="badge-promo-pista"> · {pistaPromo}</span>}
                       </button>
                     )}
                     {esMayoreo && <span className="badge-mayoreo">Mayoreo</span>}

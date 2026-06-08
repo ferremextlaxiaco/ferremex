@@ -1,7 +1,7 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_PROMOCIONES } from "../../../../modules/ferremex-promociones"
 import type FerremexPromocionesService from "../../../../modules/ferremex-promociones/service"
-import { aPromocionPOS, sanearPromocion, type PromocionPOS } from "../route"
+import { aPromocionPOS, sanearPromocion, validarPiso, type PromocionPOS } from "../route"
 
 /** /caja/promociones/:id — detalle, edición y borrado de una promoción. */
 
@@ -34,6 +34,8 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
     if ("error" in saneado) {
       res.status(400).json({ error: saneado.error }); return
     }
+    const errPiso = await validarPiso(req.scope, saneado.data)
+    if (errPiso) { res.status(400).json({ error: errPiso }); return }
     await service.updatePromocions({ id, ...saneado.data })
     const [actualizada] = await service.listPromocions({ id })
     res.json(aPromocionPOS(actualizada))

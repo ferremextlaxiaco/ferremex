@@ -1205,10 +1205,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-radius: 4px;
   padding: 1px 6px;
   flex-shrink: 0;
-  max-width: 200px;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Pista de "qué falta" (piezas/artículos) dentro del badge de promo disponible. */
+.badge-promo-pista {
+  color: #9a3412;
+  font-weight: 800;
 }
 
 /* Los badges de promo son botones clicables (abren el detalle de requisitos) */
@@ -7693,7 +7698,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .facturar-panel-titulo svg { color: var(--orange); }
 .facturar-panel-cerrar {
   display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
+  width: 30px; height: 30px; border-radius: 8px; border: none;
   background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
 }
 .facturar-panel-cerrar:hover { background: var(--red-dim); color: var(--red); }
@@ -7751,7 +7756,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .espera-titulo svg { color: var(--orange); }
 .espera-cerrar {
   display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
+  width: 30px; height: 30px; border-radius: 8px; border: none;
   background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
 }
 .espera-cerrar:hover { background: var(--red-dim); color: var(--red); }
@@ -7813,7 +7818,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .espera-item-retomar:hover { background: rgba(249,99,2,0.16); }
 .espera-item-eliminar {
   display: flex; align-items: center; justify-content: center;
-  width: 36px; height: 36px; border-radius: 8px;
+  width: 36px; height: 36px; border-radius: 8px; border: none;
   background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
 }
 .espera-item-eliminar:hover { background: var(--red-dim); color: var(--red); }
@@ -7890,7 +7895,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .cotpop-titulo svg { color: var(--orange); }
 .cotpop-cerrar {
   display: flex; align-items: center; justify-content: center;
-  width: 30px; height: 30px; border-radius: 8px;
+  width: 30px; height: 30px; border-radius: 8px; border: none;
   background: var(--bg-hover); color: var(--text-soft); cursor: pointer;
 }
 .cotpop-cerrar:hover { background: var(--red-dim); color: var(--red); }

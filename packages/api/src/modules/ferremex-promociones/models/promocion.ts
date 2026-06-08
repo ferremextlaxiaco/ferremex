@@ -28,11 +28,13 @@ const Promocion = model.define("promocion", {
   prioridad: model.number().default(0),
 
   // Tipo de descuento. Determina qué campos se usan:
-  //  - porcentaje   → `porcentaje` (% sobre el precio del nivel del cliente)
-  //  - nivel_precio → `nivel_precio` (2|3|4: fuerza ese precio durante la promo)
-  //  - nxm          → `nxm_lleva`/`nxm_paga` (lleva N, paga M)
-  //  - volumen      → `volumen_min`/`volumen_desc`/`volumen_alcance`
-  tipo: model.enum(["porcentaje", "nivel_precio", "nxm", "volumen"]),
+  //  - porcentaje    → `porcentaje` (% sobre el precio del nivel del cliente)
+  //  - nivel_precio  → `nivel_precio` (2|3|4: fuerza ese precio durante la promo)
+  //  - nxm           → `nxm_lleva`/`nxm_paga` (lleva N, paga M)
+  //  - volumen       → `volumen_min`/`volumen_desc`/`volumen_alcance`
+  //  - personalizado → `descuentos_articulo`: cada SKU beneficiado lleva su
+  //    propio descuento (porcentaje o precio fijo). Ver abajo.
+  tipo: model.enum(["porcentaje", "nivel_precio", "nxm", "volumen", "personalizado"]),
   porcentaje: model.number().nullable(),
   nivel_precio: model.number().nullable(),
   nxm_lleva: model.number().nullable(),
@@ -42,6 +44,10 @@ const Promocion = model.define("promocion", {
   // "todas" = el descuento aplica a todas las piezas si se alcanza el mínimo;
   // "excedente" = solo a las piezas que exceden el mínimo.
   volumen_alcance: model.enum(["todas", "excedente"]).nullable(),
+  // Descuento POR ARTÍCULO (solo tipo "personalizado"). Mapa sku → { tipo, valor }
+  // donde tipo es "porcentaje" (valor = %) o "precio_fijo" (valor = precio MXN
+  // con IVA, el mismo basis que muestra el carrito). null para los otros tipos.
+  descuentos_articulo: model.json().nullable(),
 
   // Cómo se relacionan los artículos requeridos con los beneficiados:
   //  - "mismos"  → un solo conjunto: lo que se lleva ES lo que recibe el descuento

@@ -15,6 +15,7 @@ const ETIQUETAS_TIPO = {
   nivel_precio: (p) => `Precio ${p.nivel_precio}`,
   nxm: (p) => `${p.nxm_lleva}x${p.nxm_paga}`,
   volumen: (p) => `${p.volumen_desc}% al llevar ${p.volumen_min}+`,
+  personalizado: (p) => `Por artículo (${Object.keys(p.descuentos_articulo || {}).length})`,
 }
 
 const ETIQUETAS_SEGMENTO = {
