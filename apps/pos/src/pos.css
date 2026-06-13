@@ -61,16 +61,23 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- Botones base ---- */
-button {
-  cursor: pointer;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 14px;
-  font-weight: 600;
-  padding: 8px 16px;
-  transition: background 0.12s, opacity 0.12s;
-  letter-spacing: 0.02em;
+/* ---- Botones base ----
+   En @layer base para que las utilidades de Tailwind (p-0, px-*, py-*) de un
+   botón-ícono cuadrado SIEMPRE ganen sobre este padding por defecto. Si se deja
+   sin capa, `button{padding:8px 16px}` vence a `.p-0` (capa utilities) y aplasta
+   el SVG a 0px (32px de padding ≥ 32px de ancho). Los botones de texto sin
+   utilidad de padding siguen recibiendo 8px 16px igual que antes. */
+@layer base {
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 8px 16px;
+    transition: background 0.12s, opacity 0.12s;
+    letter-spacing: 0.02em;
+  }
 }
 
 .btn-primary {
@@ -1521,6 +1528,18 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-size: 12px;
   color: var(--green);
   text-align: right;
+}
+
+/* Preview de puntos a ganar en el cobro (Monedero Electrónico) */
+.cobro-puntos-preview {
+  font-size: 13px;
+  color: #b45309;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  text-align: center;
 }
 
 /* ---- Pendiente y cambio global ---- */

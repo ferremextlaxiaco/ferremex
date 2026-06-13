@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { X, Download, MessageCircle, Mail, Loader } from "lucide-react"
 
 export default function OCConfirmModal({
@@ -13,6 +13,16 @@ export default function OCConfirmModal({
   const [generating,      setGenerating]      = useState(false)
   const [preview,         setPreview]         = useState(null)   // { oc, blobUrl }
   const [whatsAppTip,     setWhatsAppTip]     = useState(false)
+
+  // Cerrar con Escape (mismo efecto que el botón X / click en overlay).
+  // Depende de `preview` para que el cleanup de revokeObjectURL use el closure actual.
+  useEffect(() => {
+    if (!open) return
+    const fn = (e) => { if (e.key === "Escape") handleClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, preview])
 
   if (!open) return null
 

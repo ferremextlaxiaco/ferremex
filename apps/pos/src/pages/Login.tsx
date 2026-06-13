@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { obtenerUsuarios, obtenerTicketConfig, listarCajasAPI, login, type PosUsuario } from "../lib/client"
+import { obtenerUsuarios, obtenerTicketConfig, listarCajasAPI, obtenerConfigTurnos, login, type PosUsuario, type TurnosConfig } from "../lib/client"
 import { usePOS, buildTurnoId } from "../lib/pos-store"
 
 export function Login() {
@@ -12,6 +12,8 @@ export function Login() {
   // siempre el valor más reciente (evita un stale closure si las cajas cargan
   // justo mientras un cajero está validando su PIN).
   const cajasPorIdRef = useRef<Record<string, string>>({})
+  // Config de turnos (modo + franjas) para sellar el turno_id correcto al entrar.
+  const turnosCfgRef = useRef<TurnosConfig | null>(null)
   const [cargando, setCargando] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [pinUsuario, setPinUsuario] = useState<PosUsuario | null>(null)
@@ -20,11 +22,17 @@ export function Login() {
   const [validandoPin, setValidandoPin] = useState(false)
 
   useEffect(() => {
-    // Las cajas son opcionales: si fallan, el login sigue (corte sin caja).
-    Promise.all([obtenerUsuarios(), obtenerTicketConfig(), listarCajasAPI().catch(() => [])])
-      .then(([users, config, cajas]) => {
+    // Las cajas y la config de turnos son opcionales: si fallan, el login sigue.
+    Promise.all([
+      obtenerUsuarios(),
+      obtenerTicketConfig(),
+      listarCajasAPI().catch(() => []),
+      obtenerConfigTurnos().catch(() => null),
+    ])
+      .then(([users, config, cajas, turnosCfg]) => {
         setUsuarios(users.filter((u) => u.activo))
         cajasPorIdRef.current = Object.fromEntries(cajas.map((c) => [c.id, c.nombre]))
+        turnosCfgRef.current = turnosCfg
         dispatch({ type: "SET_TICKET_CONFIG", config })
       })
       .catch(() => setError("No se pudo conectar con el servidor"))
@@ -40,7 +48,8 @@ export function Login() {
         nombre: usuario.nombre,
         alias: usuario.alias?.trim() || undefined,
         rol: usuario.rol,
-        turno_id: buildTurnoId(),
+        // Modo día (default) → YYYY-MM-DD; modo turnos → franja de la hora actual.
+        turno_id: buildTurnoId(turnosCfgRef.current),
         caja_id,
         caja_nombre: caja_id ? (cajasPorIdRef.current[caja_id] ?? null) : null,
         permisos: usuario.permisos,

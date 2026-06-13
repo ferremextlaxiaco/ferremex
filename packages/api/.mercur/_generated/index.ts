@@ -720,6 +720,7 @@ export type Routes = {
             $id: typeof import("../../src/api/caja/compras/[id]/route");
         };
         corte: typeof import("../../src/api/caja/corte/route");
+        cortesPendientes: typeof import("../../src/api/caja/cortes-pendientes/route");
         cotizaciones: typeof import("../../src/api/caja/cotizaciones/route") & {
             $folio: typeof import("../../src/api/caja/cotizaciones/[folio]/route");
         };
@@ -730,6 +731,21 @@ export type Routes = {
         login: typeof import("../../src/api/caja/login/route");
         migrarLocalstorage: typeof import("../../src/api/caja/migrar-localstorage/route");
         migrarProveedoresCajas: typeof import("../../src/api/caja/migrar-proveedores-cajas/route");
+        monedero: {
+            $customerId: typeof import("../../src/api/caja/monedero/[customerId]/route") & {
+                inscribir: typeof import("../../src/api/caja/monedero/[customerId]/inscribir/route");
+                movimientos: typeof import("../../src/api/caja/monedero/[customerId]/movimientos/route");
+                reset: typeof import("../../src/api/caja/monedero/[customerId]/reset/route");
+            };
+            clientes: typeof import("../../src/api/caja/monedero/clientes/route");
+            config: typeof import("../../src/api/caja/monedero/config/route");
+            niveles: typeof import("../../src/api/caja/monedero/niveles/route") & {
+                $id: typeof import("../../src/api/caja/monedero/niveles/[id]/route");
+            };
+            reglas: typeof import("../../src/api/caja/monedero/reglas/route") & {
+                $id: typeof import("../../src/api/caja/monedero/reglas/[id]/route");
+            };
+        };
         movimientos: typeof import("../../src/api/caja/movimientos/route");
         paquetes: typeof import("../../src/api/caja/paquetes/route");
         pedidos: typeof import("../../src/api/caja/pedidos/route");
@@ -745,6 +761,7 @@ export type Routes = {
             };
         };
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");
+        turnosConfig: typeof import("../../src/api/caja/turnos-config/route");
         usuarios: typeof import("../../src/api/caja/usuarios/route");
         ventas: typeof import("../../src/api/caja/ventas/route") & {
             $folio: typeof import("../../src/api/caja/ventas/[folio]/route");

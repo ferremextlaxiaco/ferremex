@@ -78,6 +78,8 @@ export function DetallePromoModal({
         precio2: p.precio2, precio3: p.precio3, precio4: p.precio4,
         impuesto: p.impuesto, existencia: p.existencia,
         mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin,
+        // Taxonomía → tasa de puntos por línea en el motor del Monedero.
+        marca: p.marca, departamento: p.departamento, categoria: p.categoria,
       },
     })
   }

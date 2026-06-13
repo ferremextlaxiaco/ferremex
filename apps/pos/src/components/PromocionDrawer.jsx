@@ -81,6 +81,19 @@ export default function PromocionDrawer({
     if (open) { setForm(formInicial(promo)); setError(""); setPicker(null) }
   }, [open, promo])
 
+  // Cerrar con Escape: si hay un popup de SKUs abierto, lo cierra primero;
+  // si no, cierra el drawer completo (igual que el botón X / overlay).
+  useEffect(() => {
+    if (!open) return
+    const fn = (e) => {
+      if (e.key !== "Escape") return
+      if (picker) setPicker(null)
+      else onCerrar()
+    }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [open, picker, onCerrar])
+
   // Hidrata desde /caja/productos (misma fuente que el carrito) la info de los
   // SKUs seleccionados a los que aún les falta el PRECIO en cache — para mostrar
   // imagen + descripción + precio original/con-promo. Corre al abrir (editar) y

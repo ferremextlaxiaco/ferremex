@@ -5,6 +5,8 @@ import * as crypto from "crypto"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../lib/json-store"
 import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
+import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
+import type FerremexMonederoService from "../../../modules/ferremex-monedero/service"
 
 interface ItemVenta {
   sku: string
@@ -20,10 +22,32 @@ interface ItemVenta {
 interface VentaBody {
   cajero: string
   turno_id: string
+  // Caja física donde se hizo la venta (id del catálogo ferremex_cajas, heredada
+  // del cajero logueado en la terminal). El corte de caja agrupa por este campo
+  // (arqueo del cajón físico, no por cajero). Ventas viejas sin caja_id se
+  // agrupan como "sin caja". Opcional/retrocompatible.
+  caja_id?: string | null
+  caja_name?: string | null
+  // Vendedor de ESTA venta: quién la realizó. Por defecto = el cajero logueado,
+  // pero editable en el panel de venta (un admin puede vender en la caja de otro).
+  // Es solo registro/atribución; NO afecta el corte (que agrupa por caja).
+  vendedor?: string | null
   items: ItemVenta[]
   pago_efectivo: number
   pago_transferencia?: number
+  // Pago con tarjeta bancaria (crédito/débito vía TPV). Como la transferencia, NO
+  // es efectivo: no entra al cajón ni al efectivo esperado del corte, pero sí se
+  // cuenta en los totales del turno (columna propia ventas_tarjeta).
+  pago_tarjeta?: number
   pago_credito?: number
+  // Pago con puntos del Monedero Electrónico (en MXN). Los puntos consumidos =
+  // pago_puntos / valor_punto. El backend valida saldo y registra el canje
+  // transaccionalmente. Requiere cliente_id (cliente inscrito al monedero).
+  pago_puntos?: number
+  // Puntos GANADOS por esta compra, calculados por el motor del frontend
+  // (lib/monedero.ts) que tiene la taxonomía y la config cargadas. El backend
+  // los persiste como movimiento "ganado" transaccional. 0/omitido = sin puntos.
+  puntos_ganados?: number
   // Cliente a crédito: si pago_credito > 0, el cargo se registra en su cartera
   // de forma transaccional (dentro del lock de la venta). `cliente_id` es el id
   // del Customer nativo de Medusa.
@@ -86,7 +110,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // ("500" + 0) rompería la validación de importe más abajo.
   const pago_efectivo = Number(body.pago_efectivo ?? 0)
   const pago_transferencia = Number(body.pago_transferencia ?? 0)
+  const pago_tarjeta = Number(body.pago_tarjeta ?? 0)
   const pago_credito = Number(body.pago_credito ?? 0)
+  const pago_puntos = Number(body.pago_puntos ?? 0)
+  const puntos_ganados = Math.max(0, Math.round(Number(body.puntos_ganados ?? 0)))
 
   if (!cajero || !turno_id || !items?.length) {
     res.status(400).json({ error: "Faltan campos requeridos: cajero, turno_id, items" })
@@ -96,7 +123,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(400).json({ error: "Cada item requiere sku y cantidad > 0" })
     return
   }
-  if (![pago_efectivo, pago_transferencia, pago_credito].every((n) => Number.isFinite(n))) {
+  if (![pago_efectivo, pago_transferencia, pago_tarjeta, pago_credito, pago_puntos].every((n) => Number.isFinite(n))) {
     res.status(400).json({ error: "Montos de pago inválidos" })
     return
   }
@@ -105,9 +132,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(400).json({ error: "Una venta a crédito requiere cliente_id" })
     return
   }
+  // El pago con puntos requiere un cliente (es su saldo el que se descuenta).
+  if (pago_puntos > 0 && !body.cliente_id) {
+    res.status(400).json({ error: "El pago con puntos requiere cliente_id" })
+    return
+  }
 
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
-  const total_pagado = pago_efectivo + pago_transferencia + pago_credito
+  const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
 
   if (total_pagado < total - 0.01) {
     res.status(400).json({ error: "El pago es menor al total" })
@@ -121,6 +153,60 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // por read-modify-write concurrente.
   const carteraService: FerremexCarteraService | null =
     pago_credito > 0 ? req.scope.resolve(FERREMEX_CARTERA) : null
+
+  // Monedero: lo resolvemos si hay puntos a ganar o a canjear. La validación de
+  // saldo (canje) y el tope de canje se hacen ANTES del lock para fallar barato;
+  // el registro de movimientos ocurre DENTRO del lock (transaccional con la venta).
+  const monederoService: FerremexMonederoService | null =
+    (pago_puntos > 0 || puntos_ganados > 0) && body.cliente_id
+      ? req.scope.resolve(FERREMEX_MONEDERO)
+      : null
+
+  let puntos_canjeados = 0
+  // Puntos ganados ya saneados (entero ≥0). Se recortan abajo a un tope coherente
+  // con el importe para que un body manipulado no pueda inflar el devengo.
+  let puntos_ganados_final = puntos_ganados
+  if (monederoService && body.cliente_id) {
+    try {
+      const cfg = await monederoService.getOrCreateConfig()
+      const valorPunto = Number(cfg.valor_punto) || 0
+      if ((pago_puntos > 0 || puntos_ganados > 0) && valorPunto <= 0) {
+        res.status(400).json({ error: "El valor del punto no está configurado" }); return
+      }
+
+      // Canje (resta de puntos): validar tope y saldo.
+      if (pago_puntos > 0) {
+        // Tope: el pago con puntos no puede exceder max_canje_pct del total.
+        const topePesos = total * ((Number(cfg.max_canje_pct) || 0) / 100)
+        if (pago_puntos > topePesos + 0.01) {
+          res.status(400).json({
+            error: `Con puntos solo puedes cubrir hasta ${cfg.max_canje_pct}% del ticket ($${topePesos.toFixed(2)})`,
+          }); return
+        }
+        puntos_canjeados = Math.ceil(pago_puntos / valorPunto)
+        const saldo = await monederoService.saldoCliente(body.cliente_id)
+        if (puntos_canjeados > saldo) {
+          res.status(400).json({ error: `Puntos insuficientes: requiere ${puntos_canjeados}, disponible ${saldo}` }); return
+        }
+      }
+
+      // Devengo: el motor del frontend calcula puntos_ganados, pero acotamos
+      // server-side a un máximo coherente con el importe del ticket para que un
+      // body manipulado no acredite puntos arbitrarios. El factor 5 cubre el
+      // multiplicador del nivel más alto razonable (≤5×) sin replicar el motor.
+      if (puntos_ganados > 0 && valorPunto > 0) {
+        const tasaMax = Math.max(Number(cfg.tasa_base) || 0, 100) // techo permisivo
+        const topePuntos = Math.ceil(((total * (tasaMax / 100)) / valorPunto) * 5)
+        if (puntos_ganados_final > topePuntos) {
+          console.warn(`[caja/ventas] puntos_ganados recortado de ${puntos_ganados} a ${topePuntos} (cliente ${body.cliente_id})`)
+          puntos_ganados_final = topePuntos
+        }
+      }
+    } catch (e: any) {
+      console.error("[caja/ventas] Validación de monedero falló:", e?.message ?? e)
+      res.status(500).json({ error: "No se pudo validar el monedero" }); return
+    }
+  }
 
   try {
     const resultado = await withFileLock(VENTAS_FILE, async () => {
@@ -155,6 +241,19 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         }
       }
 
+      // RE-VALIDACIÓN del canje de puntos DENTRO del lock, antes de tocar el
+      // inventario: el saldo pudo cambiar entre la validación pre-lock y aquí
+      // (otra venta concurrente del mismo cliente). Se hace antes del decremento
+      // para poder retornar un error limpio sin efectos colaterales en stock.
+      if (monederoService && body.cliente_id && puntos_canjeados > 0) {
+        const saldoActual = await monederoService.saldoCliente(body.cliente_id)
+        if (puntos_canjeados > saldoActual) {
+          return {
+            error: `Puntos insuficientes: requiere ${puntos_canjeados}, disponible ${saldoActual}`,
+          } as const
+        }
+      }
+
       // Descontar inventario acumulando lo aplicado para poder revertir ante error.
       const aplicados: { itemId: string; locationId: string; cantidad: number }[] = []
       try {
@@ -173,6 +272,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           fecha: new Date().toISOString(),
           cajero,
           turno_id,
+          // Caja física de la venta (para el arqueo por caja) y vendedor que la
+          // realizó (atribución; default al cajero logueado si no se especifica).
+          caja_id: body.caja_id ?? null,
+          caja_name: body.caja_name ?? null,
+          vendedor: body.vendedor ?? cajero,
           items: items.map((i) => ({
             sku: i.sku, // necesario para reintegrar inventario al cancelar la venta
             descripcion: i.descripcion,
@@ -185,12 +289,20 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           total,
           pago_efectivo,
           pago_transferencia,
+          pago_tarjeta,
           pago_credito,
+          // Monedero: pago con puntos (MXN), puntos consumidos y puntos ganados.
+          // Se persisten para el ticket, el historial y para revertir al cancelar.
+          pago_puntos,
+          puntos_canjeados,
+          puntos_ganados: puntos_ganados_final,
           // cliente_id se persiste para poder revertir el cargo a crédito si la
           // venta se cancela (PATCH /caja/ventas/:folio).
           cliente_id: body.cliente_id ?? null,
           cliente_nombre: body.cliente_nombre ?? null,
-          cambio: Math.max(0, pago_efectivo - Math.max(0, total - pago_transferencia - pago_credito)),
+          // El cambio solo se devuelve sobre el excedente de EFECTIVO, restando
+          // lo cubierto por otros métodos (transferencia, tarjeta, crédito, puntos).
+          cambio: Math.max(0, pago_efectivo - Math.max(0, total - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
         }
 
         // Cargo a crédito: registrar el movimiento en la cartera del cliente.
@@ -210,6 +322,32 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             plazo: body.plazo != null ? Number(body.plazo) : null,
             descripcion: `Venta a crédito ${registro.folio}`,
           })
+        }
+
+        // Monedero: canje (resta de puntos) y devengo (suma de puntos), ambos
+        // transaccionales con la venta. El canje primero para que, si el saldo
+        // cambió entre la validación y aquí, falle antes de otorgar nuevos puntos.
+        // El saldo ya se re-validó dentro del lock (antes de decrementar
+        // inventario), así que aquí solo registramos.
+        if (monederoService && body.cliente_id) {
+          if (puntos_canjeados > 0) {
+            await monederoService.agregarMovimiento(body.cliente_id, {
+              tipo: "canjeado",
+              puntos: -puntos_canjeados,
+              folio: registro.folio,
+              descripcion: `Canje en venta ${registro.folio}`,
+              fecha: registro.fecha,
+            })
+          }
+          if (puntos_ganados_final > 0) {
+            await monederoService.agregarMovimiento(body.cliente_id, {
+              tipo: "ganado",
+              puntos: puntos_ganados_final,
+              folio: registro.folio,
+              descripcion: `Puntos por venta ${registro.folio}`,
+              fecha: registro.fecha,
+            })
+          }
         }
 
         const ventas = cargarVentas()

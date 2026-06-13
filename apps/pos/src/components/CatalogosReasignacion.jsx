@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { listarArticulosDeCatalogo } from "../lib/client"
 
 // ── Barra de progreso ─────────────────────────────────────────────────────────
@@ -52,6 +52,14 @@ export default function CatalogosReasignacion({ depts, cats, marcas, onComplete,
 
   // Modal de confirmación final
   const [showConfirm, setShowConfirm] = useState(false)
+
+  // Escape cierra el modal de confirmación final (igual que su clic-fuera/Cancelar).
+  useEffect(() => {
+    if (!showConfirm) return
+    const fn = (e) => { if (e.key === "Escape") setShowConfirm(false) }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [showConfirm])
 
   // Selects en cascada — origen
   const srcCats   = cats.filter(c => c.depId === srcDep)

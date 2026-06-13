@@ -3,7 +3,7 @@ import { usePOS } from "../lib/pos-store";
 import { obtenerUsuarios, listarVentas, listarMovimientos, crearMovimiento, listarCajasAPI } from "../lib/client";
 import { formatMXN } from "../lib/format";
 import {
-  PlusCircle, Store, User, Banknote, CreditCard, ArrowLeftRight, Star,
+  PlusCircle, Store, User, Banknote, CreditCard, ArrowLeftRight, Star, FileText,
   ChevronDown, TrendingDown, TrendingUp, X, SearchX,
   ChevronLeft, ChevronRight, Wallet,
 } from "lucide-react";
@@ -45,6 +45,7 @@ function ventaToMovement(venta, cajerosList, cajasList) {
   const methods = [];
   if (venta.pago_efectivo > 0) methods.push("efectivo");
   if (venta.pago_transferencia > 0) methods.push("transferencia");
+  if ((venta.pago_tarjeta ?? 0) > 0) methods.push("tarjeta");
   if (venta.pago_credito > 0) methods.push("credito");
   const method = methods.length === 1 ? methods[0] : methods.length > 1 ? "mixto" : "efectivo";
 
@@ -67,6 +68,7 @@ function ventaToMovement(venta, cajerosList, cajasList) {
     estado: venta.estado,
     pago_efectivo: venta.pago_efectivo,
     pago_transferencia: venta.pago_transferencia,
+    pago_tarjeta: venta.pago_tarjeta ?? 0,
     pago_credito: venta.pago_credito,
     cambio: venta.cambio,
     items: venta.items,
@@ -128,7 +130,7 @@ function MethodIcon({ method, size = 14 }) {
     tarjeta:       { icon: <CreditCard {...props} />,     label: "Tarjeta" },
     transferencia: { icon: <ArrowLeftRight {...props} />, label: "Transferencia" },
     monedero:      { icon: <Star {...props} />,           label: "Monedero" },
-    credito:       { icon: <CreditCard {...props} />,     label: "Crédito" },
+    credito:       { icon: <FileText {...props} />,       label: "Crédito" },
     mixto:         { icon: <ArrowLeftRight {...props} />, label: "Mixto" },
   };
   const { icon, label } = map[method] || { icon: null, label: method };

@@ -51,6 +51,18 @@ function PaqueteDrawer({ open, mode, paquete, onSave, onClose, saving, pushToast
   const [subiendoImg, setSubiendoImg] = useState(false)
   const fileRef = useRef(null)
 
+  // Escape: cierra primero el popup de selección si está abierto, luego el drawer.
+  useEffect(() => {
+    if (!open) return
+    const fn = (e) => {
+      if (e.key !== "Escape") return
+      if (popupOpen) setPopupOpen(false)
+      else onClose()
+    }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [open, popupOpen, onClose])
+
   // Cargar datos al abrir
   useEffect(() => {
     if (!open) return
@@ -355,6 +367,13 @@ function PaqueteDrawer({ open, mode, paquete, onSave, onClose, saving, pushToast
 function PaqueteDetalle({ paquete, onClose, onEditar }) {
   const [comps, setComps] = useState([])
   const [cargando, setCargando] = useState(true)
+
+  // Cerrar con Escape (igual que el botón X / clic en el overlay).
+  useEffect(() => {
+    const fn = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [onClose])
 
   // Rehidratar componentes con precios/IVA/existencia actuales del catálogo.
   useEffect(() => {

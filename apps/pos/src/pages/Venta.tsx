@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react"
-import { ShoppingCart, X, Settings, LogOut } from "lucide-react"
+import { ShoppingCart, X, Settings, LogOut, RefreshCw } from "lucide-react"
 import { Navigate, useSearchParams, useNavigate } from "react-router-dom"
 import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
@@ -8,6 +8,9 @@ import { Ticket } from "../components/Ticket"
 import { BarraComandos } from "../components/BarraComandos"
 import { PedidosEnEspera } from "../components/PedidosEnEspera"
 import { CargarCotizacionPopup } from "../components/CargarCotizacionPopup"
+import { SelectorVendedor } from "../components/SelectorVendedor"
+import { CambiarUsuarioModal } from "../components/CambiarUsuarioModal"
+import { SelectorCajaModal } from "../components/SelectorCajaModal"
 import { usePedidosEnEspera, guardarEnEspera } from "../lib/pedidos-espera"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
@@ -30,6 +33,10 @@ export function Venta() {
   const [carritoAbierto, setCarritoAbierto] = useState(false)   // solo aplica en modo drawer
   const [esperaAbierta, setEsperaAbierta] = useState(false)
   const [cargarCotAbierto, setCargarCotAbierto] = useState(false)
+  const [cambiarUsuario, setCambiarUsuario] = useState(false)
+  // Selector de caja. `obligatorio` = se abrió porque intentó cobrar sin caja
+  // (al elegir caja se reanuda el cobro). false = cambio voluntario desde el chip.
+  const [selectorCaja, setSelectorCaja] = useState<null | { obligatorio: boolean }>(null)
   // Folio a auto-cargar cuando se llega con ?cotizacion=… desde el módulo admin.
   const [folioCotInicial, setFolioCotInicial] = useState<string | null>(null)
   // Cotización recién impresa (para reusar el Ticket como documento imprimible).
@@ -89,6 +96,13 @@ export function Venta() {
 
   function abrirCobro() {
     setCarritoAbierto(false)
+    // No se puede vender sin una caja: el corte se agrupa por caja física. Si el
+    // usuario no tiene caja (ni asignada ni elegida), se le exige elegir una
+    // primero; al elegirla se reanuda el cobro automáticamente.
+    if (!cajero.caja_id) {
+      setSelectorCaja({ obligatorio: true })
+      return
+    }
     setMostrarCobro(true)
   }
 
@@ -162,14 +176,28 @@ export function Venta() {
         <span className="pos-marca">FERREMEX POS</span>
         <div className="pos-header-derecha">
           <span className="pos-sesion">
-            <span className={`pos-sesion-caja${cajero.caja_nombre ? "" : " pos-sesion-caja--sin"}`}>
+            {/* Chip de caja clickeable: cambia la caja activa de la sesión. Si no
+                hay caja, invita a elegir una (necesaria para vender). */}
+            <button
+              type="button"
+              className={`pos-sesion-caja${cajero.caja_nombre ? "" : " pos-sesion-caja--sin"}`}
+              onClick={() => setSelectorCaja({ obligatorio: false })}
+              title={cajero.caja_nombre ? "Cambiar de caja" : "Selecciona una caja para vender"}
+              style={{ cursor: "pointer", background: "none", border: "none", padding: 0, font: "inherit", color: "inherit" }}
+            >
               {cajero.caja_nombre ? `🟢 ${cajero.caja_nombre}` : "○ Sin caja"}
-            </span>
+            </button>
             <span className="pos-sesion-sep">·</span>
             <span className="pos-sesion-cajero">👤 {cajero.alias || cajero.nombre}</span>
             <span className="pos-sesion-sep">·</span>
             <span className="pos-sesion-turno">{cajero.turno_id}</span>
           </span>
+          {/* Vendedor de la venta actual (atribución; no afecta el corte). */}
+          <SelectorVendedor />
+          {/* Cambiar de usuario sin cerrar la caja (relevo a media jornada). */}
+          <button className="pos-header-btn" onClick={() => setCambiarUsuario(true)} title="Cambiar usuario sin cerrar caja">
+            <RefreshCw size={16} /> Cambiar usuario
+          </button>
           {cajero.permisos.puede_ver_admin && (
             <button className="pos-header-btn" onClick={() => navigate("/admin")} title="Panel de administración">
               <Settings size={16} /> Panel
@@ -264,6 +292,19 @@ export function Venta() {
         pushToast={push}
       />
 
+      {/* ===== Cambiar usuario sin cerrar caja ===== */}
+      {cambiarUsuario && <CambiarUsuarioModal onClose={() => setCambiarUsuario(false)} />}
+
+      {/* ===== Selector de caja (al cobrar sin caja, o cambio voluntario) ===== */}
+      {selectorCaja && (
+        <SelectorCajaModal
+          obligatorio={selectorCaja.obligatorio}
+          onClose={() => setSelectorCaja(null)}
+          // Si se abrió por intento de cobro, al elegir caja se reanuda el cobro.
+          onElegida={() => { if (selectorCaja.obligatorio) setMostrarCobro(true) }}
+        />
+      )}
+
       {/* ===== Ticket de cotización impresa ===== */}
       {cotizacionImpresa && (
         <Ticket
@@ -275,6 +316,7 @@ export function Venta() {
             total: cotizacionImpresa.total,
             pago_efectivo: 0,
             pago_transferencia: 0,
+            pago_tarjeta: 0,
             pago_credito: 0,
             cambio: 0,
           }}

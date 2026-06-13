@@ -49,6 +49,19 @@ export function InventarioModule() {
     return () => { on = false }
   }, [])
 
+  // Escape cierra lo que esté abierto: primero el modal de confirmación, luego
+  // el popup del buscador (igual que su clic-fuera).
+  useEffect(() => {
+    if (!confirmando && !buscadorAbierto) return
+    const fn = (e) => {
+      if (e.key !== "Escape") return
+      if (confirmando) setConfirmando(false)
+      else setBuscadorAbierto(false)
+    }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [confirmando, buscadorAbierto])
+
   // ── Helpers de filas ────────────────────────────────────────────────────────
   function filaDeArticulo(a) {
     return {

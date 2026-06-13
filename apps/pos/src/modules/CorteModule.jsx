@@ -1,12 +1,12 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { usePOS, siguienteTurnoId } from "../lib/pos-store"
-import { obtenerCorte, cerrarCorte } from "../lib/client"
+import { usePOS } from "../lib/pos-store"
+import { obtenerCorte, cerrarCorte, listarCajasAPI, listarCortesPendientes } from "../lib/client"
 import { formatMXN } from "../lib/format"
 import { useToasts } from "../hooks/useToasts"
 import ConfirmDialog from "../components/ConfirmDialog"
 import {
-  ArrowLeft, Banknote, CreditCard, ArrowLeftRight, Wallet,
+  ArrowLeft, Banknote, CreditCard, ArrowLeftRight, Wallet, FileText,
   TrendingUp, TrendingDown, Calculator, Eye, EyeOff, Printer,
   CheckCircle2, AlertTriangle, Lock,
 } from "lucide-react"
@@ -96,6 +96,15 @@ export default function CorteModule() {
   // Conteo abierto (ve el esperado en vivo) para admin/supervisor; conteo ciego
   // para cajero raso (no ve el esperado hasta confirmar). Sugerencia aprobada.
   const conteoAbierto = !!cajero?.permisos?.puede_ver_admin
+  // Un admin/supervisor puede arquear CUALQUIER caja; un cajero raso solo la suya.
+  const puedeElegirCaja = !!cajero?.permisos?.puede_ver_admin
+
+  // El corte es POR CAJA. Catálogo de cajas + cuál se arquea (default: la del
+  // cajero logueado). `null` = grupo "sin caja" (ventas/movs históricos sin caja).
+  const [cajas, setCajas] = useState([])
+  const [cajaSel, setCajaSel] = useState(cajero?.caja_id ?? null)
+  // Cajas con ventas sin cortar (tablero de avisos). Solo lo ve quien puede elegir.
+  const [pendientes, setPendientes] = useState([])
 
   const [corte, setCorte] = useState(null)
   const [cargando, setCargando] = useState(true)
@@ -116,22 +125,47 @@ export default function CorteModule() {
   const [cerrando, setCerrando] = useState(false)
   const [resultado, setResultado] = useState(null) // snapshot tras cerrar
 
-  // ── Carga del resumen del turno ───────────────────────────────────────────
+  // ── Catálogo de cajas + cortes pendientes (tablero de avisos) ─────────────
+  const cargarPendientes = useCallback(async () => {
+    if (!puedeElegirCaja) return
+    try { setPendientes(await listarCortesPendientes()) } catch { /* opcional */ }
+  }, [puedeElegirCaja])
+
+  useEffect(() => {
+    let on = true
+    ;(async () => {
+      try { const c = await listarCajasAPI(); if (on) setCajas(c) }
+      catch { /* sin catálogo, se arquea la caja del cajero o "sin caja" */ }
+    })()
+    cargarPendientes()
+    return () => { on = false }
+  }, [cargarPendientes])
+
+  // Franja+día del corte en modo turnos. Se deriva del turno_id del cajero
+  // (`YYYY-MM-DD-<franjaId>`); en modo día el turno_id es `YYYY-MM-DD` (sin franja).
+  const franjaCorte = useMemo(() => {
+    const t = cajero?.turno_id ?? ""
+    const m = /^(\d{4}-\d{2}-\d{2})-(.+)$/.exec(t)
+    return m ? { dia: m[1], franja_id: m[2] } : null
+  }, [cajero?.turno_id])
+
+  // ── Carga del resumen del corte de la CAJA seleccionada ───────────────────
   useEffect(() => {
     if (!cajero) return
     let on = true
     setCargando(true)
-    obtenerCorte(cajero.nombre, cajero.turno_id, cajero.caja_id ?? null)
+    setResultado(null)
+    obtenerCorte(cajaSel ?? null, franjaCorte)
       .then((data) => {
         if (!on) return
         setCorte(data)
-        // Si el turno ya está cerrado, mostramos el snapshot en solo lectura.
+        // Si este período ya está cerrado, mostramos el snapshot en solo lectura.
         if (data.cerrado) setResultado(data.cerrado)
       })
       .catch(() => { if (on) setError("No se pudo cargar el corte") })
       .finally(() => { if (on) setCargando(false) })
     return () => { on = false }
-  }, [cajero])
+  }, [cajero, cajaSel, franjaCorte])
 
   // ── Conteo físico calculado ─────────────────────────────────────────────────
   const totalDenoms = useMemo(
@@ -181,23 +215,27 @@ export default function CorteModule() {
     setConfirmAbierto(false)
     setCerrando(true)
     try {
+      // Nombre de la caja seleccionada (para sellar en el corte). null = sin caja.
+      const cajaName = cajaSel ? (cajas.find((c) => String(c.id) === String(cajaSel))?.nombre ?? null) : null
       const res = await cerrarCorte({
-        cajero: cajero.nombre,
-        turno_id: cajero.turno_id,
+        cajero: cajero.nombre,           // quién realiza el arqueo (logueado)
+        cajero_id: cajero.id,
+        caja_id: cajaSel ?? null,        // qué caja se arquea
+        caja_name: cajaName,
+        // Modo turnos: franja+día que se arquea (null en modo día).
+        franja_id: franjaCorte?.franja_id ?? null,
+        dia: franjaCorte?.dia ?? null,
         efectivo_contado: efectivoContado,
         fondo_dejado: fondoNum,
         motivo: motivo.trim() || undefined,
         denominaciones: modoConteo === "denominacion" ? denoms : null,
-        siguiente_turno_id: fondoNum > 0 ? siguienteTurnoId(cajero.turno_id) : null,
-        cajero_id: cajero.id,
-        caja_id: cajero.caja_id ?? null,
-        caja_name: cajero.caja_nombre ?? null,
       })
       setResultado(res.corte)
-      if (res.yaCerrado) push("Este turno ya estaba cerrado", "info")
-      else push("Turno cerrado correctamente ✓", "success")
+      if (res.yaCerrado) push("Este corte ya estaba cerrado", "info")
+      else push("Corte cerrado correctamente ✓", "success")
+      cargarPendientes()  // refrescar el tablero: esta caja ya quedó cortada
     } catch {
-      push("No se pudo cerrar el turno", "error")
+      push("No se pudo cerrar el corte", "error")
     } finally {
       setCerrando(false)
     }
@@ -227,15 +265,28 @@ export default function CorteModule() {
         </div>
         <div className="flex items-center gap-3 text-sm text-gray-500">
           <span>{cajero.alias?.trim() || cajero.nombre}</span>
+          {/* Selector de caja a arquear. Admin/supervisor elige cualquiera; un
+              cajero raso ve solo la suya (chip fijo). */}
           <span className="text-gray-300">·</span>
-          <span className="font-mono">{cajero.turno_id}</span>
-          {cajero.caja_nombre && (
-            <>
-              <span className="text-gray-300">·</span>
-              <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs rounded-full px-2 py-0.5">
-                <Wallet size={12} /> {cajero.caja_nombre}
-              </span>
-            </>
+          {puedeElegirCaja ? (
+            <span className="flex items-center gap-1.5">
+              <Wallet size={14} className="text-gray-400" />
+              <select
+                value={cajaSel ?? ""}
+                onChange={(e) => setCajaSel(e.target.value || null)}
+                disabled={yaCerrado}
+                className="border border-gray-300 rounded-lg px-2.5 py-1 text-sm text-gray-700 focus:outline-none focus:border-orange-500 disabled:opacity-50"
+              >
+                {cajas.map((c) => (
+                  <option key={c.id} value={c.id}>{c.nombre}</option>
+                ))}
+                <option value="">Sin caja (históricas)</option>
+              </select>
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 bg-gray-100 text-gray-600 text-xs rounded-full px-2 py-0.5">
+              <Wallet size={12} /> {cajero.caja_nombre ?? "Sin caja"}
+            </span>
           )}
           {!conteoAbierto && !yaCerrado && (
             <span className="flex items-center gap-1 bg-indigo-50 text-indigo-600 text-xs rounded-full px-2 py-0.5">
@@ -246,6 +297,44 @@ export default function CorteModule() {
       </div>
 
       {error && <p className="corte-no-print px-6 py-2 text-sm text-red-600">{error}</p>}
+
+      {/* TABLERO DE CORTES PENDIENTES — cajas que ya operaron y no se han cortado.
+          Solo para quien puede elegir caja (admin/supervisor). Se omite la caja
+          que se está arqueando ahora mismo. */}
+      {puedeElegirCaja && pendientes.filter((p) => String(p.caja_id ?? "") !== String(cajaSel ?? "")).length > 0 && (
+        <div className="corte-no-print px-6 pt-4">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-center gap-2 mb-3 text-amber-800">
+              <AlertTriangle size={18} className="text-amber-600 shrink-0" />
+              <span className="text-sm font-semibold">Cortes pendientes de realizar</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {pendientes
+                .filter((p) => String(p.caja_id ?? "") !== String(cajaSel ?? ""))
+                .map((p) => (
+                  <button
+                    key={p.caja_id ?? "sin-caja"}
+                    onClick={() => setCajaSel(p.caja_id ?? null)}
+                    className="flex items-center justify-between gap-3 bg-white border border-amber-200 rounded-lg px-3 py-2.5 text-left hover:border-amber-400 hover:bg-amber-50/60"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium text-gray-900 flex items-center gap-1.5">
+                        <Wallet size={14} className="text-amber-600 shrink-0" /> {p.caja_name}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        {p.num_ventas} venta{p.num_ventas !== 1 ? "s" : ""} sin cortar · {formatMXN(p.total_ventas)}
+                        {p.vendedores.length > 0 && ` · ${p.vendedores.join(", ")}`}
+                      </div>
+                    </div>
+                    <span className="text-xs font-medium text-amber-700 border border-amber-300 rounded-lg px-2.5 py-1 whitespace-nowrap">
+                      Hacer corte →
+                    </span>
+                  </button>
+                ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* CUERPO */}
       <div className="flex-1 overflow-y-auto p-6">
@@ -260,7 +349,8 @@ export default function CorteModule() {
               <div className="grid grid-cols-2 gap-3">
                 <StatCard icon={<Banknote size={20} />} label="Ventas en efectivo" valor={formatMXN(corte.ventas_efectivo)} />
                 <StatCard icon={<ArrowLeftRight size={20} />} label="Transferencia" valor={formatMXN(corte.ventas_transferencia)} />
-                <StatCard icon={<CreditCard size={20} />} label="Crédito" valor={formatMXN(corte.ventas_credito)} />
+                <StatCard icon={<CreditCard size={20} />} label="Tarjeta" valor={formatMXN(corte.ventas_tarjeta ?? 0)} />
+                <StatCard icon={<FileText size={20} />} label="Crédito" valor={formatMXN(corte.ventas_credito)} />
                 <StatCard icon={<Calculator size={20} />} label={`${corte.num_ventas} venta${corte.num_ventas !== 1 ? "s" : ""}`} valor={formatMXN(corte.total_ventas)} />
               </div>
 
@@ -447,6 +537,7 @@ function CorteCerradoView({ resultado, onImprimir }) {
         <div className="border-t border-gray-200 pt-3 space-y-1 text-sm">
           <Row label="Ventas en efectivo" valor={resultado.ventas_efectivo} />
           <Row label="Transferencia" valor={resultado.ventas_transferencia} />
+          <Row label="Tarjeta" valor={resultado.ventas_tarjeta ?? 0} />
           <Row label="Crédito" valor={resultado.ventas_credito} />
           <Row label={`Total ventas (${resultado.num_ventas})`} valor={resultado.total_ventas} bold />
         </div>

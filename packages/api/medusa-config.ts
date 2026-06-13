@@ -57,6 +57,15 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-promociones",
     },
     {
+      // Monedero Electrónico (programa de lealtad por puntos). Config global,
+      // reglas de generación por marca/depto/categoría, niveles/tiers y los
+      // movimientos de puntos por cliente (estado de cuenta auditable).
+      // Devengo y canje son transaccionales en POST /caja/ventas. El cálculo
+      // de puntos/nivel vive en apps/pos/src/lib/monedero.ts (compartido
+      // backend/UI). Ver src/modules/ferremex-monedero.
+      resolve: "./src/modules/ferremex-monedero",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

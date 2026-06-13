@@ -26,6 +26,14 @@ export interface PosUsuario {
   // Reemplaza la vieja key localStorage `pos_cajas_asignaciones`. Opcional:
   // un usuario sin caja asignada es válido.
   caja_id?: string | null
+  // Horario laboral del empleado (documentación + sugerencia de franja al login
+  // en modo turnos). Informativo, NO restringe el acceso. Todo opcional.
+  horario?: {
+    dias?: { lun: boolean; mar: boolean; mie: boolean; jue: boolean; vie: boolean; sab: boolean; dom: boolean }
+    entrada?: string   // "HH:MM"
+    salida?: string    // "HH:MM"
+    turno_id?: string | null  // franja habitual (id de turnos-config.franjas)
+  } | null
   permisos: {
     puede_vender: boolean
     puede_cotizar: boolean
@@ -119,6 +127,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       rol: body.rol ?? "cajero",
       activo: body.activo ?? true,
       caja_id: body.caja_id ?? null,
+      horario: body.horario ?? null,
       permisos: body.permisos ?? {
         puede_vender: true,
         puede_cotizar: false,

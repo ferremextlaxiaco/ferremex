@@ -17,6 +17,11 @@ export interface ProductoPOS {
   existencia: number
   thumbnail: string | null
   marca?: string
+  // Departamento y categoría reales del producto (de su metadata). Los usa el
+  // motor del Monedero (lib/monedero.ts) para resolver la tasa de puntos por
+  // taxonomía sin depender de que el producto tenga marca registrada.
+  departamento?: string
+  categoria?: string
   especificaciones?: { clave: string; valor: string }[]
   mayoreoActivo?: boolean
   mayoreoMin?: number
@@ -39,13 +44,28 @@ export interface CategoriasPOS {
 export interface VentaRequest {
   cajero: string
   turno_id: string
+  // Caja física de la venta (id del catálogo ferremex_cajas, heredada del cajero
+  // logueado). El corte agrupa por este campo. Opcional/retrocompatible.
+  caja_id?: string | null
+  caja_name?: string | null
+  // Vendedor de esta venta (quién la hizo). Default = cajero logueado; editable
+  // en el panel de venta. Solo atribución, no afecta el corte.
+  vendedor?: string | null
   // paquete_id/paquete_nombre marcan que el item forma parte de un paquete
   // vendido (el precio_unitario ya viene prorrateado). Opcionales y
   // retrocompatibles: una venta normal no los envía.
   items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
+  // Pago con tarjeta bancaria (crédito/débito vía TPV). No es efectivo (no abre
+  // cajón ni cuenta al efectivo esperado del corte), pero sí entra a los totales.
+  pago_tarjeta?: number
   pago_credito?: number
+  // Monedero: pago con puntos (en MXN) y puntos ganados por la compra. El motor
+  // del frontend (lib/monedero.ts) calcula puntos_ganados; el backend valida el
+  // saldo del canje y registra ambos movimientos transaccionalmente.
+  pago_puntos?: number
+  puntos_ganados?: number
   // Venta a crédito: el backend registra el cargo en la cartera del cliente de
   // forma transaccional (dentro del lock de la venta). cliente_id = Customer id.
   cliente_id?: string
@@ -61,7 +81,12 @@ export interface VentaResponse {
   total: number
   pago_efectivo: number
   pago_transferencia: number
+  pago_tarjeta?: number
   pago_credito: number
+  // Monedero (presentes solo si la venta tocó puntos).
+  pago_puntos?: number
+  puntos_canjeados?: number
+  puntos_ganados?: number
   cambio: number
 }
 
@@ -113,6 +138,7 @@ export interface CorteVentaItem {
   total: number
   pago_efectivo: number
   pago_transferencia: number
+  pago_tarjeta?: number
   pago_credito: number
 }
 
@@ -137,6 +163,7 @@ export interface CorteCerrado {
   total_ventas: number
   ventas_efectivo: number
   ventas_transferencia: number
+  ventas_tarjeta: number
   ventas_credito: number
   fondo_inicial: number
   entradas_manuales: number
@@ -150,14 +177,20 @@ export interface CorteCerrado {
 }
 
 export interface CorteResponse {
-  cajero: string
-  turno_id: string
-  /** Caja física a la que se acotó el resumen (eco del parámetro de la petición). */
+  /** Caja física arqueada (null = grupo "sin caja", ventas/movs históricos). */
   caja_id?: string | null
+  /** Inicio del período del corte (cerrado_en del corte anterior de la caja, o null). */
+  periodo_desde?: string | null
+  /** Modo de turnos global y franjas (para que el corte ofrezca selector de franja). */
+  modo?: "dia" | "turnos"
+  franjas?: FranjaTurno[]
+  /** Franja del corte (modo turnos) o null (modo día). */
+  franja_id?: string | null
   num_ventas: number
   total_ventas: number
   ventas_efectivo: number
   ventas_transferencia: number
+  ventas_tarjeta: number
   ventas_credito: number
   fondo_inicial: number
   entradas_manuales: number
@@ -165,21 +198,24 @@ export interface CorteResponse {
   efectivo_esperado: number
   ventas: CorteVentaItem[]
   movimientos: CorteMovItem[]
-  /** Si el turno ya fue cerrado, el snapshot del arqueo; null si sigue abierto. */
+  /** Snapshot si este período ya fue cerrado; null si sigue abierto. */
   cerrado: CorteCerrado | null
 }
 
 export interface CerrarCorteInput {
+  /** Quién realiza el corte (el que arquea; no necesariamente quien vendió). */
   cajero: string
-  turno_id: string
+  cajero_id?: string
+  /** Caja a arquear. Su período va desde el último corte de la caja hasta ahora. */
+  caja_id?: string | null
+  caja_name?: string | null
+  /** Modo turnos: franja+día a arquear (subdivide el corte). Omitidos = modo día. */
+  franja_id?: string | null
+  dia?: string | null
   efectivo_contado: number
   fondo_dejado?: number
   motivo?: string
   denominaciones?: Record<string, number> | null
-  siguiente_turno_id?: string | null
-  cajero_id?: string
-  caja_id?: string | null
-  caja_name?: string | null
 }
 
 export interface CerrarCorteResult {
@@ -534,6 +570,7 @@ export interface VentaListItem {
   total: number
   pago_efectivo: number
   pago_transferencia: number
+  pago_tarjeta?: number
   pago_credito: number
   cambio: number
   estado?: string
@@ -548,10 +585,16 @@ export async function listarVentas(desde?: string, hasta?: string): Promise<Vent
 }
 
 export async function registrarVenta(venta: VentaRequest): Promise<VentaResponse> {
-  return apiFetch<VentaResponse>("/caja/ventas", {
+  const r = await apiFetch<VentaResponse>("/caja/ventas", {
     method: "POST",
     body: JSON.stringify(venta),
   })
+  // Si la venta tocó puntos (ganó/canjeó), el saldo del cliente cambió en BD →
+  // invalida su detalle cacheado para que la próxima lectura sea fresca.
+  if (venta.cliente_id && (venta.pago_puntos || venta.puntos_ganados)) {
+    invalidarDetalleMonedero(venta.cliente_id)
+  }
+  return r
 }
 
 export async function obtenerVenta(folio: string): Promise<VentaResponse | null> {
@@ -570,13 +613,21 @@ export async function cancelarVenta(folio: string, motivo: string): Promise<Vent
   })
 }
 
+/**
+ * Resumen del corte ABIERTO de una caja (período desde su último cierre). Pasa
+ * `caja_id` vacío/null para el grupo "sin caja". En modo turnos, `franja` acota
+ * a una franja+día: { franja_id, dia } (YYYY-MM-DD).
+ */
 export async function obtenerCorte(
-  cajero: string,
-  turno_id: string,
-  caja_id?: string | null
+  caja_id?: string | null,
+  franja?: { franja_id: string; dia: string } | null
 ): Promise<CorteResponse> {
-  const params = new URLSearchParams({ cajero, turno_id })
+  const params = new URLSearchParams()
   if (caja_id) params.set("caja_id", caja_id)
+  if (franja?.franja_id && franja?.dia) {
+    params.set("franja_id", franja.franja_id)
+    params.set("dia", franja.dia)
+  }
   return apiFetch<CorteResponse>(`/caja/corte?${params}`)
 }
 
@@ -586,6 +637,47 @@ export async function cerrarCorte(input: CerrarCorteInput): Promise<CerrarCorteR
     method: "POST",
     body: JSON.stringify(input),
   })
+}
+
+/** Una caja con ventas sin cortar (su corte está pendiente de realizarse). */
+export interface CortePendiente {
+  caja_id: string | null
+  caja_name: string
+  num_ventas: number
+  total_ventas: number
+  desde: string | null         // último cierre (null si nunca se cortó)
+  primera_venta: string | null
+  ultima_venta: string | null
+  vendedores: string[]
+}
+
+/** Cajas con ventas pendientes de corte (tablero de avisos del POS). */
+export async function listarCortesPendientes(): Promise<CortePendiente[]> {
+  const r = await apiFetch<{ pendientes: CortePendiente[] }>("/caja/cortes-pendientes")
+  return r.pendientes
+}
+
+// ── Config de turnos (modo día / turnos por franja) ────────────────────────────
+
+export interface FranjaTurno {
+  id: string
+  nombre: string
+  desde: string  // "HH:MM"
+  hasta: string  // "HH:MM"
+}
+
+export interface TurnosConfig {
+  /** "dia" = corte continuo por caja (default). "turnos" = subdivide por franja. */
+  modo: "dia" | "turnos"
+  franjas: FranjaTurno[]
+}
+
+export async function obtenerConfigTurnos(): Promise<TurnosConfig> {
+  return apiFetch<TurnosConfig>("/caja/turnos-config")
+}
+
+export async function guardarConfigTurnos(cfg: Partial<TurnosConfig>): Promise<TurnosConfig> {
+  return apiFetch<TurnosConfig>("/caja/turnos-config", { method: "PUT", body: JSON.stringify(cfg) })
 }
 
 // ── Cotizaciones ───────────────────────────────────────────────────────────────
@@ -783,8 +875,32 @@ export interface CatalogosData {
   marcas: CatalogosMarca[]
 }
 
-export async function listarCatalogos(): Promise<CatalogosData> {
-  return apiFetch<CatalogosData>("/caja/catalogos")
+// Cache en memoria de la taxonomía. El árbol Dept→Cat→Marca es global y estable
+// dentro de una sesión de caja; bajarlo en cada apertura del cobro (es pesado)
+// retrasaba el preview de puntos. Se cachea con TTL y se invalida al mutar la
+// taxonomía (PATCH /caja/catalogos). `force` salta el cache (refresco explícito).
+const CATALOGOS_TTL_MS = 5 * 60 * 1000
+let _catalogosCache: { data: CatalogosData; ts: number } | null = null
+let _catalogosInflight: Promise<CatalogosData> | null = null
+
+export function invalidarCatalogosCache(): void {
+  _catalogosCache = null
+  _catalogosInflight = null
+}
+
+export async function listarCatalogos(force = false): Promise<CatalogosData> {
+  const ahora = Date.now()
+  if (!force && _catalogosCache && ahora - _catalogosCache.ts < CATALOGOS_TTL_MS) {
+    return _catalogosCache.data
+  }
+  // Coalescer llamadas concurrentes: varios consumidores que piden a la vez
+  // comparten un solo fetch en vuelo en lugar de disparar N peticiones.
+  if (!force && _catalogosInflight) return _catalogosInflight
+  const p = apiFetch<CatalogosData>("/caja/catalogos")
+    .then((data) => { _catalogosCache = { data, ts: Date.now() }; return data })
+    .finally(() => { _catalogosInflight = null })
+  _catalogosInflight = p
+  return p
 }
 
 // ── Pedidos a proveedor ───────────────────────────────────────────────────────
@@ -838,10 +954,13 @@ export type CatalogosOp =
 export async function actualizarCatalogo(
   payload: CatalogosOp
 ): Promise<{ ok: boolean; actualizados: number }> {
-  return apiFetch("/caja/catalogos", {
+  const r = await apiFetch<{ ok: boolean; actualizados: number }>("/caja/catalogos", {
     method: "PATCH",
     body: JSON.stringify(payload),
   })
+  // La taxonomía cambió → invalida el cache para que los consumidores la rebajen.
+  invalidarCatalogosCache()
+  return r
 }
 
 // ── Clientes (BD Medusa, Fase 3) ──────────────────────────────────────────────
@@ -1233,4 +1352,231 @@ export async function cancelarCompraAPI(id: string, motivo: string): Promise<Com
     method: "PATCH",
     body: JSON.stringify({ estado: "Cancelada", motivo }),
   })
+}
+
+// ── Monedero Electrónico (módulo ferremex_monedero) ───────────────────────────
+// Programa de lealtad por puntos. Config global + reglas de generación por
+// taxonomía + niveles/tiers + estado de cuenta de puntos por cliente. El motor
+// de cálculo de puntos/nivel vive en lib/monedero.ts (compartido). Devengo y
+// canje son transaccionales en /caja/ventas; estas funciones son para el módulo
+// admin (tabla, reglas, niveles, config) y la lectura de saldo en venta.
+
+export interface ConfigMonederoAPI {
+  id: string
+  valor_punto: number
+  tasa_base: number
+  max_canje_pct: number
+  min_puntos_canje: number
+  vencimiento_meses: number
+  confirmar_huella: boolean
+  confirmar_codigo: boolean
+  redondeo: "abajo" | "normal" | "ninguno"
+  periodo_nivel_meses: number
+}
+
+export interface ReglaPuntosAPI {
+  id: string
+  ambito: "marca" | "departamento" | "categoria"
+  ref: string
+  tasa: number
+  activa: boolean
+}
+
+export interface NivelMonederoAPI {
+  id: string
+  nombre: string
+  orden: number
+  umbral_periodo: number
+  multiplicador: number
+  valor_punto_bonus: number | null
+  nivel_precio: number | null
+  color: string | null
+  activo: boolean
+}
+
+export interface MovimientoMonederoAPI {
+  id: string
+  tipo: "ganado" | "canjeado" | "ajuste" | "vencido" | "reset"
+  puntos: number
+  folio: string | null
+  descripcion: string
+  fecha: string
+  cancelado: boolean
+  motivo_cancelacion: string | null
+  fecha_cancelacion: string | null
+}
+
+export interface ClienteMonederoFila {
+  id: string
+  num_cliente: string
+  nombre: string
+  telefono: string
+  puntos: number
+  valor: number
+  nivel_nombre: string | null
+  nivel_color: string | null
+  compras_periodo: number
+}
+
+export interface ClientesMonederoResp {
+  clientes: ClienteMonederoFila[]
+  kpis: { inscritos: number; puntos_circulacion: number; valor_circulacion: number }
+}
+
+export interface DetalleMonedero {
+  customer_id: string
+  saldo: number
+  valor_saldo: number
+  config: ConfigMonederoAPI
+  compras_periodo: number
+  periodo_meses: number
+  nivel_actual: NivelMonederoAPI | null
+  nivel_siguiente: NivelMonederoAPI | null
+  movimientos: MovimientoMonederoAPI[]
+}
+
+// Cache en memoria de los datos GLOBALES del monedero (config + reglas). Son
+// estables dentro de una sesión y los necesita el preview de puntos del cobro;
+// cachearlos (y precargarlos al elegir cliente) elimina el retraso al abrir el
+// modal. Se invalidan al mutar config/reglas/niveles desde administración.
+const MONEDERO_TTL_MS = 5 * 60 * 1000
+let _cfgMonederoCache: { data: ConfigMonederoAPI; ts: number } | null = null
+let _cfgMonederoInflight: Promise<ConfigMonederoAPI> | null = null
+let _reglasMonederoCache: { data: ReglaPuntosAPI[]; ts: number } | null = null
+let _reglasMonederoInflight: Promise<ReglaPuntosAPI[]> | null = null
+
+export function invalidarMonederoCache(): void {
+  _cfgMonederoCache = null; _cfgMonederoInflight = null
+  _reglasMonederoCache = null; _reglasMonederoInflight = null
+}
+
+/**
+ * Precarga (warm-up) los datos globales del monedero (config + reglas) + la
+ * taxonomía y, si se da un customerId, el detalle del cliente (saldo + nivel),
+ * en paralelo y sin bloquear. Se llama al seleccionar un cliente inscrito para
+ * que al abrir el cobro el preview de puntos esté listo al instante.
+ * Fire-and-forget: los errores se ignoran (el monedero es opcional).
+ */
+export function precargarMonederoGlobal(customerId?: string): void {
+  void Promise.all([
+    obtenerConfigMonederoAPI().catch(() => null),
+    listarReglasMonederoAPI().catch(() => null),
+    listarCatalogos().catch(() => null),
+    customerId ? obtenerDetalleMonederoAPI(customerId).catch(() => null) : null,
+  ])
+}
+
+// Config
+export async function obtenerConfigMonederoAPI(force = false): Promise<ConfigMonederoAPI> {
+  const ahora = Date.now()
+  if (!force && _cfgMonederoCache && ahora - _cfgMonederoCache.ts < MONEDERO_TTL_MS) return _cfgMonederoCache.data
+  if (!force && _cfgMonederoInflight) return _cfgMonederoInflight
+  const p = apiFetch<ConfigMonederoAPI>("/caja/monedero/config")
+    .then((data) => { _cfgMonederoCache = { data, ts: Date.now() }; return data })
+    .finally(() => { _cfgMonederoInflight = null })
+  _cfgMonederoInflight = p
+  return p
+}
+export async function guardarConfigMonederoAPI(cfg: Partial<ConfigMonederoAPI>): Promise<ConfigMonederoAPI> {
+  const r = await apiFetch<ConfigMonederoAPI>("/caja/monedero/config", { method: "PUT", body: JSON.stringify(cfg) })
+  invalidarMonederoCache()
+  return r
+}
+
+// Reglas de puntos
+export async function listarReglasMonederoAPI(force = false): Promise<ReglaPuntosAPI[]> {
+  const ahora = Date.now()
+  if (!force && _reglasMonederoCache && ahora - _reglasMonederoCache.ts < MONEDERO_TTL_MS) return _reglasMonederoCache.data
+  if (!force && _reglasMonederoInflight) return _reglasMonederoInflight
+  const p = apiFetch<ReglaPuntosAPI[]>("/caja/monedero/reglas")
+    .then((data) => { _reglasMonederoCache = { data, ts: Date.now() }; return data })
+    .finally(() => { _reglasMonederoInflight = null })
+  _reglasMonederoInflight = p
+  return p
+}
+export async function crearReglaMonederoAPI(r: Omit<ReglaPuntosAPI, "id">): Promise<ReglaPuntosAPI> {
+  const res = await apiFetch<ReglaPuntosAPI>("/caja/monedero/reglas", { method: "POST", body: JSON.stringify(r) })
+  invalidarMonederoCache()
+  return res
+}
+export async function actualizarReglaMonederoAPI(id: string, r: Partial<ReglaPuntosAPI>): Promise<ReglaPuntosAPI> {
+  const res = await apiFetch<ReglaPuntosAPI>(`/caja/monedero/reglas/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(r) })
+  invalidarMonederoCache()
+  return res
+}
+export async function eliminarReglaMonederoAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/monedero/reglas/${encodeURIComponent(id)}`, { method: "DELETE" })
+  invalidarMonederoCache()
+}
+
+// Niveles
+export async function listarNivelesMonederoAPI(): Promise<NivelMonederoAPI[]> {
+  return apiFetch<NivelMonederoAPI[]>("/caja/monedero/niveles")
+}
+export async function crearNivelMonederoAPI(n: Omit<NivelMonederoAPI, "id">): Promise<NivelMonederoAPI> {
+  return apiFetch<NivelMonederoAPI>("/caja/monedero/niveles", { method: "POST", body: JSON.stringify(n) })
+}
+export async function actualizarNivelMonederoAPI(id: string, n: Partial<NivelMonederoAPI>): Promise<NivelMonederoAPI> {
+  return apiFetch<NivelMonederoAPI>(`/caja/monedero/niveles/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(n) })
+}
+export async function eliminarNivelMonederoAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/monedero/niveles/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// Clientes / saldos / detalle
+export async function listarClientesMonederoAPI(): Promise<ClientesMonederoResp> {
+  return apiFetch<ClientesMonederoResp>("/caja/monedero/clientes")
+}
+// Cache por-cliente del detalle (saldo + nivel) con TTL corto: lo precargamos al
+// seleccionar al cliente para que el preview de puntos del cobro sea instantáneo,
+// pero con vida breve para que el saldo no quede rancio de cara al canje. Las
+// mutaciones de puntos del cliente lo invalidan explícitamente.
+const DETALLE_MON_TTL_MS = 60 * 1000
+const _detalleMonCache = new Map<string, { data: DetalleMonedero; ts: number }>()
+const _detalleMonInflight = new Map<string, Promise<DetalleMonedero>>()
+
+function invalidarDetalleMonedero(customerId: string): void {
+  _detalleMonCache.delete(customerId)
+  _detalleMonInflight.delete(customerId)
+}
+
+export async function obtenerDetalleMonederoAPI(customerId: string, force = false): Promise<DetalleMonedero> {
+  const ahora = Date.now()
+  const hit = _detalleMonCache.get(customerId)
+  if (!force && hit && ahora - hit.ts < DETALLE_MON_TTL_MS) return hit.data
+  const inflight = _detalleMonInflight.get(customerId)
+  if (!force && inflight) return inflight
+  const p = apiFetch<DetalleMonedero>(`/caja/monedero/${encodeURIComponent(customerId)}`)
+    .then((data) => { _detalleMonCache.set(customerId, { data, ts: Date.now() }); return data })
+    .finally(() => { _detalleMonInflight.delete(customerId) })
+  _detalleMonInflight.set(customerId, p)
+  return p
+}
+export async function inscribirMonederoAPI(customerId: string): Promise<void> {
+  await apiFetch(`/caja/monedero/${encodeURIComponent(customerId)}/inscribir`, { method: "POST" })
+  invalidarDetalleMonedero(customerId)
+}
+export async function darDeBajaMonederoAPI(customerId: string): Promise<void> {
+  await apiFetch(`/caja/monedero/${encodeURIComponent(customerId)}`, { method: "DELETE" })
+  invalidarDetalleMonedero(customerId)
+}
+export async function ajustarPuntosMonederoAPI(
+  customerId: string,
+  puntos: number,
+  descripcion: string
+): Promise<{ saldo: number }> {
+  const r = await apiFetch<{ saldo: number }>(`/caja/monedero/${encodeURIComponent(customerId)}/movimientos`, {
+    method: "POST",
+    body: JSON.stringify({ puntos, descripcion }),
+  })
+  invalidarDetalleMonedero(customerId)
+  return r
+}
+export async function resetearPuntosMonederoAPI(customerId: string, motivo: string): Promise<{ puntos_restados: number }> {
+  const r = await apiFetch<{ puntos_restados: number }>(`/caja/monedero/${encodeURIComponent(customerId)}/reset`, {
+    method: "POST",
+    body: JSON.stringify({ motivo }),
+  })
+  invalidarDetalleMonedero(customerId)
+  return r
 }

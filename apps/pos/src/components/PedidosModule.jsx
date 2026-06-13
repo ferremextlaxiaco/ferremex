@@ -91,6 +91,13 @@ function FaltantesModal({ faltantes, rows, onConfirm, onClose }) {
   const addedIds = new Set(rows.map(r => r.articuloId))
   const [sel, setSel] = useState(() => new Set(faltantes.map(a => a.id)))
 
+  // Cerrar con Escape (igual que el botón ✕ / clic en el overlay).
+  useEffect(() => {
+    const fn = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [onClose])
+
   function toggle(id) {
     setSel(prev => {
       const next = new Set(prev)

@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from "react"
-import { registrarVenta, marcarCotizacionConvertida, type VentaResponse } from "../lib/client"
+import {
+  Banknote, Smartphone, CreditCard, FileText, Coins, Sparkles,
+  Check, X, AlertCircle, Fingerprint, ScanLine, Lock, Wallet, RotateCcw,
+  type LucideIcon,
+} from "lucide-react"
+import {
+  registrarVenta, marcarCotizacionConvertida, obtenerDetalleMonederoAPI,
+  listarReglasMonederoAPI, listarCatalogos,
+  type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
+} from "../lib/client"
 import { abrirCajon } from "../lib/serial"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
+import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
 import { formatMXN as fmt } from "../lib/format"
 
 interface ModalCobroProps {
@@ -10,16 +20,62 @@ interface ModalCobroProps {
   onVentaCompletada: (venta: VentaResponse) => void
 }
 
-type Metodo = "efectivo" | "transferencia" | "credito"
+type Metodo = "efectivo" | "transferencia" | "tarjeta" | "credito" | "puntos"
 
-const METODOS: { id: Metodo; label: string; icon: string }[] = [
-  { id: "efectivo",      label: "Efectivo",       icon: "💵" },
-  { id: "transferencia", label: "Transferencia",   icon: "📱" },
-  { id: "credito",       label: "Crédito",         icon: "📋" },
+// "Puntos" no es una tarjeta de método: tiene su propio banner de canje arriba.
+// "Tarjeta" = tarjeta bancaria (crédito/débito por TPV); "Crédito" = fiado a la
+// cuenta del cliente (cartera). Son métodos distintos.
+const METODOS: { id: Metodo; label: string; icon: LucideIcon }[] = [
+  { id: "efectivo",      label: "Efectivo",      icon: Banknote },
+  { id: "transferencia", label: "Transferencia", icon: Smartphone },
+  { id: "tarjeta",       label: "Tarjeta",       icon: CreditCard },
+  { id: "credito",       label: "Crédito",       icon: FileText },
 ]
+
+/**
+ * Sanea un monto tecleado: acepta la coma como separador decimal (la convierte a
+ * punto), descarta cualquier carácter no numérico y deja a lo sumo un punto. Así
+ * el campo SIEMPRE se muestra y guarda con punto, independientemente del locale
+ * del navegador (que en es-MX renderizaría un input number con coma).
+ */
+function saneaMonto(raw: string): string {
+  const soloNumero = raw.replace(",", ".").replace(/[^0-9.]/g, "")
+  const partes = soloNumero.split(".")
+  if (partes.length <= 1) return soloNumero
+  // Reúne todo lo posterior al primer punto en la parte decimal (un solo punto).
+  return `${partes[0]}.${partes.slice(1).join("")}`
+}
 
 export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const { state, total, dispatch, promosCarrito } = usePOS()
+
+  // ── Monedero Electrónico ──────────────────────────────────────────────────
+  // Si el cliente activo está inscrito al monedero, cargamos su detalle (saldo,
+  // config, nivel) + reglas + taxonomía para: (a) habilitar el pago con puntos,
+  // (b) calcular el preview "ganarás ~X pts". Todo opcional: sin cliente con
+  // monedero, el flujo de cobro es idéntico al de siempre.
+  const [monedero, setMonedero] = useState<DetalleMonedero | null>(null)
+  const [reglasMon, setReglasMon] = useState<ReglaPuntosAPI[]>([])
+  const [catMon, setCatMon] = useState<CatalogosData | null>(null)
+  const [confirmCanje, setConfirmCanje] = useState(false)
+  const [codigoConfirm, setCodigoConfirm] = useState("")
+
+  useEffect(() => {
+    const cli = state.clienteActivo
+    if (!cli?.monedero) { setMonedero(null); return }
+    let on = true
+    ;(async () => {
+      try {
+        const [det, reglas, cat] = await Promise.all([
+          obtenerDetalleMonederoAPI(cli.id),
+          listarReglasMonederoAPI(),
+          listarCatalogos(),
+        ])
+        if (on) { setMonedero(det); setReglasMon(reglas); setCatMon(cat) }
+      } catch { /* el monedero es opcional; si falla, se cobra sin puntos */ }
+    })()
+    return () => { on = false }
+  }, [state.clienteActivo])
 
   // Precio unitario efectivo de una línea, ya con promociones aplicadas. Para
   // NxM/volumen el descuento no es un precio uniforme, así que se reparte el
@@ -29,7 +85,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     if (linea && i.cantidad > 0) return Math.round((linea.importe / i.cantidad) * 100) / 100
     return efectivoPrecio(i)
   }
-  const [pagos, setPagos] = useState<Record<Metodo, string>>({ efectivo: "", transferencia: "", credito: "" })
+  const [pagos, setPagos] = useState<Record<Metodo, string>>({ efectivo: "", transferencia: "", tarjeta: "", credito: "", puntos: "" })
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const efectivoRef = useRef<HTMLInputElement>(null)
@@ -40,24 +96,118 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
 
   const pEfectivo      = parseFloat(pagos.efectivo)      || 0
   const pTransferencia = parseFloat(pagos.transferencia)  || 0
+  const pTarjeta       = parseFloat(pagos.tarjeta)        || 0
   const pCredito       = parseFloat(pagos.credito)        || 0
-  const asignado       = pEfectivo + pTransferencia + pCredito
+  const pPuntos        = parseFloat(pagos.puntos)          || 0
+  const asignado       = pEfectivo + pTransferencia + pTarjeta + pCredito + pPuntos
 
   // Cuánto falta cubrir con efectivo una vez restados otros métodos
-  const neededCash = Math.max(0, total - pTransferencia - pCredito)
+  const neededCash = Math.max(0, total - pTransferencia - pTarjeta - pCredito - pPuntos)
   const cambio     = Math.max(0, pEfectivo - neededCash)
   const pendiente  = Math.max(0, neededCash - pEfectivo)
   const cubierto   = asignado >= total - 0.005
+  const pctCubierto = total > 0 ? Math.min(100, (asignado / total) * 100) : 100
+
+  // ── Derivados del monedero ──────────────────────────────────────────────
+  // Saldo disponible (en pesos), tope de canje del ticket y puntos a ganar.
+  const cfgMon = monedero?.config ?? null
+  const saldoPuntos = monedero?.saldo ?? 0
+  // Valor de CANJE de un punto en pesos. Usa el valor base de la config —el mismo
+  // que el backend usa para descontar puntos (puntos_canjeados = pesos/valor_punto)—
+  // NO el valor_punto_bonus del nivel (ese es un beneficio de tier que afecta el
+  // valor mostrado del saldo, no el descuento real en una venta).
+  const valorCanje = cfgMon?.valor_punto || 1
+  const saldoPesos = Math.round(saldoPuntos * valorCanje * 100) / 100
+  const topePesos = cfgMon ? topeCanjePesos(total, cfgMon) : 0
+  const maxCanjePesos = Math.min(saldoPesos, topePesos)
+  // Tope de canje expresado en PUNTOS (lo que el cajero/cliente razona): el menor
+  // entre el saldo, lo que cabe en el tope del ticket, y lo que cubre el total.
+  const maxCanjePuntos = valorCanje > 0 ? Math.floor(maxCanjePesos / valorCanje) : 0
+  // El cliente tiene puntos pero no llega al mínimo configurado (informativo).
+  const bajoMinimo = !!cfgMon && saldoPuntos > 0 && saldoPuntos < cfgMon.min_puntos_canje
+  // Puede usar puntos si: inscrito, saldo ≥ mínimo, y hay algo canjeable.
+  const puedeUsarPuntos = !!cfgMon && saldoPuntos >= cfgMon.min_puntos_canje && maxCanjePesos >= 0.01
+  // Puntos a ganar por esta compra (preview). Usa el nivel del cliente.
+  const puntosAGanar = (cfgMon && catMon)
+    ? calcularPuntosGanados(
+        state.items.map<LineaPuntos>((i) => ({ subtotal: precioUnitEfectivo(i) * i.cantidad, marca: i.marca, departamento: i.departamento, categoria: i.categoria })),
+        cfgMon, reglasMon, catMon, monedero?.nivel_actual ?? null
+      )
+    : 0
+  // Si la config exige confirmar el canje (huella/código), se gatea con un modal.
+  const requiereConfirmCanje = !!cfgMon && pPuntos > 0 && (cfgMon.confirmar_huella || cfgMon.confirmar_codigo)
+  const puntosUsados = (cfgMon && pPuntos > 0) ? Math.ceil(pPuntos / cfgMon.valor_punto) : 0
+
+  // ── Banner de canje de puntos ────────────────────────────────────────────
+  // El control de canje se despliega cuando el cajero pulsa "Usar puntos". El
+  // cliente razona en PUNTOS; internamente el pago se guarda en pesos (pagos.puntos).
+  const [canjeAbierto, setCanjeAbierto] = useState(false)
+
+  // Aplica N puntos: los convierte a pesos y los fija como pago con puntos.
+  // Acota al máximo canjeable para no exceder saldo / tope / total. Si EXACTAMENTE
+  // un método en pesos estaba cubriendo el ticket él solo, lo reajusta al nuevo
+  // monto a pagar (Total − puntos) para que no quede cobrando de más ni de menos.
+  function aplicarPuntos(puntos: number) {
+    if (!cfgMon) return
+    const p = Math.max(0, Math.min(Math.floor(puntos), maxCanjePuntos))
+    const pesos = Math.round(p * cfgMon.valor_punto * 100) / 100
+    const nuevoPuntos = pesos > 0 ? pesos.toFixed(2) : ""
+    setPagos((prev) => {
+      const enPesos = (["efectivo", "transferencia", "tarjeta", "credito"] as Metodo[])
+        .filter((m) => (parseFloat(prev[m]) || 0) > 0)
+      const aPagar = Math.max(0, total - pesos)
+      // Un único método cubriéndolo todo → reajustarlo al nuevo "a pagar".
+      if (enPesos.length === 1) {
+        return { ...prev, puntos: nuevoPuntos, [enPesos[0]]: aPagar > 0 ? aPagar.toFixed(2) : "" }
+      }
+      return { ...prev, puntos: nuevoPuntos }
+    })
+  }
 
   function completar(id: Metodo) {
     const otros = asignado - (parseFloat(pagos[id]) || 0)
-    const resto = Math.max(0, total - otros)
+    let resto = Math.max(0, total - otros)
+    // El pago con puntos no puede exceder lo canjeable (saldo y tope del ticket).
+    if (id === "puntos") resto = Math.min(resto, maxCanjePesos)
     setPagos(p => ({ ...p, [id]: resto.toFixed(2) }))
+  }
+
+  // Cambiar de método en un clic: asigna TODO el restante (tras lo ya canjeado en
+  // puntos) al método elegido y vacía los otros métodos en pesos. El canje de
+  // puntos se conserva (se controla aparte desde su banner). Para pagos combinados
+  // el cajero sigue usando "Completar" o teclea manualmente.
+  function pagarTodoAqui(id: Metodo) {
+    if (id === "credito" && !tieneCredito) return
+    const resto = Math.max(0, total - pPuntos)
+    setPagos((p) => ({
+      ...p,
+      efectivo: "", transferencia: "", tarjeta: "", credito: "",
+      [id]: resto.toFixed(2),
+    }))
+  }
+
+  // Llamada real de registro de venta, una vez superada la confirmación de canje.
+  async function ejecutarVenta() {
+    setConfirmCanje(false)
+    await finalizarVenta()
   }
 
   async function handleConfirmar() {
     if (!cubierto || procesando || !state.cajero) return
     if (pCredito > 0 && !state.clienteActivo) return
+    if (pPuntos > 0 && !state.clienteActivo) return
+    // Validación de canje contra saldo/tope antes de tocar el backend.
+    if (pPuntos > maxCanjePesos + 0.01) {
+      setError(`Con puntos solo puedes cubrir ${fmt(maxCanjePesos)} de este ticket`)
+      return
+    }
+    // Si la config exige confirmación (huella/código), abrir el modal de canje.
+    if (requiereConfirmCanje) { setConfirmCanje(true); return }
+    await finalizarVenta()
+  }
+
+  async function finalizarVenta() {
+    if (!state.cajero) return
     setProcesando(true)
     setError(null)
     try {
@@ -70,6 +220,12 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
       const venta = await registrarVenta({
         cajero: state.cajero.nombre,
         turno_id: state.cajero.turno_id,
+        // Caja física de la venta (del cajero logueado) → el corte agrupa por aquí.
+        caja_id: state.cajero.caja_id ?? null,
+        caja_name: state.cajero.caja_nombre ?? null,
+        // Vendedor de la venta: el elegido en el panel (atribución) o el cajero
+        // logueado por defecto. No afecta el corte (que agrupa por caja).
+        vendedor: state.vendedorVenta?.nombre ?? state.cajero.nombre,
         items: ventaItems.map((i) => ({
           sku: i.sku,
           descripcion: i.descripcion,
@@ -81,12 +237,19 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         })),
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,
+        pago_tarjeta: pTarjeta,
         pago_credito: pCredito,
-        ...(pCredito > 0 && ventaCliente
+        // Monedero: pago con puntos (MXN) y puntos a ganar (los calcula el motor
+        // del frontend; el backend valida el canje y registra ambos movimientos).
+        ...(pPuntos > 0 ? { pago_puntos: pPuntos } : {}),
+        ...(puntosAGanar > 0 ? { puntos_ganados: puntosAGanar } : {}),
+        // El cliente se envía si hay crédito, pago con puntos o puntos a ganar
+        // (cualquiera ata el movimiento a su cuenta).
+        ...((pCredito > 0 || pPuntos > 0 || puntosAGanar > 0) && ventaCliente
           ? {
               cliente_id: ventaCliente.id,
               cliente_nombre: ventaCliente.nombre,
-              plazo: ventaCliente.dias_credito,
+              ...(pCredito > 0 ? { plazo: ventaCliente.dias_credito } : {}),
             }
           : {}),
       })
@@ -108,110 +271,336 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Escape") onCerrar()
-  }
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onCerrar() }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onCerrar])
 
   return (
-    <div className="modal-overlay" onKeyDown={handleKeyDown}>
-      <div className="modal-cobro">
-        <h2 className="modal-titulo">Cobro</h2>
-
-        <div className="cobro-resumen">
-          {state.items.map((i) => {
-            const linea = promosCarrito.get(claveLinea(i))
-            const importe = linea ? linea.importe : efectivoPrecio(i) * i.cantidad
-            return (
-              <div key={i.sku} className="cobro-item">
-                <span>
-                  {i.descripcion} × {i.cantidad}
-                  {linea?.promo && <span className="cobro-item-promo"> · {linea.etiqueta}</span>}
-                </span>
-                <span>${importe.toFixed(2)}</span>
-              </div>
-            )
-          })}
+    <div className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
+      onClick={() => !procesando && onCerrar()}>
+      <div
+        className="relative w-full max-w-2xl max-h-[92vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border-t-4 border-orange-500"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Encabezado */}
+        <div className="flex items-center justify-between px-6 pt-5 pb-4">
+          <h2 className="text-xl font-bold text-gray-900">Cobro</h2>
+          <button onClick={onCerrar} disabled={procesando}
+            className="w-9 h-9 p-0 inline-flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 disabled:opacity-40">
+            <X size={20} />
+          </button>
         </div>
 
-        <div className="cobro-total">
-          <span className="cobro-total-label">Total</span>
-          <span className="cobro-total-valor">${total.toFixed(2)}</span>
-        </div>
-
-        <p className="cobro-instruccion">Selecciona una forma de pago o combínalas:</p>
-
-        <div className="cobro-metodos">
-          {METODOS.map(({ id, label, icon }) => {
-            const disabled = id === "credito" && !tieneCredito
-            const activo   = (parseFloat(pagos[id]) || 0) > 0
-            const restante = Math.max(0, total - asignado + (parseFloat(pagos[id]) || 0))
-
-            return (
-              <div key={id} className={`cobro-metodo${activo ? " activo" : ""}${disabled ? " deshabilitado" : ""}`}>
-                <div className="cobro-metodo-header">
-                  <span className="cobro-metodo-icon">{icon}</span>
-                  <span className="cobro-metodo-label">{label}</span>
-                  {id === "credito" && !tieneCredito && (
-                    <span className="cobro-metodo-nota">Requiere cliente con crédito</span>
-                  )}
+        <div className="px-6 pb-6 flex flex-col gap-4">
+          {/* Resumen de items */}
+          <div className="bg-gray-50 border border-gray-100 rounded-xl divide-y divide-gray-100 max-h-40 overflow-y-auto">
+            {state.items.map((i) => {
+              const linea = promosCarrito.get(claveLinea(i))
+              const importe = linea ? linea.importe : efectivoPrecio(i) * i.cantidad
+              return (
+                <div key={i.sku} className="flex items-start justify-between gap-3 px-4 py-2.5 text-sm">
+                  <span className="text-gray-700">
+                    {i.descripcion} <span className="text-gray-400">× {i.cantidad}</span>
+                    {linea?.promo && <span className="ml-1 text-xs font-medium text-orange-600">· {linea.etiqueta}</span>}
+                  </span>
+                  <span className="font-medium text-gray-900 whitespace-nowrap">{fmt(importe)}</span>
                 </div>
+              )
+            })}
+          </div>
 
-                <input
-                  ref={id === "efectivo" ? efectivoRef : undefined}
-                  type="number"
-                  min={0}
-                  step="0.50"
-                  className="cobro-metodo-input"
-                  value={pagos[id]}
-                  onChange={(e) => setPagos(p => ({ ...p, [id]: e.target.value }))}
-                  placeholder="$0.00"
-                  disabled={disabled}
-                />
+          {/* Total — con desglose cuando se aplican puntos (Total − puntos = a pagar) */}
+          {pPuntos > 0 ? (
+            <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex flex-col gap-1.5">
+              <div className="flex items-center justify-between text-sm text-gray-500">
+                <span>Total</span>
+                <span className="font-medium text-gray-700">{fmt(total)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-amber-700">
+                <span className="inline-flex items-center gap-1">
+                  <Coins size={14} /> Puntos aplicados ({puntosUsados.toLocaleString("es-MX")} pts)
+                </span>
+                <span className="font-semibold">−{fmt(pPuntos)}</span>
+              </div>
+              <div className="h-px bg-gray-200 my-0.5" />
+              <div className="flex items-end justify-between">
+                <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">A pagar</span>
+                <span className="text-4xl font-black text-orange-600 leading-none">{fmt(Math.max(0, total - pPuntos))}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-end justify-between">
+              <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total</span>
+              <span className="text-4xl font-black text-orange-600 leading-none">{fmt(total)}</span>
+            </div>
+          )}
 
-                {!disabled && !cubierto && (
-                  <button className="cobro-btn-completar" onClick={() => completar(id)}>
-                    Completar {fmt(restante)}
+          {/* ── Banner de canje de puntos ──────────────────────────────────
+              Aparece cuando el cliente tiene puntos canjeables. Permite usar
+              todos o una cantidad parcial; el monto canjeado descuenta de lo que
+              se paga con los demás métodos. */}
+          {puedeUsarPuntos && cfgMon && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <span className="w-10 h-10 p-0 inline-flex items-center justify-center rounded-lg bg-amber-100 text-amber-600 shrink-0">
+                  <Wallet size={20} />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-amber-900">Monedero del cliente</div>
+                  <div className="text-xs text-amber-700">
+                    {saldoPuntos.toLocaleString("es-MX")} pts disponibles · equivalen a {fmt(saldoPesos)}
+                  </div>
+                </div>
+                {pPuntos > 0 ? (
+                  <button
+                    onClick={() => { aplicarPuntos(0); setCanjeAbierto(false) }}
+                    className="inline-flex items-center gap-1.5 bg-white border border-amber-300 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-100">
+                    <RotateCcw size={14} /> Quitar
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { setCanjeAbierto(true); aplicarPuntos(maxCanjePuntos) }}
+                    className="inline-flex items-center gap-1.5 bg-amber-500 text-white px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">
+                    <Coins size={15} /> Usar puntos
                   </button>
                 )}
-
-                {id === "efectivo" && activo && cubierto && cambio >= 0.01 && (
-                  <div className="cobro-cambio-mini">
-                    Cambio: <strong>{fmt(cambio)}</strong>
-                  </div>
-                )}
               </div>
-            )
-          })}
-        </div>
 
-        {pendiente > 0.005 && (
-          <div className="cobro-pendiente">
-            Falta por cubrir: <strong>{fmt(pendiente)}</strong>
+              {/* Control de cantidad (slider + atajos), visible al activar canje */}
+              {(canjeAbierto || pPuntos > 0) && (
+                <div className="px-4 pb-3 pt-1 border-t border-amber-100 bg-amber-50/60">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-amber-700">Puntos a usar</span>
+                    <span className="text-sm font-bold text-amber-900">
+                      {puntosUsados.toLocaleString("es-MX")} pts = {fmt(pPuntos)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={0}
+                      max={maxCanjePuntos}
+                      inputMode="numeric"
+                      className="w-24 text-right text-sm font-bold text-gray-900 bg-white border border-amber-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500"
+                      value={puntosUsados || ""}
+                      onChange={(e) => aplicarPuntos(parseInt(e.target.value, 10) || 0)}
+                      placeholder="0"
+                    />
+                    <span className="text-xs text-gray-500">pts</span>
+                    <button
+                      onClick={() => aplicarPuntos(maxCanjePuntos)}
+                      className="ml-auto text-xs font-medium text-amber-700 border border-amber-300 rounded-lg px-3 py-1.5 hover:bg-amber-100">
+                      Usar todos ({maxCanjePuntos.toLocaleString("es-MX")})
+                    </button>
+                  </div>
+                  {maxCanjePuntos < saldoPuntos && (
+                    <p className="text-[11px] text-amber-600 mt-2 leading-tight">
+                      Máx {maxCanjePuntos.toLocaleString("es-MX")} pts en este ticket (tope {cfgMon.max_canje_pct}% del total).
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Cliente con puntos pero por debajo del mínimo para canjear */}
+          {bajoMinimo && cfgMon && (
+            <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              <Wallet size={14} className="text-gray-400 shrink-0" />
+              El cliente tiene {saldoPuntos.toLocaleString("es-MX")} pts, pero se requieren {cfgMon.min_puntos_canje} para canjear.
+            </div>
+          )}
+
+          <p className="text-sm text-gray-500 -mb-1">
+            {pPuntos > 0 ? "Cobra el resto con:" : "Selecciona una forma de pago o combínalas:"}
+          </p>
+
+          {/* Métodos de pago como tarjetas */}
+          <div className="grid grid-cols-2 gap-3">
+            {METODOS.map(({ id, label, icon: Icon }) => {
+              const disabled = id === "credito" && !tieneCredito
+              const activo   = (parseFloat(pagos[id]) || 0) > 0
+              const restante = Math.max(0, total - asignado + (parseFloat(pagos[id]) || 0))
+
+              return (
+                <div key={id}
+                  role={disabled ? undefined : "button"}
+                  // Clic en la tarjeta = "pagar todo aquí": mueve el total restante a
+                  // este método y vacía los otros. El input y "Completar" frenan la
+                  // propagación para conservar su propio comportamiento (manual/combinado).
+                  onClick={disabled ? undefined : () => pagarTodoAqui(id)}
+                  title={disabled ? undefined : `Pagar todo con ${label}`}
+                  className={`rounded-xl border-2 p-3 transition-colors ${
+                    disabled
+                      ? "border-gray-100 bg-gray-50 opacity-60"
+                      : activo
+                        ? "border-orange-500 bg-orange-50 cursor-pointer"
+                        : "border-gray-200 bg-white hover:border-gray-300 cursor-pointer"
+                  }`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className={`w-8 h-8 p-0 inline-flex items-center justify-center rounded-lg shrink-0 ${
+                      activo ? "bg-orange-500 text-white" : "bg-gray-100 text-gray-500"
+                    }`}>
+                      <Icon size={17} />
+                    </span>
+                    <span className="text-sm font-semibold text-gray-800">{label}</span>
+                  </div>
+
+                  {id === "credito" && !tieneCredito && (
+                    <p className="text-[11px] text-gray-400 mb-1.5 leading-tight">Requiere cliente con crédito</p>
+                  )}
+
+                  <input
+                    ref={id === "efectivo" ? efectivoRef : undefined}
+                    type="text"
+                    inputMode="decimal"
+                    className="w-full text-right text-lg font-bold text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-orange-500 disabled:opacity-40 disabled:bg-gray-50"
+                    value={pagos[id]}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => setPagos(p => ({ ...p, [id]: saneaMonto(e.target.value) }))}
+                    placeholder="$0.00"
+                    disabled={disabled}
+                  />
+
+                  {!disabled && !cubierto && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); completar(id) }}
+                      className="mt-2 w-full text-xs font-medium text-orange-600 border border-orange-200 rounded-lg py-1.5 hover:bg-orange-50">
+                      Completar {fmt(restante)}
+                    </button>
+                  )}
+
+                  {id === "efectivo" && activo && cubierto && cambio >= 0.01 && (
+                    <p className="mt-1.5 text-[11px] text-gray-500 text-center">
+                      Cambio: <strong className="text-gray-700">{fmt(cambio)}</strong>
+                    </p>
+                  )}
+                </div>
+              )
+            })}
           </div>
-        )}
 
-        {cubierto && cambio >= 0.01 && pTransferencia === 0 && pCredito === 0 && (
-          <div className="cobro-cambio cobro-cambio-ok">
-            <span className="cobro-cambio-label">Cambio</span>
-            <span className="cobro-cambio-valor">{fmt(cambio)}</span>
+          {/* Preview de puntos a ganar */}
+          {puntosAGanar > 0 && (
+            <div className="flex items-center justify-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
+              <Sparkles size={16} className="text-amber-500 shrink-0" />
+              Ganará <strong>{puntosAGanar.toLocaleString("es-MX")} puntos</strong> con esta compra
+            </div>
+          )}
+
+          {/* Barra de progreso + estado de cobertura */}
+          {!cubierto ? (
+            <div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden mb-2">
+                <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${pctCubierto}%` }} />
+              </div>
+              <div className="flex items-center justify-between text-sm bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                <span className="text-red-600">Falta por cubrir</span>
+                <strong className="text-red-700">{fmt(pendiente)}</strong>
+              </div>
+            </div>
+          ) : cambio >= 0.01 && pTransferencia === 0 && pTarjeta === 0 && pCredito === 0 && pPuntos === 0 ? (
+            <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
+              <span className="text-sm font-medium text-green-700">Cambio</span>
+              <span className="text-2xl font-black text-green-600">{fmt(cambio)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center justify-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm font-medium text-green-700">
+              <Check size={16} /> Pago completo
+            </div>
+          )}
+
+          {error && (
+            <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
+              <AlertCircle size={16} className="shrink-0 mt-0.5" /> {error}
+            </div>
+          )}
+
+          {/* Acciones */}
+          <div className="flex gap-3 pt-1">
+            <button
+              onClick={onCerrar}
+              disabled={procesando}
+              className="flex-1 inline-flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-700 px-4 py-3 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-40">
+              Cancelar
+            </button>
+            <button
+              onClick={handleConfirmar}
+              disabled={!cubierto || procesando}
+              className="flex-[2] inline-flex items-center justify-center gap-2 bg-green-600 text-white px-4 py-3 rounded-xl text-sm font-bold hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+              {procesando ? "Procesando…" : <><Check size={18} /> Confirmar y ticket</>}
+            </button>
           </div>
-        )}
-
-        {error && <p className="error-text">{error}</p>}
-
-        <div className="modal-acciones">
-          <button className="btn-secondary" onClick={onCerrar} disabled={procesando}>
-            Cancelar
-          </button>
-          <button
-            className="btn-confirmar"
-            onClick={handleConfirmar}
-            disabled={!cubierto || procesando}
-          >
-            {procesando ? "Procesando…" : "✓ Confirmar y ticket"}
-          </button>
         </div>
       </div>
+
+      {/* Confirmación de canje de puntos (huella / código de barras). Mientras el
+          lector no esté conectado, la confirmación se simula: huella con un botón,
+          código pidiendo el # de cliente. Configurable en Monedero → Configuración. */}
+      {confirmCanje && cfgMon && (
+        <div className="fixed inset-0 z-[700] flex items-center justify-center p-4 bg-black/50"
+          onClick={() => !procesando && setConfirmCanje(false)}>
+          <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border-t-4 border-orange-500 p-6"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-3">
+              <span className="w-9 h-9 p-0 inline-flex items-center justify-center rounded-lg bg-orange-100 text-orange-600">
+                <Lock size={18} />
+              </span>
+              <h2 className="text-lg font-bold text-gray-900">Confirmar uso de puntos</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              El cliente canjeará <strong>{puntosUsados.toLocaleString("es-MX")} puntos</strong> ({fmt(pPuntos)}).
+            </p>
+
+            {cfgMon.confirmar_huella && (
+              <div className="text-center my-4 flex flex-col items-center gap-2">
+                <div className="text-sm text-gray-500">Solicita la huella del cliente</div>
+                <Fingerprint size={48} className="text-orange-500" />
+                <div className="text-[11px] text-gray-400">(lector simulado — confirma manualmente)</div>
+              </div>
+            )}
+
+            {cfgMon.confirmar_codigo && (
+              <div className="my-4">
+                <label className="flex items-center gap-1.5 text-sm text-gray-600 mb-2">
+                  <ScanLine size={15} className="text-gray-400" /> Escanea la tarjeta o teclea el # de cliente
+                </label>
+                <input
+                  className="w-full text-right text-lg font-bold text-gray-900 bg-white border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:border-orange-500"
+                  autoFocus
+                  placeholder="# de cliente"
+                  value={codigoConfirm}
+                  onChange={(e) => setCodigoConfirm(e.target.value)}
+                />
+                {codigoConfirm && state.clienteActivo && codigoConfirm.trim() !== state.clienteActivo.num_cliente && (
+                  <p className="mt-1.5 text-sm text-red-600">El código no coincide con el cliente activo.</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setConfirmCanje(false)}
+                disabled={procesando}
+                className="flex-1 inline-flex items-center justify-center bg-white border border-gray-300 text-gray-700 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-40">
+                Cancelar
+              </button>
+              <button
+                onClick={ejecutarVenta}
+                disabled={
+                  procesando ||
+                  (cfgMon.confirmar_codigo &&
+                    (!state.clienteActivo || codigoConfirm.trim() !== state.clienteActivo.num_cliente))
+                }
+                className="flex-[2] inline-flex items-center justify-center gap-2 bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+                {procesando ? "Procesando…" : <><Check size={17} /> Confirmar canje</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

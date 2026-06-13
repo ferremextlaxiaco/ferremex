@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from "react"
 import {
   UserPlus, Search, ArrowLeftRight, MoreVertical, UserCog,
-  Eye, EyeOff, PlusCircle, AlertTriangle,
+  Eye, EyeOff, PlusCircle, AlertTriangle, Clock, Trash2, Plus,
 } from "lucide-react"
 import {
   obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario,
   listarCajasAPI, crearCajaAPI, actualizarCajaAPI, eliminarCajaAPI,
+  obtenerConfigTurnos, guardarConfigTurnos,
 } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 
@@ -71,6 +72,10 @@ const inp = {
   padding: "8px 12px", fontSize: 14, outline: "none",
   boxSizing: "border-box", color: "#111827", background: "#fff",
 }
+
+// Etiqueta de sección (gris, mayúsculas). A nivel de módulo porque la comparten
+// TabCajas y HorarioEmpleado (componentes hermanos).
+const secLabel = { fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, marginTop: 0, display: "block" }
 
 const btnPrimary = {
   background: "#ea580c", color: "#fff", border: "none",
@@ -513,7 +518,7 @@ function TabInfo({ form, setForm, employees, original }) {
 
 // ── Tab: Cajas ─────────────────────────────────────────────────────────────────
 
-function TabCajas({ form, setForm, employees, setEmployees, registers, setRegisters, pushToast }) {
+function TabCajas({ form, setForm, employees, setEmployees, registers, setRegisters, pushToast, franjas }) {
   const [editingId, setEditingId]             = useState(null)
   const [editBuf, setEditBuf]                 = useState({})
   const [addingNew, setAddingNew]             = useState(false)
@@ -552,7 +557,6 @@ function TabCajas({ form, setForm, employees, setEmployees, registers, setRegist
   const sorted       = [...registers.filter(r => r.activa), ...registers.filter(r => !r.activa)]
   const assignedOwner = form.caja ? employees.find(e => e.id !== form.id && e.caja === form.caja) : null
 
-  const secLabel = { fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8, marginTop: 0, display: "block" }
   const rowInput = { border: "1px solid #e5e7eb", borderRadius: 6, padding: "6px 8px", fontSize: 13, outline: "none", flex: 1, boxSizing: "border-box" }
 
   return (
@@ -637,6 +641,69 @@ function TabCajas({ form, setForm, employees, setEmployees, registers, setRegist
           </p>
         </div>
       )}
+
+      <HorarioEmpleado form={form} setForm={setForm} franjas={franjas} />
+    </div>
+  )
+}
+
+// ── Sección: Horario laboral (dentro de la tab Cajas) ───────────────────────────
+// Informativo + sugerencia de franja al login en modo turnos. No restringe acceso.
+
+const DIAS = [
+  { k: "lun", l: "L" }, { k: "mar", l: "M" }, { k: "mie", l: "M" }, { k: "jue", l: "J" },
+  { k: "vie", l: "V" }, { k: "sab", l: "S" }, { k: "dom", l: "D" },
+]
+const DIAS_DEFAULT = { lun: true, mar: true, mie: true, jue: true, vie: true, sab: true, dom: false }
+
+function HorarioEmpleado({ form, setForm, franjas }) {
+  const h = form.horario ?? {}
+  const dias = h.dias ?? DIAS_DEFAULT
+
+  const setH = (patch) => setForm(f => ({ ...f, horario: { ...(f.horario ?? {}), ...patch } }))
+  const toggleDia = (k) => setH({ dias: { ...dias, [k]: !dias[k] } })
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <span style={secLabel}>Horario laboral</span>
+      <p style={{ margin: "0 0 12px", fontSize: 12, color: "#9ca3af" }}>
+        Referencia del horario del empleado. En modo turnos sugiere su franja al iniciar sesión. No bloquea ventas fuera de horario.
+      </p>
+
+      {/* Días de la semana */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+        {DIAS.map(({ k, l }) => (
+          <button key={k} onClick={() => toggleDia(k)} type="button"
+            title={k}
+            style={{
+              width: 36, height: 36, borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
+              border: `1px solid ${dias[k] ? "#fdba74" : "#e5e7eb"}`,
+              background: dias[k] ? "#fff7ed" : "#fff",
+              color: dias[k] ? "#c2410c" : "#9ca3af",
+            }}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {/* Entrada / salida */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 14 }}>
+        <div style={{ flex: 1 }}>
+          <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>Entrada</label>
+          <input type="time" value={h.entrada ?? ""} onChange={e => setH({ entrada: e.target.value })} style={inp} />
+        </div>
+        <div style={{ flex: 1 }}>
+          <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>Salida</label>
+          <input type="time" value={h.salida ?? ""} onChange={e => setH({ salida: e.target.value })} style={inp} />
+        </div>
+      </div>
+
+      {/* Turno habitual (franja) */}
+      <label style={{ display: "block", fontSize: 12, color: "#6b7280", marginBottom: 4 }}>Turno habitual</label>
+      <select value={h.turno_id ?? ""} onChange={e => setH({ turno_id: e.target.value || null })} style={{ ...inp, cursor: "pointer" }}>
+        <option value="">Sin turno fijo</option>
+        {(franjas ?? []).map(fr => <option key={fr.id} value={fr.id}>{fr.nombre} ({fr.desde}–{fr.hasta})</option>)}
+      </select>
     </div>
   )
 }
@@ -676,7 +743,7 @@ function TabPermisos({ form, setForm }) {
 
 // ── Detail Panel ───────────────────────────────────────────────────────────────
 
-function DetailPanel({ employee, employees, setEmployees, registers, setRegisters, onSave, onToggleActive, isNew, onCancel, pushToast, saving }) {
+function DetailPanel({ employee, employees, setEmployees, registers, setRegisters, onSave, onToggleActive, isNew, onCancel, pushToast, saving, franjas }) {
   const [tab, setTab]           = useState("info")
   const [form, setForm]         = useState(null)
   const [original, setOriginal] = useState(null)
@@ -718,7 +785,7 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
 
   const TABS = [
     { id: "info",     label: "Información" },
-    { id: "cajas",    label: "Cajas" },
+    { id: "cajas",    label: "Cajas y horario" },
     { id: "permisos", label: "Permisos" },
   ]
 
@@ -763,7 +830,7 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         {tab === "info"     && <TabInfo form={form} setForm={setForm} employees={employees} original={original} />}
-        {tab === "cajas"    && <TabCajas form={form} setForm={setForm} employees={employees} setEmployees={setEmployees} registers={registers} setRegisters={setRegisters} pushToast={pushToast} />}
+        {tab === "cajas"    && <TabCajas form={form} setForm={setForm} employees={employees} setEmployees={setEmployees} registers={registers} setRegisters={setRegisters} pushToast={pushToast} franjas={franjas} />}
         {tab === "permisos" && <TabPermisos form={form} setForm={setForm} />}
       </div>
 
@@ -790,6 +857,8 @@ const NEW_EMP = {
 export default function EmployeesModule() {
   const [employees, setEmployees] = useState([])
   const [registers, setRegisters] = useState([])
+  const [franjas, setFranjas]     = useState([])  // franjas de turnos (para el horario del empleado)
+  const [turnosCfg, setTurnosCfg] = useState(null) // { modo, franjas } — config global de turnos
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [selected, setSelected]   = useState(null)
@@ -824,12 +893,14 @@ export default function EmployeesModule() {
     try {
       // Catálogo de cajas + usuarios (modo admin: incluye pin con token admin
       // para validar duplicados). La asignación viaja en u.caja_id.
-      const [cajas, users] = await Promise.all([
+      const [cajas, users, turnos] = await Promise.all([
         listarCajasAPI().catch(() => []),
         obtenerUsuarios(true),
+        obtenerConfigTurnos().catch(() => null),
       ])
       setRegisters(cajas)
       setEmployees(users.map(u => ({ ...u, caja: nombreDeCaja(u.caja_id, cajas) })))
+      if (turnos) { setFranjas(turnos.franjas ?? []); setTurnosCfg(turnos) }
     } catch {
       pushToast("Error al cargar empleados", "error")
     } finally {
@@ -971,17 +1042,26 @@ export default function EmployeesModule() {
         {/* Toolbar */}
         <div style={{ height: 56, borderBottom: "1px solid #e5e7eb", background: "#fff", padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
           <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>Empleados y permisos</h1>
-          <button
-            onClick={() => {
-              if (isNew) return
-              if (selected !== null) { setPendingSelect("new"); setModal("unsaved"); return }
-              setIsNew(true); setSelected(null)
-            }}
-            style={{ display: "flex", alignItems: "center", gap: 6, ...btnPrimary, borderRadius: 8 }}
-          >
-            <UserPlus size={15} />
-            Nuevo empleado
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={() => setModal("turnos")}
+              style={{ display: "flex", alignItems: "center", gap: 6, ...btnSecondary, borderRadius: 8 }}
+            >
+              <Clock size={15} />
+              Turnos
+            </button>
+            <button
+              onClick={() => {
+                if (isNew) return
+                if (selected !== null) { setPendingSelect("new"); setModal("unsaved"); return }
+                setIsNew(true); setSelected(null)
+              }}
+              style={{ display: "flex", alignItems: "center", gap: 6, ...btnPrimary, borderRadius: 8 }}
+            >
+              <UserPlus size={15} />
+              Nuevo empleado
+            </button>
+          </div>
         </div>
 
         {/* Body */}
@@ -1090,6 +1170,7 @@ export default function EmployeesModule() {
               onCancel={handleCancel}
               pushToast={pushToast}
               saving={saving}
+              franjas={franjas}
             />
           </div>
         </div>
@@ -1158,7 +1239,109 @@ export default function EmployeesModule() {
         />
       )}
 
+      {modal === "turnos" && (
+        <TurnosConfigModal
+          cfgInicial={turnosCfg}
+          onClose={() => setModal(null)}
+          onGuardado={(cfg) => { setTurnosCfg(cfg); setFranjas(cfg.franjas ?? []); setModal(null) }}
+          pushToast={pushToast}
+        />
+      )}
+
       <ToastStack toasts={toasts} />
     </>
+  )
+}
+
+// ── Modal: Configuración de turnos (modo día/turnos + franjas) ──────────────────
+
+function TurnosConfigModal({ cfgInicial, onClose, onGuardado, pushToast }) {
+  const [modo, setModo] = useState(cfgInicial?.modo ?? "dia")
+  const [franjas, setFranjas] = useState(cfgInicial?.franjas ?? [])
+  const [guardando, setGuardando] = useState(false)
+
+  const setFr = (i, patch) => setFranjas(fs => fs.map((f, idx) => idx === i ? { ...f, ...patch } : f))
+  const addFr = () => setFranjas(fs => [...fs, { id: `franja-${fs.length + 1}`, nombre: "", desde: "08:00", hasta: "14:00" }])
+  const delFr = (i) => setFranjas(fs => fs.filter((_, idx) => idx !== i))
+
+  async function guardar() {
+    if (modo === "turnos") {
+      if (franjas.length === 0) { pushToast("El modo turnos requiere al menos una franja", "error"); return }
+      if (franjas.some(f => !f.nombre.trim() || !f.desde || !f.hasta)) {
+        pushToast("Completa nombre y horas de cada franja", "error"); return
+      }
+    }
+    setGuardando(true)
+    try {
+      const saved = await guardarConfigTurnos({ modo, franjas })
+      pushToast("Configuración de turnos guardada ✓")
+      onGuardado(saved)
+    } catch (e) {
+      pushToast(e?.message || "No se pudo guardar", "error")
+    } finally { setGuardando(false) }
+  }
+
+  return (
+    <Modal title="Configuración de turnos" onClose={onClose} width={520}>
+      {/* Selector de modo */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
+        {[
+          { v: "dia", t: "Por día (corte continuo por caja)", d: "El corte de cada caja abarca todas sus ventas desde el último cierre, sin importar la hora ni el cajero. Recomendado para horario flexible." },
+          { v: "turnos", t: "Por turnos (subdividir por franja)", d: "El corte de cada caja se divide en franjas horarias (matutino, vespertino…). Útil si quieres arquear por turno." },
+        ].map(opt => (
+          <button key={opt.v} type="button" onClick={() => setModo(opt.v)}
+            style={{
+              textAlign: "left", padding: "12px 14px", borderRadius: 10, cursor: "pointer",
+              border: `1.5px solid ${modo === opt.v ? "#ea580c" : "#e5e7eb"}`,
+              background: modo === opt.v ? "#fff7ed" : "#fff",
+            }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{
+                width: 16, height: 16, borderRadius: "50%", flexShrink: 0,
+                border: `5px solid ${modo === opt.v ? "#ea580c" : "#d1d5db"}`,
+                background: "#fff",
+              }} />
+              <span style={{ fontSize: 14, fontWeight: 600, color: "#111827" }}>{opt.t}</span>
+            </div>
+            <p style={{ margin: "6px 0 0 24px", fontSize: 12, color: "#6b7280" }}>{opt.d}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* Editor de franjas (solo en modo turnos) */}
+      {modo === "turnos" && (
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.06em", display: "block", marginBottom: 10 }}>
+            Franjas horarias
+          </span>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {franjas.map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <input value={f.nombre} onChange={e => setFr(i, { nombre: e.target.value })} placeholder="Nombre"
+                  style={{ ...inp, flex: 1 }} />
+                <input type="time" value={f.desde} onChange={e => setFr(i, { desde: e.target.value })} style={{ ...inp, width: 110 }} />
+                <span style={{ color: "#9ca3af" }}>–</span>
+                <input type="time" value={f.hasta} onChange={e => setFr(i, { hasta: e.target.value })} style={{ ...inp, width: 110 }} />
+                <button type="button" onClick={() => delFr(i)} title="Eliminar franja"
+                  style={{ background: "none", border: "none", cursor: "pointer", color: "#dc2626", padding: 6, display: "flex" }}>
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addFr}
+            style={{ display: "flex", alignItems: "center", gap: 4, background: "none", border: "none", fontSize: 13, color: "#ea580c", cursor: "pointer", marginTop: 10 }}>
+            <Plus size={14} /> Agregar franja
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 20 }}>
+        <button onClick={onClose} style={btnSecondary} disabled={guardando}>Cancelar</button>
+        <button onClick={guardar} style={btnPrimary} disabled={guardando}>
+          {guardando ? "Guardando…" : "Guardar"}
+        </button>
+      </div>
+    </Modal>
   )
 }

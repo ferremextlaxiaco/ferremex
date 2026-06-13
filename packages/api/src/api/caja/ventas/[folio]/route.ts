@@ -4,6 +4,8 @@ import * as path from "path"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../../lib/json-store"
 import { FERREMEX_CARTERA } from "../../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../../modules/ferremex-cartera/service"
+import { FERREMEX_MONEDERO } from "../../../../modules/ferremex-monedero"
+import type FerremexMonederoService from "../../../../modules/ferremex-monedero/service"
 
 const VENTAS_FILE = path.join(__dirname, "../../../../../data/ventas-pos.json")
 
@@ -14,6 +16,8 @@ interface VentaRegistro {
   fecha_cancelacion?: string
   items?: { sku?: string; cantidad: number; descripcion?: string }[]
   pago_credito?: number
+  puntos_ganados?: number
+  puntos_canjeados?: number
   cliente_id?: string | null
   [k: string]: unknown
 }
@@ -123,6 +127,31 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
           // No abortamos la cancelación por esto (el inventario ya se reintegró);
           // se registra para conciliación manual.
           console.error(`[caja/ventas PATCH] No se pudo revertir el cargo a crédito de ${folio}:`, e?.message ?? e)
+        }
+      }
+
+      // Revertir el monedero: si la venta otorgó puntos, se anulan (soft-cancel
+      // del movimiento "ganado" por folio); si el cliente canjeó puntos, se le
+      // reembolsan con un "ajuste" positivo. Ambos best-effort: la cancelación
+      // (inventario ya reintegrado) no se aborta si esto falla.
+      const ganados = Number(ventas[idx].puntos_ganados ?? 0)
+      const canjeados = Number(ventas[idx].puntos_canjeados ?? 0)
+      if (clienteId && (ganados > 0 || canjeados > 0)) {
+        try {
+          const monederoService: FerremexMonederoService = req.scope.resolve(FERREMEX_MONEDERO)
+          if (ganados > 0) {
+            await monederoService.revertirGanadosDeFolio(folio, `Cancelación de venta ${folio}`)
+          }
+          if (canjeados > 0) {
+            await monederoService.agregarMovimiento(clienteId, {
+              tipo: "ajuste",
+              puntos: canjeados,
+              folio,
+              descripcion: `Reembolso de puntos por cancelación de venta ${folio}`,
+            })
+          }
+        } catch (e: any) {
+          console.error(`[caja/ventas PATCH] No se pudo revertir el monedero de ${folio}:`, e?.message ?? e)
         }
       }
 

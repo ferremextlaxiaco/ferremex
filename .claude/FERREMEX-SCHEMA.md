@@ -1,8 +1,8 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-01.
-> **Medusa:** módulos nativos + `metadata` en producto + **módulo custom ferremex_cartera** (Fase 3).
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-12.
+> **Medusa:** módulos nativos + `metadata` en producto + **módulos custom ferremex_cartera + ferremex_monedero + ferremex_turnos** (Fase 3).
 
 ---
 
@@ -30,9 +30,18 @@
 | Entidad | Tabla | Campos clave | Notas |
 |---|---|---|---|
 | **CarteraCliente** | `cartera_cliente` | `id` (PK uuid), `customer_id` (UK, FK), `limite_credito`, `creado_en`, `actualizado_en` | Raíz única por customer. Holds movimientos/notas/historial |
-| **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?`, **`cancelado`** (bool, default false), **`motivo_cancelacion`** (text nullable), **`fecha_cancelacion`** (timestamp ISO nullable) | Transaccional. Compras al registrar venta; pagos manuales. NEW: soft-cancel de abonos (restituye deuda vía FIFO al excluirlo del cálculo). |
+| **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?`, **`cancelado`** (bool, default false), **`motivo_cancelacion`** (text nullable), **`fecha_cancelacion`** (timestamp ISO nullable) | Transaccional. Compras al registrar venta; pagos manuales. Soft-cancel de abonos (restituye deuda vía FIFO al excluirlo del cálculo). |
 | **NotaCartera** | `nota_cartera` | `id`, `cartera_cliente_id` (FK), `fecha`, `hora`, `autor`, `texto` | Auditoría textual |
 | **HistorialLimite** | `historial_limite` | `id`, `cartera_cliente_id` (FK), `fecha`, `usuario`, `anterior`, `nuevo`, `nota` | Auditoría de cambios de límite |
+
+### Módulo custom: `ferremex_monedero` (Fase 3 continuación)
+
+| Entidad | Tabla | Campos clave | Notas |
+|---|---|---|---|
+| **ConfigMonedero** | `config_monedero` | `id` (PK uuid, singleton), `valor_punto` (decimal), `tasa_base` (%), `max_canje_pct` (%), `min_puntos_canje`, `vencimiento_meses`, `confirmar_huella` (bool), `confirmar_codigo` (bool), `redondeo` ("ninguno" / "entero" / "decimas" / "centesimas"), `periodo_nivel_meses` | Datos de configuración global. Un único registro activo (singleton vía `id`). |
+| **ReglaPuntos** | `regla_puntos` | `id`, `ambito` ("marca" / "departamento" / "categoria"), `ref` (nombre), `tasa` (%), `activa` (bool) | Tasas por taxonomía. Tasa 0 = excluye la línea. Resolución: marca → categoría → departamento → tasa_base. |
+| **NivelMonedero** | `nivel_monedero` | `id`, `nombre`, `orden`, `umbral_periodo` (pesos acumulados en período), `multiplicador` (tasa), `valor_punto_bonus` (decimal), `nivel_precio` (1-4), `color` (hex) | Tiers de lealtad. El nivel se DERIVA en cliente (no almacena). Multiplicador aplica a puntos ganados. |
+| **MovimientoMonedero** | `movimiento_monedero` | `id`, `customer_id` (FK), `tipo` ("ganado" / "canjeado" / "ajuste" / "vencido" / "reset"), `puntos` (int), `fecha`, `folio_venta?`, `motivo?`, `cancelado` (bool), `motivo_cancelacion` (text) | Auditable. Devengo + canje transaccionales en POST `/caja/ventas` dentro del lock. Cancelación de venta marca soft-cancel el devengo. |
 
 ### Relaciones (links Medusa 2.x)
 ```
@@ -54,6 +63,7 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
 ```jsonc
 {
   "departamento": "Herramientas",      // taxonomía nivel 1 (no es categoría Medusa)
+  "categoria": "Clavos",               // nivel 2 (puede ser string o UUID de product_category)
   "marca": "Truper",                   // taxonomía nivel 3
   "especificaciones": [{ "clave": "material", "valor": "acero" }],
   "impuesto": true,                    // aplica IVA
@@ -69,7 +79,7 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
 }
 ```
 - **Precios:** `precio1` vive en el price_set (BD); `precio2-4` en metadata. Nivel elegido por venta según `clienteActivo.num_precio` (1–4): Mostrador / Cliente / Distribuidor / Especial.
-- **Taxonomía:** `departamento` y `marca` son metadata; `categoria` es una `product_category` real de Medusa.
+- **Taxonomía:** `departamento`, `categoria`, `marca` son metadata. Ahora `/caja/productos` expone `departamento` y `categoria` en respuesta para cálculo de puntos REAL (no derivado de marca). El motor `lib/monedero.ts` `tasaDeLinea()` recibe `LineaPuntos` con campos `departamento?`, `categoria?`, `marca?` y resuelve por orden: marca → categoría → departamento → tasa_base.
 
 ## 2b. `customer.metadata` (JSONB) — Cliente POS (Fase 3)
 
@@ -82,7 +92,6 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
   "dias_credito": 30,            // plazo estándar
   "limite_credito": 5000.00,     // en MXN
   "grupo": "Cliente",            // nombre del grupo (referencia)
-  "monedero": 0.00,              // saldo monedero (reservado)
   "rfc": "ABC123456XYZ",
   "razon_social": "Empresa ABC",
   "regimen_fiscal": "601",       // CFDI
@@ -97,6 +106,8 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 ```
 - **Mapeo:** `first_name` ← `nombre`; `phone` ← `telefono`.
 - **ID único:** `num_cliente` es secuencial incremental por Ferremex (no UUID). Generado server-side en `POST /caja/clientes` con query `?siguiente-num=1`.
+- **Monedero:** el saldo de puntos del cliente vive en la tabla `movimiento_monedero` (se calcula en tiempo real), no en metadata de customer. El nivel del cliente se DERIVA (no almacena) en tiempo de lectura vía `/caja/monedero/_nivel.ts` (helper server-side) usando período de compras desde `ventas-pos.json`.
+- **Inscripción:** cada cliente puede inscribirse/darse de baja en monedero vía `/caja/monedero/inscribir` POST e `/caja/monedero/[customerId]` DELETE.
 
 ## 2c. `customer_group.metadata` (JSONB) — Grupo POS (Fase 3)
 
@@ -115,11 +126,12 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 
 | Archivo | Forma | Escrito por |
 |---|---|---|
-| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal}], total, pago_*, cambio, estado?, motivo_cancelacion?, fecha_cancelacion? }[]` | `/caja/ventas` POST (con crédito transaccional), PATCH `/caja/ventas/:folio` |
+| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales de producto), PATCH `/caja/ventas/:folio` (cancelación revierte puntos) |
 | `pedidos-pos.json` | `{ id, folio, fecha, proveedor?, proveedorId?, status, articulos[{clave?, descripcion?, cantidad}], ... }[]` | `/caja/pedidos` |
 | `pedido-counter.json` | `{ contador: number }` | `/caja/pedidos` POST (folio secuencial) |
-| `cortes-pos.json` | `{ cajero, turno_id, cerrado_en }[]` | `/caja/corte` POST |
-| `usuarios-pos.json` | `{ id, nombre, alias?, pin, rol, activo, permisos{} }[]` | `/caja/usuarios` |
+| `cortes-pos.json` | `{ caja_id, periodo_desde, franja_id?, cerrado_en, franja_dia?, ventas_total, ventas_efectivo, ventas_transferencia, ventas_credito, ventas_tarjeta?, movimientos_total, movimientos_entrada, movimientos_salida, ... }[]` | `/caja/corte` POST (por CAJA, periodo continuo desde último cierre, no por cajero/turno) |
+| `turnos-config.json` | `{ modo: "dia"|"turnos", franjas: [{id, nombre, desde, hasta}] }` | `/caja/turnos-config` GET/PUT |
+| `usuarios-pos.json` | `{ id, nombre, alias?, pin, rol, activo, caja_id?, horario?: {dias, entrada, salida, turno_id}, permisos{} }[]` | `/caja/usuarios` (+ caja_id, horario) |
 | `ticket-config.json` | `{ encabezado{}, pie[], opciones{}, tipos{}, formato_folio{}, formatos{} }` | `/caja/ticket-config` PUT |
 | `folio-counter.json` | `{ contador: number }` | `/caja/ventas` (secuencial), `/caja/folio-contador` |
 | `marcas-extra.json` | `{ nombre, cat_nombre, dep_nombre }[]` | `/caja/catalogos` PATCH (create_marca) |
@@ -167,7 +179,7 @@ Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + v
 ### Tipos conservados para API (ahora BD) — en `lib/clientes.ts`
 ```ts
 Cliente { id?, num_cliente, nombre, telefono, num_precio (1-4), dias_credito, limite_credito,
-          grupo, monedero, rfc, razon_social, regimen_fiscal, cfdi, calle, numero, colonia, ciudad, estado, cp }
+          grupo, rfc, razon_social, regimen_fiscal, cfdi, calle, numero, colonia, ciudad, estado, cp }
 Movimiento { id, tipo: "compra"|"pago", monto, fecha, folio?, plazo?, descripcion, nota?, 
              cancelado?: boolean, motivo_cancelacion?: string, fecha_cancelacion?: string }
 NotaCartera { id, fecha, hora, autor, texto }
@@ -177,6 +189,40 @@ CartEntrada { movimientos: Movimiento[], notas: NotaCartera[], historialLimite: 
 - **Saldos:** `calcularSaldos()` aplica pagos FIFO (compra más antigua primero). **EXCLUYE movimientos con `cancelado=true`** (devolución a deuda). Estado: `pagado`/`parcial`/`pendiente`.
 - **Semáforo:** azul (al día) · verde (≥7d) · amarillo (1–7d) · naranja (1–30d vencido) · rojo (30–60d) · rojo_oscuro (60+d).
 - **Cancelación de abono:** soft-cancel vía `PATCH /caja/cartera/[customerId]/movimientos/[movId]` con motivo obligatorio. Auditable (fecha_cancelacion persiste ISO). No se borra, se marca como inválido para cálculos.
+
+### Tipos del módulo Monedero — en `lib/monedero.ts` + `client.ts`
+```ts
+ConfigMonederoAPI { id, valor_punto, tasa_base, max_canje_pct, min_puntos_canje, 
+                    vencimiento_meses, confirmar_huella, confirmar_codigo, 
+                    redondeo: "ninguno"|"entero"|"decimas"|"centesimas", periodo_nivel_meses }
+ReglaPuntosAPI { id, ambito: "marca"|"departamento"|"categoria", ref, tasa, activa }
+NivelMonederoAPI { id, nombre, orden, umbral_periodo, multiplicador, valor_punto_bonus, nivel_precio, color }
+MovimientoMonederoAPI { id, customer_id, tipo: "ganado"|"canjeado"|"ajuste"|"vencido"|"reset", 
+                        puntos, fecha, folio_venta?, motivo?, cancelado, motivo_cancelacion }
+ClienteMonederoFila { customer_id, nombre, saldo_puntos, nivel, valor_nivel, conteo_movimientos, ultima_actividad }
+DetalleMonedero { saldo_puntos, nivel, multiplicador, valor_punto_bonus, movimientos: MovimientoMonederoAPI[], 
+                  historial_movimientos: (tipo|fecha|puntos|detalle)[] }
+LineaPuntos { subtotal: number, marca?: string | null, departamento?: string | null, categoria?: string | null }  /* para cálculo con taxonomía real */
+```
+- **Motor (`lib/monedero.ts`):** funciones `tasaDeLinea()` (recibe `LineaPuntos` completo, resuelve tasa por marca→categoría→departamento→base, fallback a catalogos si faltan), `redondearPuntos()` (aplica modo), `calcularPuntosGanados()` (línea por línea, cap servidor).
+- **Taxonomía REAL:** `/caja/productos` ahora expone `departamento` y `categoria` (metadata del producto). El carrito (CartItem) propaga estos campos. El motor resuelve la tasa según taxonomía REAL, no derivada.
+- **Cache:** `client.ts` cachea `listarCatalogos()` (TTL 5min, coalescing) y config+reglas monedero (TTL 60s). Helper `precargarMonederoGlobal(customerId?)` warm-up en `SelectorCliente` al elegir cliente.
+- **Nivel derivado:** no se almacena en BD. Calculado en tiempo real vía `/caja/monedero/_nivel.ts` (helper server-side) usando compras del período desde `ventas-pos.json`.
+- **VentaRequest/VentaResponse extendidos:** campos `pago_puntos`, `puntos_ganados`, `puntos_canjeados`, `pago_tarjeta` transaccionales dentro del lock de venta.
+
+---
+
+## 4b. Rutas `/caja/*` nuevas y refactorizadas (Sesión 2026-06-12)
+
+| Método | Ruta | Cambio | Notas |
+|--------|------|--------|-------|
+| GET/POST | `/caja/corte` | Refactorizado por CAJA (no cajero/turno) | Ahora `calcularResumen(caja_id, desde, filtroFranja)`. Período continuo desde último corte cerrado. Respuesta += `caja_id`, `periodo_desde`, `franja_id`, `modo`. Query: `?caja_id=` (sin cajero/turno obligatorios). |
+| POST | `/caja/cortes-pendientes` | **NUEVO** | Lista cajas con ventas posteriores a su último corte. Consumido por banner de CorteModule. |
+| GET | `/caja/turnos-config` | **NUEVO** | Lee configuración de turnos: `{ modo: "dia"|"turnos", franjas: [{id,nombre,desde,hasta}] }`. |
+| PUT | `/caja/turnos-config` | **NUEVO** | Guarda configuración de turnos. |
+| POST | `/caja/ventas` | Extendido | Ahora persiste `caja_id`, `caja_name` (del cajero), `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items (desde producto). Devengo/canje monedero con taxonomía REAL. |
+| PATCH | `/caja/ventas/:folio` | Mejorado | Cancelación revierte `puntos_ganados`/`puntos_canjeados` (soft-cancel en BD). |
+| GET/PUT/DELETE | `/caja/usuarios` | Extendido | PosUsuario += `caja_id`, `horario?: {dias,entrada,salida,turno_id}`. |
 
 ---
 

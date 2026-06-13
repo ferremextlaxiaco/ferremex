@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import type { VentaResponse } from "../lib/client"
 import type { Cliente } from "../lib/clientes"
 import { FacturarBoton } from "./FacturarBoton"
@@ -12,6 +13,13 @@ interface TicketProps {
 }
 
 export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: TicketProps) {
+  // Cerrar la vista previa con Escape (igual que el botón "Cerrar").
+  useEffect(() => {
+    const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onImpreso() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [onImpreso])
+
   function handleImprimir() {
     window.print()
     // Cerrar la vista previa después de imprimir
@@ -72,14 +80,53 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
           {/* Pago/cambio solo en ventas; una cotización es un presupuesto. */}
           {!esCotizacion && (
             <>
-              <div className="ticket-fila-resumen">
-                <span>Efectivo</span>
-                <span>${venta.pago_efectivo.toFixed(2)}</span>
-              </div>
+              {venta.pago_efectivo > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Efectivo</span>
+                  <span>${venta.pago_efectivo.toFixed(2)}</span>
+                </div>
+              )}
+              {(venta.pago_transferencia ?? 0) > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Transferencia</span>
+                  <span>${(venta.pago_transferencia ?? 0).toFixed(2)}</span>
+                </div>
+              )}
+              {(venta.pago_tarjeta ?? 0) > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Tarjeta</span>
+                  <span>${(venta.pago_tarjeta ?? 0).toFixed(2)}</span>
+                </div>
+              )}
+              {(venta.pago_credito ?? 0) > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Crédito</span>
+                  <span>${(venta.pago_credito ?? 0).toFixed(2)}</span>
+                </div>
+              )}
+              {(venta.pago_puntos ?? 0) > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Puntos ({(venta.puntos_canjeados ?? 0).toLocaleString("es-MX")})</span>
+                  <span>${(venta.pago_puntos ?? 0).toFixed(2)}</span>
+                </div>
+              )}
               <div className="ticket-fila-resumen ticket-cambio">
                 <span>Cambio</span>
                 <span>${venta.cambio.toFixed(2)}</span>
               </div>
+            </>
+          )}
+
+          {/* Monedero Electrónico: puntos ganados con esta compra. */}
+          {!esCotizacion && (venta.puntos_ganados ?? 0) > 0 && (
+            <>
+              <div className="ticket-separador">————————————————</div>
+              <p className="ticket-meta" style={{ textAlign: "center" }}>
+                🪙 Monedero Electrónico
+              </p>
+              <p className="ticket-meta" style={{ textAlign: "center" }}>
+                Ganaste {(venta.puntos_ganados ?? 0).toLocaleString("es-MX")} puntos
+              </p>
             </>
           )}
 

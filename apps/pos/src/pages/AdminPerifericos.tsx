@@ -7,7 +7,7 @@ interface PeriphPrinter {
 }
 interface PeriphFingerprint {
   connected: boolean; modelo: string; sensibilidad: number
-  usos: { descuentos: boolean; apertura: boolean; gerencial: boolean }
+  usos: { descuentos: boolean; apertura: boolean; gerencial: boolean; puntos: boolean }
   intentosMax: number
 }
 interface PeriphBarcode {
@@ -21,7 +21,7 @@ const defaultPeriph: PeriphState = {
   printer: { connected: false, tipo: "Térmica 80mm", puerto: "COM3", copias: 1, imprimirLogo: true, corteAuto: true },
   fingerprint: {
     connected: false, modelo: "ZKTeco ZK4500", sensibilidad: 3,
-    usos: { descuentos: true, apertura: true, gerencial: false }, intentosMax: 3,
+    usos: { descuentos: true, apertura: true, gerencial: false, puntos: false }, intentosMax: 3,
   },
   barcode: {
     connected: false, tipoConexion: "USB HID", puertoId: "USB-HID-01",
@@ -190,7 +190,7 @@ function PerifericosPanel() {
         </PeriphField>
         <div className="tg-field">
           <label className="tg-label">Usar para</label>
-          {([["descuentos", "Autorizar descuentos"], ["apertura", "Apertura de caja"], ["gerencial", "Acceso gerencial"]] as [keyof typeof fp.usos, string][]).map(([key, label]) => (
+          {([["descuentos", "Autorizar descuentos"], ["apertura", "Apertura de caja"], ["gerencial", "Acceso gerencial"], ["puntos", "Confirmar uso de puntos (Monedero)"]] as [keyof typeof fp.usos, string][]).map(([key, label]) => (
             <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 13, cursor: "pointer" }}>
               <input type="checkbox" checked={fp.usos[key]}
                 onChange={(e) => setFp({ usos: { ...fp.usos, [key]: e.target.checked } })} />
@@ -237,6 +237,10 @@ function PerifericosPanel() {
           ))}
         </div>
         <SwitchRow label="Sonido al escanear" checked={bc.sonido} onChange={(v) => setBc({ sonido: v })} />
+        <div style={{ fontSize: 11, color: "var(--at-text-soft)", padding: "4px 0 8px" }}>
+          🪙 Este lector también identifica la tarjeta del Monedero (# de cliente) al canjear puntos.
+          Activa la exigencia en <strong>Monedero → Configuración</strong>.
+        </div>
         <PeriphField label="Prefijo de búsqueda">
           <input className="tg-input" placeholder="Opcional — ej: P-" value={bc.prefijo}
             onChange={(e) => setBc({ prefijo: e.target.value })} />

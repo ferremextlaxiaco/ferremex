@@ -37,6 +37,11 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           existencia: producto.existencia,
           mayoreoActivo: producto.mayoreoActivo,
           mayoreoMin: producto.mayoreoMin,
+          // Marca + depto/categoría → los usa el motor del Monedero para la tasa
+          // de puntos por línea (resuelve la regla más específica que aplique).
+          marca: producto.marca,
+          departamento: producto.departamento,
+          categoria: producto.categoria,
         },
       })
     }

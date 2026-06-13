@@ -35,6 +35,16 @@ export interface CartItem {
   precio4?: number
   cantidad: number
   existencia: number
+  // Marca del producto (de la búsqueda). Opcional y retrocompatible. La usa el
+  // motor del Monedero Electrónico (lib/monedero.ts) para resolver la tasa de
+  // puntos por taxonomía. Su ausencia hace que la línea use la tasa base salvo
+  // que matchee por departamento/categoría reales (ver abajo).
+  marca?: string | null
+  // Departamento y categoría REALES del producto (de su metadata). El motor del
+  // Monedero los usa directo para resolver reglas por departamento/categoría aun
+  // cuando el producto no tiene marca. Opcionales/retrocompatibles.
+  departamento?: string | null
+  categoria?: string | null
   /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para el desglose fiscal. */
   impuesto?: boolean
   mayoreoActivo?: boolean
@@ -90,6 +100,11 @@ interface PosState {
   // marcarla "convertida" al venderse.
   modoCotizacion: boolean
   cotizacionCargadaFolio: string | null
+  // Vendedor de la venta actual (quién la hace). `null` = el cajero logueado.
+  // Se cambia en el panel de venta cuando otra persona atiende en esta caja; es
+  // solo atribución (reportes/comisiones), NO afecta el corte (que agrupa por
+  // caja). Se resetea al terminar la venta (CLEAR) y al cambiar de cajero.
+  vendedorVenta: { id: string; nombre: string } | null
 }
 
 // Línea de un componente de paquete tal como entra al carrito: trae su precio
@@ -114,6 +129,12 @@ type PosAction =
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
   | { type: "SET_CLIENTE"; cliente: Cliente | null }
+  // Cambia el vendedor de la venta actual. `null` vuelve al cajero logueado.
+  | { type: "SET_VENDEDOR"; vendedor: { id: string; nombre: string } | null }
+  // Asigna/cambia la caja física de la sesión actual (cuando el cajero no traía
+  // caja asignada y la elige al vender, o la cambia). No re-loguea; el corte y
+  // los movimientos se agrupan por esta caja. Queda activa toda la sesión.
+  | { type: "SET_CAJA"; caja_id: string | null; caja_nombre: string | null }
   // Restaura un carrito completo (items + cliente) de una sola vez. Lo usa
   // "Pedidos en espera" al retomar un pedido/cotización guardado.
   | { type: "RESTORE_CART"; items: CartItem[]; cliente: Cliente | null }
@@ -131,13 +152,23 @@ type PosAction =
 function posReducer(state: PosState, action: PosAction): PosState {
   switch (action.type) {
     case "SET_CAJERO":
-      return { ...state, cajero: action.cajero }
+      // Cambiar de cajero descarta el vendedor manual de la venta (vuelve al nuevo
+      // cajero por defecto).
+      return { ...state, cajero: action.cajero, vendedorVenta: null }
 
     case "SET_TICKET_CONFIG":
       return { ...state, ticketConfig: action.config }
 
     case "SET_CLIENTE":
       return { ...state, clienteActivo: action.cliente }
+
+    case "SET_VENDEDOR":
+      return { ...state, vendedorVenta: action.vendedor }
+
+    case "SET_CAJA":
+      // Solo cambia la caja de la sesión; conserva cajero, turno y permisos.
+      if (!state.cajero) return state
+      return { ...state, cajero: { ...state.cajero, caja_id: action.caja_id, caja_nombre: action.caja_nombre } }
 
     case "ADD_ITEM": {
       const existe = state.items.find((i) => i.sku === action.item.sku)
@@ -224,8 +255,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
 
     case "CLEAR":
       // Al vaciar el carrito (o completar una venta) se reinicia el cliente
-      // activo y se sale del modo cotización (transacción terminada).
-      return { ...state, items: [], clienteActivo: null, modoCotizacion: false, cotizacionCargadaFolio: null }
+      // activo, el vendedor manual y se sale del modo cotización (transacción terminada).
+      return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, cotizacionCargadaFolio: null }
 
     case "RESTORE_CART":
       // Reemplaza el carrito y el cliente con un pedido en espera retomado.
@@ -282,6 +313,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     clienteActivo: null,
     modoCotizacion: false,
     cotizacionCargadaFolio: null,
+    vendedorVenta: null,
   })
 
   // Catálogo de promociones activas. Se carga una vez al montar y se puede
@@ -339,12 +371,40 @@ export function usePOS() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function buildTurnoId(): string {
+/** Una franja horaria (de la config de turnos). */
+export interface FranjaTurno { id: string; nombre: string; desde: string; hasta: string }
+
+/** Minutos desde medianoche para "HH:MM" (NaN si malformado). */
+function minutosHHMM(hhmm: string): number {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(hhmm ?? "")
+  return m ? Number(m[1]) * 60 + Number(m[2]) : NaN
+}
+
+/** Franja a la que pertenece una hora local (min desde medianoche), o null. */
+export function franjaActual(franjas: FranjaTurno[], now = new Date()): FranjaTurno | null {
+  const min = now.getHours() * 60 + now.getMinutes()
+  for (const f of franjas) {
+    const a = minutosHHMM(f.desde), b = minutosHHMM(f.hasta)
+    if (isNaN(a) || isNaN(b)) continue
+    if (a <= b ? (min >= a && min < b) : (min >= a || min < b)) return f
+  }
+  return null
+}
+
+/**
+ * Construye el turno_id que se sella al iniciar sesión.
+ *  - Modo "día" (default): `YYYY-MM-DD` — un turno por día (corte continuo por
+ *    caja, horario flexible). Es el comportamiento por defecto de Fase 1.
+ *  - Modo "turnos": `YYYY-MM-DD-<franjaId>` según la franja de la hora actual; si
+ *    ninguna franja cubre la hora, cae a día completo.
+ * `cfg` viene de obtenerConfigTurnos(); sin cfg → modo día.
+ */
+export function buildTurnoId(cfg?: { modo: "dia" | "turnos"; franjas: FranjaTurno[] } | null): string {
   const now = new Date()
   const fecha = now.toISOString().slice(0, 10)
-  const hora = now.getHours()
-  const turno = hora < 14 ? "m" : "t"
-  return `${fecha}-${turno}`
+  if (!cfg || cfg.modo !== "turnos") return fecha
+  const f = franjaActual(cfg.franjas, now)
+  return f ? `${fecha}-${f.id}` : fecha
 }
 
 /**

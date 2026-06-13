@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature, Tag,
+  Coins, FileSignature, Tag, Wallet,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -30,6 +30,8 @@ export function Admin() {
     ? "perifericos"
     : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
     ? "clientes"
+    : path.includes("/admin/monedero")
+    ? "monedero"
     : path.includes("/admin/articulos") || path.includes("/admin/paquetes")
     ? "articulos"
     : path.includes("/admin/promociones")
@@ -135,6 +137,13 @@ export function Admin() {
           >
             <span className="admin-side-icon"><UserRound size={18} /></span>
             Clientes
+          </button>
+          <button
+            className={`admin-side-item${tab === "monedero" ? " active" : ""}`}
+            onClick={() => navigate("/admin/monedero")}
+          >
+            <span className="admin-side-icon"><Wallet size={18} /></span>
+            Monedero Electrónico
           </button>
           <button
             className={`admin-side-item${tab === "articulos" ? " active" : ""}`}

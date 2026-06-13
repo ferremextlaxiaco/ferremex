@@ -28,6 +28,13 @@ export default function OCViewModal({ pedido, onClose }) {
     return () => { if (blobUrl) URL.revokeObjectURL(blobUrl) }
   }, [])
 
+  // Cerrar con Escape (igual que click en overlay / botón X).
+  useEffect(() => {
+    const fn = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [onClose])
+
   function handleDownload() {
     const a = document.createElement("a")
     a.href = blobUrl

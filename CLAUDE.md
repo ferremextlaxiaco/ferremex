@@ -41,7 +41,7 @@ desde terminales de la tienda en la red local (`192.168.1.105`).
 - **Datos:** PostgreSQL 16 + Redis 6379. PDF con `@react-pdf/renderer`. Excel con `xlsx`.
 - **Plataforma:** Windows 11, procesos vía **PM2**.
 
-**Estado de fases:** Fases 0–1 y Fase 3 (Clientes/Cartera BD) completas; Fase 2 (POS de mostrador) mayormente completa.
+**Estado de fases:** Fases 0–1 y Fase 3 (Clientes/Cartera/Monedero BD) completas; Fase 2 (POS de mostrador) mayormente completa.
 Ver `MEMORIA_INSTALACIÓN.md` (estado por fases/infra) y `CLAUDE CONTEXTO FERREMEX.md` (negocio + n8n).
 
 ---
@@ -256,29 +256,35 @@ Sistemas compartidos y sus consumidores actuales:
 
 | Sistema / función | Consumidores POS |
 |---|---|
-| `listarCatalogos()` + taxonomía Dept→Cat→Marca | `FiltroBar`, `ArticlesModule`, `PedidosFiltros`, `CatalogosModule`, `CatalogosReasignacion` |
+| `listarCatalogos()` + taxonomía Dept→Cat→Marca (+ cache TTL 5min) | `FiltroBar`, `ArticlesModule`, `PedidosFiltros`, `CatalogosModule`, `CatalogosReasignacion`, **`MonederoModule` (ReglaDrawer)**, **`lib/monedero.ts` (fallback si no hay taxonomía REAL en producto)** |
 | `listarFaltantes()` (`/caja/articulos?faltantes=1`) | `PedidosModule` (FaltantesModal) |
-| `buscarProductos()` (`/caja/productos`) | `Buscador` (pantalla de venta) |
+| `buscarProductos()` (`/caja/productos` + depto/categoria en respuesta) | `Buscador` (con ProductoPOS ampliado: depto/categoria/marca) |
 | `listarArticulos()` (`/caja/articulos`) | `ArticlesModule`, `PedidosFiltros` |
-| Shape `ArticuloPOS` (campos de artículo) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal` |
+| Shape `ArticuloPOS` + `ProductoPOS` (depto/categoria/marca) | `ArticleDrawer`, `ArticlesModule`, `PedidosFiltros`, `FaltantesModal`, **`CartItem` (propagado al carrito para cálculo de puntos real)** |
 | Búsqueda fonética (backend `/caja/productos`) | `Buscador` |
 | `CatalogosOp` PATCH (`/caja/catalogos`) | `CatalogosModule` |
-| **Cartera BD** (`/caja/cartera/*`, NEW PATCH anular) + `lib/clientes.ts` (async) | `CarteraCredito` (cancelar abono), `ModalCobro`, `SelectorCliente`, `AdminClientesLista` |
-| **Clientes BD** (`/caja/clientes/*`) + `lib/clientes.ts` (async) | `SelectorCliente`, `AdminClientesLista`, `AdminClientes` |
+| **Cartera BD** (`/caja/cartera/*`, PATCH anular) + `lib/clientes.ts` (async) | `CarteraCredito` (cancelar abono), `ModalCobro` (método Crédito), `SelectorCliente`, `AdminClientesLista` |
+| **Clientes BD** (`/caja/clientes/*`) + `lib/clientes.ts` (async) | `SelectorCliente` (precarga monedero), `AdminClientesLista`, `AdminClientes`, **`Login` (carga cliente al seleccionar)** |
 | **Grupos BD** (`/caja/grupos/*`) | `AdminClientesLista`, `AdminClientes` |
-| **Proveedores BD** (`/caja/proveedores/*`) + `lib/proveedores.ts` (async) | `AdminProveedores`, `ComprasModule`/`ComprasTable`, `PedidosModule`/`PedidosTabla` (selector de proveedor); `ComprasModule` registra factura por pagar |
-| **Cajas BD** (`/caja/cajas`) | `CashMovementsModule`, `EmployeesModule` |
+| **Monedero BD** (`/caja/monedero/*`) + `lib/monedero.ts` (motor + cache TTL 60s) | `MonederoModule` (CRUD config/reglas/niveles/clientes), **`ModalCobro` (método Puntos, canje, preview)**, **`SelectorCliente` (saldo)**, **`Ticket` (línea puntos)**, **`AdminPerifericos` (toggle confirmación)** |
+| **Proveedores BD** (`/caja/proveedores/*`) + `lib/proveedores.ts` (async) | `AdminProveedores`, `ComprasModule`/`ComprasTable`, `PedidosModule`/`PedidosTabla` |
+| **Cajas BD** (`/caja/cajas`) | `Login` (carga al iniciar), `CashMovementsModule`, `EmployeesModule`, `CorteModule` |
 | Shape `Proveedor` / `FacturaCredito` (`lib/proveedores.ts`) | `AdminProveedores`, `ComprasModule`, `PedidosModule` |
-| `proveedorId` en compras/pedidos (enlace al catálogo) | `ComprasModule` (registroCompra), `PedidosModule` + `/caja/pedidos` |
-| **Compras BD** (`/caja/compras`) + shape `CompraAPI` | `ComprasModule` (escribe), `ConsultarCompras` (lee/cancela), `AdminProveedores` (compras por proveedor) |
-| `listarVentas()` / `cancelarVenta()` (`/caja/ventas`) | `SalesHistory` (AdminConsultaVentas), `CashMovementsModule` |
+| `proveedorId` en compras/pedidos (enlace al catálogo) | `ComprasModule`, `PedidosModule` |
+| **Compras BD** (`/caja/compras`) + shape `CompraAPI` | `ComprasModule`, `ConsultarCompras`, `AdminProveedores` |
+| `listarVentas()` / `cancelarVenta()` (`/caja/ventas` + caja_id/vendedor/pago_tarjeta) | `SalesHistory`, `CorteModule`, `CashMovementsModule` |
+| `/caja/corte` refactorizado (por caja, no cajero/turno) | `CorteModule`, `CashMovementsModule` |
+| `/caja/cortes-pendientes` (NUEVO) | `CorteModule` (banner de cortes pendientes) |
+| `/caja/turnos-config` (NUEVO modo día/turnos + franjas) | `EmployeesModule` (TurnosConfigModal), `buildTurnoId()` en pos-store, `Login` (carga config), `CorteModule` (franja del corte) |
 | `folio-counter.json` + `/caja/folio-contador` | `/caja/ventas` POST (modo secuencial), `FormatoConfig` |
-| `/caja/usuarios` (GET sin pin / `?admin=1` con pin; persiste `caja_id`) + `/caja/login` | `Login`, `EmployeesModule`, `CashMovementsModule`, `SalesHistory` |
+| `/caja/usuarios` (caja_id + horario) + `/caja/login` | `Login`, `EmployeesModule`, `CorteModule` |
 | `/caja/pedidos` (CRUD) | `PedidosModule` |
-| `lib/json-store` (persistencia JSON segura) | rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `clientes`, `cartera` |
+| `lib/json-store` (persistencia JSON segura) | rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `cortes`, `turnos-config` |
 | `lib/text` (`slugify` / `normalizarFonetico`) | rutas `articulos`, `catalogos`, `productos` |
 | Token POS (`X-POS-Token`) + `posHeaders()` / `apiFetch` | TODAS las llamadas mutantes desde `client.ts` |
 | `useToasts` (`hooks/useToasts`), `uuid` (`lib/utils`), `formatMXN` (`lib/format`) | módulos POS que los importan |
+| **`SelectorVendedor` (NUEVO)** + `vendedorVenta` en pos-store | `Venta` (header), `ModalCobro` (propaga vendedor a venta) |
+| **`CambiarUsuarioModal` (NUEVO)** | `Venta` (header, botón "Cambiar usuario") |
 
 **Protocolo:** cuando un cambio toca uno de estos sistemas, Claude debe:
 1. Listar qué otros módulos consumen el mismo sistema.
@@ -292,11 +298,14 @@ Aplica también al panel admin Medusa (`apps/admin/`) y al vendor portal (`apps/
 ## Estado y persistencia (POS)
 
 ### State management (`apps/pos/src/lib/pos-store.ts`)
-React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketConfig`, `clienteActivo`. No Redux.
-`buildTurnoId()` genera IDs de turno con formato `YYYY-MM-DD-m` (mañana, <14h) o `-t` (tarde).
+React Context + useReducer. Estado clave: `cajero` (+ `caja_id`, `caja_nombre`), `items` (carrito), `ticketConfig`, `clienteActivo`, **`vendedorVenta`** (opcional, para atribución de venta). No Redux.
+`buildTurnoId(cfg?)` genera IDs de turno según modo de configuración:
+- **Modo día (default):** `YYYY-MM-DD` (período continuo, flexible, resuelve el problema del corte rígido a 14h).
+- **Modo turnos:** `YYYY-MM-DD-<franjaId>` resolviendo franja actual vía `franjaDeTimestamp()` según hora. Franjas definidas en `/caja/turnos-config`.
 
 ### Persistencia de datos
 - **Clientes + Cartera de crédito**: BD de Medusa (Fase 3 completada). Customers nativas + módulo custom ferremex_cartera. Acceso vía `/caja/clientes/*` y `/caja/cartera/*`. Terminal-agnostic (datos compartidos).
+- **Monedero Electrónico**: BD de Medusa (módulo custom `ferremex_monedero`). Config global + reglas (marca/depto/cat) + niveles + movimientos auditable. Acceso vía `/caja/monedero/*`. Devengo + canje transaccionales en POST `/caja/ventas` (transaccional dentro del lock, con taxonomía REAL del producto: depto/cat/marca). El nivel se DERIVA (no almacena) del período de compras vía `/caja/monedero/_nivel.ts`. Terminal-agnostic. **Cache:** TTL 5min para `listarCatalogos()`, TTL 60s para detalle de cliente + config/reglas. Precarga en `SelectorCliente`.
 - **Proveedores + facturas por pagar**: BD de Medusa (módulo custom `ferremex_proveedores`). Acceso vía `/caja/proveedores/*`. Terminal-agnostic.
 - **Cajas (catálogo)**: BD de Medusa (módulo custom `ferremex_cajas`). Acceso vía `/caja/cajas`. La **asignación caja↔empleado** se persiste como `caja_id` en el usuario (`/caja/usuarios`), no en una entidad aparte (los empleados aún viven en JSON).
 - **Compras (historial de recepciones)**: BD de Medusa (módulo custom `ferremex_compras`, con `ArticuloCompra` anidado). Acceso vía `/caja/compras`. Enlazado por `proveedor_id` al catálogo. Terminal-agnostic. Antes en localStorage (`pos_historial_compras`).
@@ -316,10 +325,13 @@ React Context + useReducer. Estado clave: `cajero`, `items` (carrito), `ticketCo
   - **Proveedores (Fase 3 cont.):** `listarProveedoresAPI`, `crearProveedorAPI`, `actualizarProveedorAPI`, `eliminarProveedorAPI`, `siguienteNumProveedorAPI`, `agregarFacturaAPI`/`actualizarFacturaAPI`/`eliminarFacturaAPI`. Módulo ferremex_proveedores.
   - **Cajas (Fase 3 cont.):** `listarCajasAPI`, `crearCajaAPI`, `actualizarCajaAPI`, `eliminarCajaAPI`. Módulo ferremex_cajas. Asignación caja↔empleado vía `caja_id` en `actualizarUsuario`.
   - **Compras (Fase 3 cont.):** `listarComprasAPI(proveedorId?)`, `crearCompraAPI`, `cancelarCompraAPI`. Módulo ferremex_compras (Compra + ArticuloCompra). Shape `CompraAPI` con `proveedorId`, artículos en `precioUnit` (camelCase).
-  - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos`, `actualizarCatalogo`.
+  - **Monedero (Fase 3 cont.):** `obtenerConfigMonederoAPI`/`guardarConfigMonederoAPI`, `listarReglasMonederoAPI`/`crearReglaMonederoAPI`/`actualizarReglaMonederoAPI`/`eliminarReglaMonederoAPI`, `listarNivelesMonederoAPI`/`crearNivelMonederoAPI`/`actualizarNivelMonederoAPI`/`eliminarNivelMonederoAPI`, `listarClientesMonederoAPI`, `obtenerDetalleMonederoAPI`, `inscribirMonederoAPI`, `darDeBajaMonederoAPI`, `ajustarPuntosMonederoAPI`, `resetearPuntosMonederoAPI`. Tipos `ConfigMonederoAPI`, `ReglaPuntosAPI`, `NivelMonederoAPI`, `MovimientoMonederoAPI`, `ClienteMonederoFila`, `DetalleMonedero`. Módulo ferremex_monedero. **NUEVO:** helpers `precargarMonederoGlobal(customerId?)`, `invalidarMonederoCache()`, `invalidarDetalleMonedero()`.
+  - **Turnos (Fase 3 cont.):** `obtenerConfigTurnos`/`guardarConfigTurnos`. Tipos `TurnosConfig`, `FranjaTurno`. Ruta `/caja/turnos-config` (GET/PUT).
+  - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos` (+ invalidación de cache), `actualizarCatalogo`.
 - `pos-store.ts` — estado global (Context + useReducer).
 - `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO, EXCLUYE cancelados), semáforo, `anularAbono()` wrapper de ruta PATCH.
 - `proveedores.ts` — **FACHADA ASYNC** sobre BD (`/caja/proveedores/*`). Tipos preservados (Proveedor, FacturaCredito, EstadoFactura). Lógica de negocio pura en cliente (`diasRestantes`, `estadoFactura`/semáforo, `fechaVencimientoISO`). Funciones `*Local` solo para migración desde localStorage.
+- `monedero.ts` — **MOTOR COMPARTIDO** de cálculo de puntos (backend-concept/UI). Funciones `tasaDeLinea(linea, reglas, catalogos?)` (recibe `LineaPuntos` completo con marca/categoria/departamento REALES, resuelve por orden: marca → categoría → departamento → base, fallback a catálogos si faltan), `redondearPuntos()` (aplica modo), `calcularPuntosGanados()` (por línea, cap servidor). Tipos `LineaPuntos` (subtotal + marca? + categoria? + departamento?). Consumido por ModalCobro (preview), ReglaDrawer (validación), /caja/ventas POST (cálculo transaccional).
 - `serial.ts` — impresora ESC/POS + cajón (Chrome/Web Serial).
 - `unidades-sat.ts` — unidades de medida SAT.
 
@@ -359,18 +371,20 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 
 | Método | Ruta | Propósito |
 |--------|-------|---------|
-| POST | `/caja/login` | Valida `{ usuario_id, pin }` server-side. Devuelve el usuario SIN pin, o 401. **NO** exige token POS (es el punto de entrada). |
-| GET | `/caja/productos` | Búsqueda de producto para POS (q, sku, category_id, departamento). Búsqueda fonética español. Devuelve stock + precio. |
+| POST | `/caja/login` | Valida `{ usuario_id, pin }` server-side. Devuelve usuario (sin pin) + caja_id/nombre. Carga cajas disponibles si falta asignación. **NO** exige token POS (es el punto de entrada). |
+| GET | `/caja/productos` | Búsqueda de producto para POS (q, sku, category_id, departamento). **NUEVO:** devuelve `departamento` + `categoria` (metadata) además de stock/precio, para cálculo real de puntos. |
 | GET | `/caja/categorias` | Lista categorías + departamentos extraídos de metadata. |
-| POST | `/caja/ventas` | Registra venta. Bajo lock de archivo: valida stock → decrementa (con reversión ante error) → genera folio → persiste atómico. |
-| GET | `/caja/ventas` | Lista ventas. Opcional `?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`. Más reciente primero. Usado por SalesHistory. |
+| POST | `/caja/ventas` | Registra venta. Bajo lock: valida stock → decrementa (reversión ante error) → genera folio → devengo+canje transaccionales en monedero + carga a cartera (si aplica) → persiste atómico. **NUEVO:** persiste `caja_id`, `caja_name`, `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items. Campos `puntos_ganados`/`puntos_canjeados`/`pago_puntos` transaccionales. |
+| GET | `/caja/ventas` | Lista ventas. Opcional `?desde=YYYY-MM-DD&hasta=YYYY-MM-DD`. Más reciente primero. **NUEVO:** cada venta incluye `caja_id`, `vendedor`, `pago_tarjeta`, items con `departamento`/`categoria`. |
 | GET | `/caja/ventas/:folio` | Una venta por folio. 404 si no existe. |
-| PATCH | `/caja/ventas/:folio` | Cancela una venta. Body `{ estado:"cancelada", motivo }`. Reintegra inventario (requiere `sku` en items). Idempotente. |
-| GET | `/caja/corte` | Resumen de ventas de un turno (cajero + turno_id). |
-| POST | `/caja/corte` | Cierra turno (idempotente). |
-| GET/POST/PUT/DELETE | `/caja/usuarios` | CRUD de usuarios POS. GET omite `pin`; `?admin=1` + token admin lo incluye (EmployeesModule). Valida PIN duplicado. Exige ≥1 admin activo. |
-| GET/POST/PUT/DELETE | `/caja/pedidos` | CRUD de pedidos a proveedor (`pedidos-pos.json`). POST genera id + folio secuencial server-side. Consumido por PedidosModule. |
-| GET/POST/PUT/DELETE | `/caja/articulos` | CRUD de artículos (ArticlesModule). POST/PUT validan clave/descripcion/precios; DELETE verifica existencia. `?faltantes=1` = items bajo `inventarioMin`. |
+| PATCH | `/caja/ventas/:folio` | Cancela una venta. Body `{ estado:"cancelada", motivo }`. **MEJORADO:** revierte puntos ganados/canjeados (soft-cancel en BD monedero), reintegra inventario. Idempotente. |
+| GET | `/caja/corte` | **REFACTORIZADO:** resumen de ventas por CAJA (no cajero/turno). Query `?caja_id=` obligatorio. Período continuo desde último corte cerrado (no hoy ni fijo a las 14h). Respuesta: `{ caja_id, periodo_desde, franja_id?, modo, ventas_total, ventas_efectivo, ventas_transferencia, ventas_credito, ventas_tarjeta?, movimientos_total, movimientos_entrada, movimientos_salida, ... }`. |
+| POST | `/caja/corte` | **REFACTORIZADO:** cierra período de caja. Body: `{ caja_id, fecha_cierre }`. Snapshots `CorteCerrado` por `(caja_id, periodo_desde)` en `cortes-pos.json`. Idempotente. |
+| GET | `/caja/cortes-pendientes` | **NUEVO:** lista cajas con ventas posteriores a su último corte cerrado. Consumido por banner/tablero en CorteModule. |
+| GET/PUT | `/caja/turnos-config` | **NUEVO:** lee/escribe config de turnos en `turnos-config.json`: `{ modo: "dia"|"turnos", franjas: [{id, nombre, desde, hasta}] }`. Helper server-side `lib/turnos.ts` resuelve `franjaDeTimestamp()`. |
+| GET/POST/PUT/DELETE | `/caja/usuarios` | CRUD de usuarios POS. GET omite `pin`; `?admin=1` + token admin lo incluye. **NUEVO:** persiste `caja_id` (asignación física) y `horario?: {dias, entrada, salida, turno_id}` (informativo). Valida PIN duplicado. Exige ≥1 admin activo. |
+| GET/POST/PUT/DELETE | `/caja/pedidos` | CRUD de pedidos a proveedor (`pedidos-pos.json`). POST genera id + folio secuencial server-side. |
+| GET/POST/PUT/DELETE | `/caja/articulos` | CRUD de artículos. POST/PUT validan clave/descripcion/precios; DELETE verifica existencia. `?faltantes=1` = items bajo `inventarioMin`. |
 | GET/PUT | `/caja/ticket-config` | Encabezado/pie/opciones del ticket. Migra campos legacy. |
 | POST | `/caja/imagen` | Sube thumbnail base64 vía Medusa File Module. Devuelve `{ url }`. |
 | POST | `/caja/ajuste-inventario` | Corrección masiva de stock por SKU. Body: `{ ajustes: [{ sku, nueva_cantidad }] }`. |
@@ -550,9 +564,10 @@ Las skills viven en `.claude/skills/`. Carga la que corresponda antes de trabajo
 - **`/caja/*` no debe importar el paquete `cors`**: el proxy de Vite ya resuelve cross-origin en dev. Agregar `import cors from 'cors'` falla en runtime porque el paquete no está instalado en el workspace de Medusa.
 - **Precios en Medusa 2.x no son relación directa**: `ProductVariant` no tiene propiedad `prices`. Obtén precios vía `query.graph` con `entity: "product_variant"` e ids de variante como query separada.
 - **Web Serial API = solo Chrome**: el cajón y la impresión ESC/POS directa en `serial.ts` requieren Chrome (o Chromium). Las terminales POS deben usar Chrome.
-- **Clientes + cartera → BD (Fase 3 completa)**: `clientes.ts` es ahora una fachada async sobre `/caja/clientes/*` y `/caja/cartera/*` (BD Medusa). Datos compartidos entre terminales. Migración desde localStorage vía componente `MigracionNube.tsx` + ruta `/caja/migrar-localstorage`.
+- **Clientes + cartera + monedero → BD (Fase 3 completa)**: `clientes.ts` es ahora una fachada async sobre `/caja/clientes/*` y `/caja/cartera/*` (BD Medusa). `monedero.ts` es un motor compartido (backend-concept/UI) + tablas `ferremex_monedero` con MovimientoMonedero auditable. Devengo + canje transaccionales en POST `/caja/ventas` dentro del lock. El nivel del cliente se DERIVA (no almacena) del período de compras. Datos compartidos entre terminales.
 - **Proveedores + cajas → BD (Fase 3 cont.)**: `proveedores.ts` es ahora una fachada async sobre `/caja/proveedores/*` (módulo `ferremex_proveedores`). El catálogo de cajas vive en `/caja/cajas` (módulo `ferremex_cajas`); la asignación caja↔empleado se guarda como `caja_id` en el usuario. Migración desde localStorage vía `MigracionProveedoresCajas.tsx` + ruta `/caja/migrar-proveedores-cajas`. Las keys legacy `pos_proveedores`/`pos_cajas_catalogo`/`pos_cajas_asignaciones` solo se leen en el migrador.
 - **Pluralización inglesa de Medusa en `ferremex_proveedores`**: el modelo `Proveedor` genera métodos `listProveedors`/`createProveedors` (NO `Proveedores`), igual que `MovimientoCartera`→`listMovimientoCarteras`. Usa la forma que genera Medusa, no el plural español.
+- **Pluralizador de `ferremex_monedero`**: el runtime genera "Monederos" (un -s), pero el codegen sugiere "Monederoes" (mismatch). Se resolvió con interface merge en `service.ts` declarando las firmas runtime correctas. ReglaPuntos NO necesita merge (su pluralizador coincide).
 - **Compras/Pedidos enlazados al proveedor por ID real**: `ComprasModule`/`ComprasTable` y `PedidosModule`/`PedidosTabla` cargan el catálogo de proveedores async desde la BD (`loadProveedores()`) y el selector trabaja con `proveedor.id` real. Las compras persisten `proveedorId` en su registro; los pedidos lo envían a `/caja/pedidos` (que ya lo persistía). La factura por pagar de una compra a crédito usa `agregarFactura(proveedor.id, …)` con el id real. Solo registros NUEVOS llevan ID — los históricos conservan solo el nombre string.
 - **POS montado como módulo `vendor-ui`** en `medusa-config.ts` con `viteDevServerPort: 7002` (`@ts-expect-error` suprime la opción no estándar). El puerto debe coincidir con el flag `--port 7002` del script `dev` de `apps/pos/package.json`.
 - **Orden de arranque PM2 importa**: `ferremex-admin` y `ferremex-pos` (Vite) deben estar corriendo antes que `ferremex-api`. El API proxea ambos — si Vite está caído al arrancar, `/dashboard` y `/pos` dan errores.

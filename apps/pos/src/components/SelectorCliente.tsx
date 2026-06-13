@@ -1,8 +1,9 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { UserRound } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 import { loadClientes, type Cliente } from "../lib/clientes"
+import { obtenerDetalleMonederoAPI, precargarMonederoGlobal } from "../lib/client"
 
 export function SelectorCliente() {
   const { state, dispatch } = usePOS()
@@ -12,8 +13,22 @@ export function SelectorCliente() {
   // Cargar clientes frescos desde la BD cada vez que se abre el panel
   const [clientes, setClientes] = useState<Cliente[]>([])
   const [cargando, setCargando] = useState(false)
+  // Saldo de puntos del cliente activo (Monedero Electrónico). Cero clics extra
+  // para el cajero: se carga al seleccionar un cliente inscrito y se muestra en
+  // el chip. Opcional: si falla o el cliente no tiene monedero, no se muestra.
+  const [puntosActivo, setPuntosActivo] = useState<number | null>(null)
 
   const cliente = state.clienteActivo
+
+  useEffect(() => {
+    if (!cliente?.monedero) { setPuntosActivo(null); return }
+    let on = true
+    ;(async () => {
+      try { const d = await obtenerDetalleMonederoAPI(cliente.id); if (on) setPuntosActivo(d.saldo) }
+      catch { if (on) setPuntosActivo(null) }
+    })()
+    return () => { on = false }
+  }, [cliente?.id, cliente?.monedero])
 
   // Filtra en tiempo real mientras escribe
   const resultados = busqueda.trim()
@@ -44,8 +59,20 @@ export function SelectorCliente() {
     setBusqueda("")
   }
 
+  // Cerrar el panel con Escape (igual que el clic en el overlay).
+  useEffect(() => {
+    if (!abierto) return
+    const fn = (e: KeyboardEvent) => { if (e.key === "Escape") cerrar() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [abierto])
+
   function seleccionar(c: Cliente | null) {
     dispatch({ type: "SET_CLIENTE", cliente: c })
+    // Warm-up del monedero: si el cliente está inscrito, precarga config/reglas/
+    // taxonomía YA (caché en memoria) para que el preview de puntos en el cobro
+    // aparezca al instante en vez de tras 2-3s de red al abrir el modal.
+    if (c?.monedero) precargarMonederoGlobal(c.id)
     cerrar()
   }
 
@@ -70,7 +97,9 @@ export function SelectorCliente() {
               #{cliente.num_cliente}
               {" · "}Precio {cliente.num_precio}
               {cliente.grupo ? ` · ${cliente.grupo}` : ""}
-              {cliente.monedero ? " · 💰 Monedero" : ""}
+              {cliente.monedero
+                ? ` · 🪙 ${puntosActivo != null ? `${puntosActivo.toLocaleString("es-MX")} pts` : "Monedero"}`
+                : ""}
             </span>
           </div>
         ) : (

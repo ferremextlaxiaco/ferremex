@@ -22,6 +22,15 @@ function asignarColores(depts) {
 // severity: "rename" | "changeParent" | "deleteBlocked" | "deleteEmpty"
 
 function ConfirmModal({ modal, onClose, onGotoReasign }) {
+  // Cerrar con Escape (igual que el botón "Cancelar" / clic en el overlay).
+  // El hook va antes del early-return para no romper las reglas de hooks.
+  useEffect(() => {
+    if (!modal) return
+    const fn = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [modal, onClose])
+
   if (!modal) return null
   const { severity, title, body, affectedCount, affectedSample, onConfirm } = modal
 

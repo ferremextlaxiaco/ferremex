@@ -1,4 +1,4 @@
-import { useRef } from "react"
+import { useRef, useEffect } from "react"
 import { X, Package } from "lucide-react"
 
 function buildSheetHTML(rows, proveedor, fecha, folio) {
@@ -61,6 +61,13 @@ function buildSheetHTML(rows, proveedor, fecha, folio) {
 
 export default function PedidosPreview({ rows, proveedor, fecha, folio, onClose }) {
   const sheetRef = useRef(null)
+
+  // Cerrar con Escape (igual que el botón "Cerrar").
+  useEffect(() => {
+    const fn = (e) => { if (e.key === "Escape") onClose() }
+    window.addEventListener("keydown", fn)
+    return () => window.removeEventListener("keydown", fn)
+  }, [onClose])
 
   const totalArts   = rows.length
   const totalPiezas = rows.reduce((s, r) => s + r.cantidad, 0)
