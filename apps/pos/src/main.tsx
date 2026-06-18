@@ -13,6 +13,7 @@ import { AdminClientesLista } from "./pages/AdminClientesLista"
 import CarteraCredito from "./pages/CarteraCredito"
 import { AdminArticulos } from "./pages/AdminArticulos"
 import { AdminPaquetes } from "./pages/AdminPaquetes"
+import { AdminFacturable } from "./pages/AdminFacturable"
 import { AdminPromociones } from "./pages/AdminPromociones"
 import { AdminInventario } from "./pages/AdminInventario"
 import { AdminProveedores } from "./pages/AdminProveedores"
@@ -51,6 +52,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="cartera-credito" element={<CarteraCredito />} />
             <Route path="articulos" element={<AdminArticulos />} />
             <Route path="paquetes" element={<AdminPaquetes />} />
+            <Route path="facturable" element={<AdminFacturable />} />
             <Route path="promociones" element={<AdminPromociones />} />
             <Route path="inventario" element={<AdminInventario />} />
             <Route path="proveedores" element={<AdminProveedores />} />

@@ -229,6 +229,20 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   letter-spacing: 2px;
 }
 
+/* Bloque izquierdo del header: marca + fecha/turno juntos (space-between los
+   trata como un solo grupo a la izquierda). */
+.pos-header-izquierda {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* Fecha/turno al lado de la marca: contexto secundario, gris y tabular. */
+.pos-marca-turno {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
 .pos-header-centro {
   flex: 1;
   display: flex;
@@ -259,6 +273,44 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .pos-header-btn:hover { background: var(--bg-hover); border-color: var(--border); color: var(--text); }
 .pos-header-btn svg { flex-shrink: 0; }
 .pos-header-btn--salir:hover { background: var(--red-dim); border-color: rgba(220,38,38,0.3); color: var(--red); }
+
+/* Menú "Sesión": botón + desplegable (Cambiar usuario / Cerrar sesión). */
+.pos-sesion-menu-wrap { position: relative; }
+.pos-sesion-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 190px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  padding: 5px;
+  z-index: 500;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pos-sesion-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-soft);
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.pos-sesion-menu-item:hover { background: var(--bg-hover); color: var(--text); }
+.pos-sesion-menu-item svg { flex-shrink: 0; }
+.pos-sesion-menu-item--salir { color: var(--red); }
+.pos-sesion-menu-item--salir:hover { background: var(--red-dim); }
 
 .pos-cajero {
   font-size: 14px;
@@ -3715,7 +3767,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ---- Contenedor principal ---- */
 .ar-root {
-  padding: 24px;
+  /* Menos aire arriba: el título queda más cerca del topbar (laterales/inferior
+     conservan los 24px de respiración). */
+  padding: 12px 24px 24px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -3742,6 +3796,23 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+/* Título del header: no se encoge (la búsqueda del medio absorbe el espacio). */
+.ar-header-titulo { flex-shrink: 0; }
+
+/* Búsqueda en línea con el título: ocupa el espacio central y crece. */
+.ar-header-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  margin: 0 16px;
+}
+.ar-header-search .ar-search-input-wrap {
+  flex: 1;
+  max-width: 460px;
 }
 
 /* ---- Botones toolbar ---- */
@@ -7846,7 +7917,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 @media (max-width: 1100px) {
   .cmd-btn span:not(.cmd-badge) { display: none; }   /* solo iconos */
   .cmd-btn { padding: 0 12px; }
-  .pos-sesion-turno, .pos-sesion-sep:last-of-type { display: none; }
+  /* Oculta el turno del bloque derecho para compactar, pero la fecha junto a la
+     marca (izquierda) se conserva: tiene espacio y es el contexto principal. */
+  .pos-header-derecha .pos-sesion-turno, .pos-sesion-sep:last-of-type { display: none; }
 }
 
 /* ============================================================

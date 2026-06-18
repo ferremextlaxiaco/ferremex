@@ -210,6 +210,10 @@ export default function ComprasModule() {
   const [fecha,      setFecha]      = useState(_primerVez ? new Date().toISOString().slice(0, 10) : (_inicial.fecha ?? new Date().toISOString().slice(0, 10)))
   const [status,     setStatus]     = useState(_primerVez ? "borrador" : (_inicial.status ?? "borrador"))
   const [numFactura, setNumFactura] = useState(_primerVez ? "" : (_inicial.numFactura ?? ""))
+  // Tipo de documento de la compra: "Factura" (con respaldo fiscal → recarga el
+  // saldo facturable de cada artículo) o "Nota" (nota de venta, sin respaldo →
+  // solo entra al stock físico). Ver módulo ferremex_facturable.
+  const [tipoDoc,    setTipoDoc]    = useState(_primerVez ? "Factura" : (_inicial.tipoDoc ?? "Factura"))
   const [pausadas,         setPausadas]         = useState(cargarPausadas)
   const [showPausadas,     setShowPausadas]     = useState(false)
   const [pagoModal,        setPagoModal]        = useState(null)
@@ -252,8 +256,8 @@ export default function ComprasModule() {
 
   // Siempre guarda (incluso cuando está vacío) para que al recargar no vuelvan los datos de prueba
   useEffect(() => {
-    localStorage.setItem(KEY_ACTUAL, JSON.stringify({ rows, proveedor, fecha, status, numFactura }))
-  }, [rows, proveedor, fecha, status, numFactura])
+    localStorage.setItem(KEY_ACTUAL, JSON.stringify({ rows, proveedor, fecha, status, numFactura, tipoDoc }))
+  }, [rows, proveedor, fecha, status, numFactura, tipoDoc])
 
   // Guarda lista de compras en espera en cada cambio
   useEffect(() => {
@@ -381,6 +385,7 @@ export default function ComprasModule() {
         proveedor,
         fecha,
         numFactura,
+        tipoDoc,
         fecha_pausa: new Date().toISOString(),
         status,
       },
@@ -391,6 +396,7 @@ export default function ComprasModule() {
     setFecha(new Date().toISOString().slice(0, 10))
     setStatus("borrador")
     setNumFactura("")
+    setTipoDoc("Factura")
     showToast("Compra puesta en espera")
   }
 
@@ -410,6 +416,7 @@ export default function ComprasModule() {
     setFecha(p.fecha)
     setStatus(p.status)
     setNumFactura(p.numFactura ?? "")
+    setTipoDoc(p.tipoDoc ?? "Factura")
     setSelectedId(p.rows[0]?._id ?? null)
     setPausadas((prev) => prev.filter((x) => x.id !== p.id))
     setShowPausadas(false)
@@ -488,7 +495,7 @@ export default function ComprasModule() {
       // se conserva para mostrar/compatibilidad; el id es la referencia estable.
       proveedorId: proveedor?.id ?? null,
       fecha,
-      tipo:     "Factura",
+      tipo:     tipoDoc, // "Factura" (recarga saldo facturable) | "Nota"
       estado:   "Recibida",
       articulos: rows.map(r => ({
         codigo:       r.clave         || "",
@@ -523,6 +530,7 @@ export default function ComprasModule() {
     setFecha(new Date().toISOString().slice(0, 10))
     setStatus("borrador")
     setNumFactura("")
+    setTipoDoc("Factura")
     showToast("Compra confirmada")
     setPagoModal(null)
   }
@@ -538,19 +546,19 @@ export default function ComprasModule() {
       pedirConfirm("¿Iniciar una nueva compra? Se perderá la compra actual si no la guardas.", () => {
         limpiarSnapshots()
         setRows([]); setSelectedId(null); setProveedor(null)
-        setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
+        setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura(""); setTipoDoc("Factura")
       })
       return
     }
     limpiarSnapshots()
     setRows([]); setSelectedId(null); setProveedor(null)
-    setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura("")
+    setFecha(new Date().toISOString().slice(0, 10)); setStatus("borrador"); setNumFactura(""); setTipoDoc("Factura")
   }
 
   function handleCancelar() {
     pedirConfirm("¿Cancelar esta compra? Esta acción no se puede deshacer.", () => {
       limpiarSnapshots()
-      setRows([]); setSelectedId(null); setStatus("borrador"); setNumFactura("")
+      setRows([]); setSelectedId(null); setStatus("borrador"); setNumFactura(""); setTipoDoc("Factura")
       showToast("Compra cancelada")
     })
   }
@@ -1067,6 +1075,8 @@ export default function ComprasModule() {
           onFechaChange={setFecha}
           numFactura={numFactura}
           onNumFacturaChange={setNumFactura}
+          tipoDoc={tipoDoc}
+          onTipoDocChange={setTipoDoc}
           status={status}
           subtotal={subtotal}
           ivaTotal={ivaTotal}

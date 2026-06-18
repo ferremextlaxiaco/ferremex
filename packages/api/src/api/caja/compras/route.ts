@@ -1,6 +1,8 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_COMPRAS } from "../../../modules/ferremex-compras"
 import type FerremexComprasService from "../../../modules/ferremex-compras/service"
+import { FERREMEX_FACTURABLE } from "../../../modules/ferremex-facturable"
+import type FerremexFacturableService from "../../../modules/ferremex-facturable/service"
 
 /**
  * /caja/compras — historial de compras (recepciones) del POS.
@@ -103,6 +105,34 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     )
     // Releer con artículos para devolver el shape completo.
     const [completa] = await service.listarComprasConArticulos({ id: (creada as any).id })
+
+    // ── Recarga del SALDO FACTURABLE (doble inventario fiscal) ──────────────
+    // Si la compra es "Con Factura", cada artículo recibido suma su cantidad al
+    // saldo facturable (piezas con respaldo fiscal). Las compras "Nota de venta"
+    // NO suman (entran solo al stock físico). Best-effort: un fallo aquí no debe
+    // tumbar el registro de la compra (que ya se persistió).
+    const tipoCompra = (body.tipo ?? "Factura").toString().trim().toLowerCase()
+    const esConFactura = tipoCompra === "factura"
+    if (esConFactura) {
+      try {
+        const facturable: FerremexFacturableService = req.scope.resolve(FERREMEX_FACTURABLE)
+        const folioCompra = String(body.folio).trim()
+        for (const a of body.articulos ?? []) {
+          const sku = (a.codigo ?? "").toString().trim()
+          const cant = Number(a.cantidad) || 0
+          if (!sku || cant <= 0) continue
+          await facturable.recargar(sku, cant, {
+            folio_ref: folioCompra,
+            motivo: `Compra con factura ${folioCompra}`,
+            descripcion: a.nombre ?? null,
+            departamento: a.departamento ?? null,
+          })
+        }
+      } catch (e: any) {
+        console.error("[caja/compras] recarga de saldo facturable falló:", e?.message ?? e)
+      }
+    }
+
     res.status(201).json(aCompraPOS(completa ?? creada))
   } catch (e: any) {
     // folio único en BD: si choca (race entre terminales), devolver 409 con el

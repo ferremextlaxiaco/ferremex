@@ -724,6 +724,14 @@ export type Routes = {
         cotizaciones: typeof import("../../src/api/caja/cotizaciones/route") & {
             $folio: typeof import("../../src/api/caja/cotizaciones/[folio]/route");
         };
+        facturable: typeof import("../../src/api/caja/facturable/route") & {
+            deptos: typeof import("../../src/api/caja/facturable/deptos/route");
+        };
+        facturama: {
+            factura: typeof import("../../src/api/caja/facturama/factura/route") & {
+                $folio: typeof import("../../src/api/caja/facturama/factura/[folio]/route");
+            };
+        };
         folioContador: typeof import("../../src/api/caja/folio-contador/route");
         generarOc: typeof import("../../src/api/caja/generar-oc/route");
         grupos: typeof import("../../src/api/caja/grupos/route");

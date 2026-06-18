@@ -1,6 +1,8 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { FERREMEX_COMPRAS } from "../../../../modules/ferremex-compras"
 import type FerremexComprasService from "../../../../modules/ferremex-compras/service"
+import { FERREMEX_FACTURABLE } from "../../../../modules/ferremex-facturable"
+import type FerremexFacturableService from "../../../../modules/ferremex-facturable/service"
 import { aCompraPOS } from "../route"
 
 /** /caja/compras/:id — cancelación de una compra. */
@@ -36,6 +38,34 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
         cancelada_el: new Date().toISOString(),
         motivo_cancelacion: motivo,
       })
+
+      // Reversa del SALDO FACTURABLE: si la compra cancelada era "Con Factura",
+      // las piezas que sumó al saldo facturable se restan (ya no hay respaldo
+      // fiscal). Cargamos sus artículos para conocer cantidades por SKU.
+      // Best-effort: no debe impedir la cancelación de la compra.
+      const tipo = ((compra as any).tipo ?? "Factura").toString().trim().toLowerCase()
+      if (tipo === "factura") {
+        try {
+          const facturable: FerremexFacturableService = req.scope.resolve(FERREMEX_FACTURABLE)
+          const [conArts] = await service.listarComprasConArticulos({ id })
+          const folioRef = String((compra as any).folio ?? "")
+          for (const a of (conArts as any)?.articulos ?? []) {
+            const sku = (a.codigo ?? "").toString().trim()
+            const cant = Number(a.cantidad) || 0
+            if (!sku || cant <= 0) continue
+            // Resta del saldo (movimiento "ajuste" negativo, motivo claro).
+            await facturable.aplicarMovimiento({
+              sku,
+              tipo: "ajuste",
+              cantidad: -cant,
+              folio_ref: folioRef,
+              motivo: `Cancelación de compra con factura ${folioRef}`,
+            })
+          }
+        } catch (e: any) {
+          console.error("[caja/compras/:id] reversa de saldo facturable falló:", e?.message ?? e)
+        }
+      }
     }
     const [actualizada] = await service.listarComprasConArticulos({ id })
     res.json(aCompraPOS(actualizada))

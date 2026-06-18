@@ -243,9 +243,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         // del frontend; el backend valida el canje y registra ambos movimientos).
         ...(pPuntos > 0 ? { pago_puntos: pPuntos } : {}),
         ...(puntosAGanar > 0 ? { puntos_ganados: puntosAGanar } : {}),
-        // El cliente se envía si hay crédito, pago con puntos o puntos a ganar
-        // (cualquiera ata el movimiento a su cuenta).
-        ...((pCredito > 0 || pPuntos > 0 || puntosAGanar > 0) && ventaCliente
+        // El cliente se envía SIEMPRE que haya uno seleccionado (no solo cuando
+        // hay crédito/puntos). Así la venta queda atribuida al cliente —necesario
+        // para facturar nominativo y para distinguir en el historial—. El `plazo`
+        // solo aplica cuando hay cargo a crédito.
+        ...(ventaCliente
           ? {
               cliente_id: ventaCliente.id,
               cliente_nombre: ventaCliente.nombre,

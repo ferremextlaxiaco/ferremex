@@ -88,6 +88,11 @@ export interface VentaResponse {
   puntos_canjeados?: number
   puntos_ganados?: number
   cambio: number
+  // Cliente al que se hizo la venta (si lo hubo). Lo devuelve el backend desde
+  // el registro; es la fuente de verdad para facturar (no el clienteActivo del
+  // estado, que se resetea al terminar la venta).
+  cliente_id?: string | null
+  cliente_nombre?: string | null
 }
 
 export interface VentaRegistro {
@@ -984,6 +989,11 @@ export async function siguienteNumClienteAPI(): Promise<string> {
   return r.num_cliente
 }
 
+/** Obtiene un cliente completo por id (incluye datos fiscales). */
+export async function obtenerClienteAPI(id: string): Promise<Cliente> {
+  return apiFetch<Cliente>(`/caja/clientes/${encodeURIComponent(id)}`)
+}
+
 export async function crearClienteAPI(cliente: Omit<Cliente, "id">): Promise<Cliente> {
   return apiFetch<Cliente>("/caja/clientes", {
     method: "POST",
@@ -1352,6 +1362,145 @@ export async function cancelarCompraAPI(id: string, motivo: string): Promise<Com
     method: "PATCH",
     body: JSON.stringify({ estado: "Cancelada", motivo }),
   })
+}
+
+// ── Saldo facturable (módulo ferremex_facturable) ─────────────────────────────
+// Doble inventario fiscal: cada artículo lleva un contador de piezas con respaldo
+// de factura de compra + clave SAT, independiente del stock físico. Sube al
+// recibir compras "Con Factura" (automático en /caja/compras), baja solo al
+// FACTURAR. La factura global del día excluye artículos sin respaldo. El depto
+// define si es facturable; el artículo limita la cantidad. Consumido por el tab
+// "Facturable" de ArticlesModule.
+
+/** Saldo facturable de un artículo (piezas con respaldo fiscal). */
+export interface SaldoFacturableAPI {
+  sku: string
+  saldo: number
+  clave_sat: string | null
+  descripcion: string | null
+  departamento: string | null
+  actualizado_el: string | null
+}
+
+/** Respuesta de GET /caja/facturable: saldos + mapa de departamentos facturables. */
+export interface FacturableData {
+  saldos: SaldoFacturableAPI[]
+  /** { nombreDepto: facturable }. Depto ausente = no facturable. */
+  deptos: Record<string, boolean>
+}
+
+/** Carga todos los saldos facturables + el mapa de departamentos facturables. */
+export async function listarFacturableAPI(): Promise<FacturableData> {
+  return apiFetch<FacturableData>("/caja/facturable")
+}
+
+/**
+ * Ajuste MANUAL del saldo facturable de un artículo (fija el saldo a `nuevoSaldo`,
+ * el backend registra el delta como movimiento auditable). Requiere clave SAT si
+ * el nuevo saldo es > 0. Devuelve el saldo resultante.
+ */
+export async function ajustarSaldoFacturableAPI(input: {
+  sku: string
+  nuevo_saldo: number
+  motivo?: string
+  clave_sat?: string | null
+  descripcion?: string | null
+  departamento?: string | null
+}): Promise<{ sku: string; saldo: number }> {
+  return apiFetch<{ sku: string; saldo: number }>("/caja/facturable", {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+/** Marca/desmarca un departamento como facturable (upsert). */
+export async function marcarDeptoFacturableAPI(
+  departamento: string,
+  facturable: boolean
+): Promise<{ departamento: string; facturable: boolean }> {
+  return apiFetch<{ departamento: string; facturable: boolean }>("/caja/facturable/deptos", {
+    method: "POST",
+    body: JSON.stringify({ departamento, facturable }),
+  })
+}
+
+// ── Facturación CFDI 4.0 (Facturama, módulo backend lib/facturama) ────────────
+// El timbrado vive 100% en el backend (credenciales/CSD nunca tocan el navegador).
+// El POS solo conoce el FOLIO de la venta; el backend resuelve el cliente, las
+// claves SAT por SKU y el cfdi_id de Facturama. Consumido por FacturarBoton
+// (Ticket + SalesHistory).
+
+/** Datos de la factura de una venta, una vez timbrada. */
+export interface FacturaVenta {
+  cfdi_id: string
+  uuid: string | null
+  fecha: string
+  receptor_rfc: string
+  receptor_nombre: string
+  total: number | null
+  cancelada?: boolean
+}
+
+/** Estado de facturación de una venta. */
+export interface EstadoFactura {
+  folio: string
+  facturada: boolean
+  factura: FacturaVenta | null
+}
+
+/**
+ * Timbra una venta NOMINATIVA (cliente con RFC). El backend toma el cliente de la
+ * venta (o el cliente_id explícito). Devuelve la factura timbrada. Idempotente:
+ * si ya estaba facturada, devuelve `{ ya_facturada: true, factura }`.
+ */
+export async function facturarVentaAPI(
+  folio: string,
+  clienteId?: string
+): Promise<{ factura: FacturaVenta; ya_facturada?: boolean; skus_sin_clave?: string[] }> {
+  return apiFetch("/caja/facturama/factura", {
+    method: "POST",
+    body: JSON.stringify({ folio, cliente_id: clienteId }),
+  })
+}
+
+/** Estado de facturación de una venta (sin timbrar nada). */
+export async function estadoFacturaAPI(folio: string): Promise<EstadoFactura> {
+  return apiFetch<EstadoFactura>(`/caja/facturama/factura/${encodeURIComponent(folio)}`)
+}
+
+/**
+ * Descarga el PDF o XML del CFDI de una venta. La respuesta es binaria (no JSON),
+ * así que va por fetch directo + blob.
+ *
+ * Usa un <a download> programático en vez de window.open: abrir una pestaña tras
+ * un `await` lo bloquea el navegador (no es un gesto directo del usuario), lo que
+ * causaba que "a veces" no respondiera. El PDF se abre en pestaña (target _blank)
+ * y el XML se descarga como archivo. El descargado dispara el visor del navegador
+ * de forma confiable.
+ */
+export async function abrirArchivoFacturaAPI(folio: string, formato: "pdf" | "xml"): Promise<void> {
+  const res = await fetch(`/caja/facturama/factura/${encodeURIComponent(folio)}?formato=${formato}`, {
+    headers: posHeaders(),
+  })
+  if (!res.ok) {
+    let msg = `No se pudo descargar el ${formato.toUpperCase()}`
+    try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* respuesta no-JSON */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  if (formato === "pdf") {
+    a.target = "_blank"             // PDF: lo abre el visor del navegador
+    a.rel = "noopener"
+  } else {
+    a.download = `${folio}.xml`     // XML: descarga directa como archivo
+  }
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
 // ── Monedero Electrónico (módulo ferremex_monedero) ───────────────────────────

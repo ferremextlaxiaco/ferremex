@@ -32,7 +32,7 @@ export function Admin() {
     ? "clientes"
     : path.includes("/admin/monedero")
     ? "monedero"
-    : path.includes("/admin/articulos") || path.includes("/admin/paquetes")
+    : path.includes("/admin/articulos") || path.includes("/admin/paquetes") || path.includes("/admin/facturable")
     ? "articulos"
     : path.includes("/admin/promociones")
     ? "promociones"
@@ -74,11 +74,11 @@ export function Admin() {
           </button>
         </div>
 
-        {/* Pestañas Artículos | Paquetes — solo visibles en esas secciones */}
+        {/* Pestañas Artículos | Paquetes | Facturable — solo en esas secciones */}
         {tab === "articulos" && (
           <div className="admin-topbar-tabs">
             <button
-              className={`admin-topbar-tab${path.includes("/admin/paquetes") ? "" : " active"}`}
+              className={`admin-topbar-tab${path.includes("/admin/articulos") ? " active" : ""}`}
               onClick={() => navigate("/admin/articulos")}
             >
               Artículos
@@ -88,6 +88,12 @@ export function Admin() {
               onClick={() => navigate("/admin/paquetes")}
             >
               Paquetes
+            </button>
+            <button
+              className={`admin-topbar-tab${path.includes("/admin/facturable") ? " active" : ""}`}
+              onClick={() => navigate("/admin/facturable")}
+            >
+              Saldo facturable
             </button>
           </div>
         )}

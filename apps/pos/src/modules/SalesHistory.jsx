@@ -36,9 +36,9 @@ function startOfDay(d) {
 function isoToday() { return slugDate(new Date()) }
 
 function downloadCSV(rows) {
-  const header = ["Folio", "Fecha", "Cajero", "Total", "Efectivo", "Transferencia", "Tarjeta", "Crédito", "Cambio", "Estado"]
+  const header = ["Folio", "Fecha", "Cajero", "Cliente", "Total", "Efectivo", "Transferencia", "Tarjeta", "Crédito", "Cambio", "Estado"]
   const lines = [header.join(","), ...rows.map(v =>
-    [v.folio, v.fecha, v.cajero, v.total, v.pago_efectivo, v.pago_transferencia, v.pago_tarjeta ?? 0, v.pago_credito, v.cambio, v.estado ?? "vigente"].join(",")
+    [v.folio, v.fecha, v.cajero, `"${(v.cliente_nombre || "Público en general").replace(/"/g, '""')}"`, v.total, v.pago_efectivo, v.pago_transferencia, v.pago_tarjeta ?? 0, v.pago_credito, v.cambio, v.estado ?? "vigente"].join(",")
   )]
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
   const url = URL.createObjectURL(blob)
@@ -633,6 +633,25 @@ function metodoVenta(v) {
 
 // ── Venta card (detailed view) ─────────────────────────────────────────────────
 
+/**
+ * Chip de cliente de la venta: nombre del cliente (venta nominativa) o "Público
+ * en general" si no hubo cliente. Permite distinguir de un vistazo qué ventas
+ * son facturables a un cliente específico.
+ */
+function ClienteChip({ nombre }) {
+  const esNominativa = !!(nombre && String(nombre).trim())
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: 12, fontWeight: 600, padding: "1px 8px", borderRadius: 999,
+      background: esNominativa ? "rgba(234,88,12,0.10)" : "var(--bg-hover, #f3f4f6)",
+      color: esNominativa ? "#c2410c" : "var(--text-muted, #9ca3af)",
+    }}>
+      {esNominativa ? `🧾 ${nombre}` : "🧍 Público en general"}
+    </span>
+  )
+}
+
 function VentaCard({ v, onClick }) {
   const metodo = metodoVenta(v)
   const vigente = v.estado !== "cancelada"
@@ -660,10 +679,11 @@ function VentaCard({ v, onClick }) {
           )}
         </div>
         {/* Row 2 */}
-        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 3 }}>
+        <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 3, display: "flex", alignItems: "center", flexWrap: "wrap", gap: "2px 0" }}>
           <span style={{ marginRight: 12 }}>🕐 {fmtTime(v.fecha)}</span>
           <span style={{ marginRight: 12 }}>👤 {v.cajero}</span>
-          <span>💳 {metodo}</span>
+          <span style={{ marginRight: 12 }}>💳 {metodo}</span>
+          <ClienteChip nombre={v.cliente_nombre} />
         </div>
         {/* Row 3 — items preview */}
         <div style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
@@ -683,13 +703,14 @@ function VentaCard({ v, onClick }) {
 
 function CompactTable({ ventas, sort, onSort, onRowClick }) {
   const cols = [
-    { k: "folio",  label: "Folio" },
-    { k: "hora",   label: "Hora" },
-    { k: "cajero", label: "Cajero" },
-    { k: "metodo", label: "Pago" },
-    { k: "items",  label: "Art." },
-    { k: "total",  label: "Total" },
-    { k: "estado", label: "Estado" },
+    { k: "folio",   label: "Folio" },
+    { k: "hora",    label: "Hora" },
+    { k: "cajero",  label: "Cajero" },
+    { k: "cliente", label: "Cliente" },
+    { k: "metodo",  label: "Pago" },
+    { k: "items",   label: "Art." },
+    { k: "total",   label: "Total" },
+    { k: "estado",  label: "Estado" },
   ]
 
   const thStyle = (k) => ({
@@ -724,6 +745,9 @@ function CompactTable({ ventas, sort, onSort, onRowClick }) {
             <td style={{ ...tdStyle(), fontFamily: "monospace", fontSize: 12 }}>{v.folio}</td>
             <td style={tdStyle()}>{fmtTime(v.fecha)}</td>
             <td style={tdStyle()}>{v.cajero}</td>
+            <td style={{ ...tdStyle(), color: v.cliente_nombre ? "#c2410c" : "var(--text-muted)", fontWeight: v.cliente_nombre ? 600 : 400 }}>
+              {v.cliente_nombre ? v.cliente_nombre : "Público en general"}
+            </td>
             <td style={tdStyle()}>{metodoVenta(v)}</td>
             <td style={tdStyle()}>{v.items.length}</td>
             <td style={{ ...tdStyle(true), fontWeight: 700 }}>{fmt(v.total)}</td>
@@ -780,6 +804,12 @@ function SaleDrawer({ venta, onClose, onCancel }) {
           <div style={{ marginBottom: 16 }}>
             <div style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-muted)", marginBottom: 8 }}>Datos de la venta</div>
             <div style={rowStyle}><span style={labelC}>Cajero</span><span style={valueC}>{venta.cajero}</span></div>
+            <div style={rowStyle}>
+              <span style={labelC}>Cliente</span>
+              <span style={{ ...valueC, color: venta.cliente_nombre ? "#c2410c" : "var(--text-muted)", fontWeight: venta.cliente_nombre ? 600 : 400 }}>
+                {venta.cliente_nombre ? venta.cliente_nombre : "Público en general"}
+              </span>
+            </div>
             <div style={rowStyle}><span style={labelC}>Turno</span><span style={valueC}>{venta.turno_id}</span></div>
             <div style={rowStyle}><span style={labelC}>Método de pago</span><span style={valueC}>{metodo}</span></div>
             {venta.motivo_cancelacion && (
@@ -1114,6 +1144,7 @@ export default function SalesHistory() {
       if (sort.col === "folio") { av = a.folio; bv = b.folio }
       else if (sort.col === "hora") { av = a.fecha; bv = b.fecha }
       else if (sort.col === "cajero") { av = a.cajero; bv = b.cajero }
+      else if (sort.col === "cliente") { av = a.cliente_nombre || "￿"; bv = b.cliente_nombre || "￿" }
       else if (sort.col === "metodo") { av = metodoVenta(a); bv = metodoVenta(b) }
       else if (sort.col === "items") { av = a.items.length; bv = b.items.length }
       else if (sort.col === "total") { av = a.total; bv = b.total }

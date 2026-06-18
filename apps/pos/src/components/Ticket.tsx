@@ -13,6 +13,14 @@ interface TicketProps {
 }
 
 export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: TicketProps) {
+  // Cliente para facturar: la VENTA es la fuente de verdad (el clienteActivo del
+  // estado se resetea al terminar la venta, así que no sirve aquí). Si la venta
+  // trae cliente_id, construimos un cliente mínimo (el FacturarBoton hidrata el
+  // resto desde la BD). Fallback al prop `cliente` para cotizaciones/compat.
+  const clienteFactura: Cliente | null = venta.cliente_id
+    ? ({ id: venta.cliente_id, nombre: venta.cliente_nombre ?? "" } as Cliente)
+    : (cliente ?? null)
+
   // Cerrar la vista previa con Escape (igual que el botón "Cerrar").
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onImpreso() }
@@ -150,7 +158,7 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
             Cerrar
           </button>
           {/* Una cotización no se factura; solo ventas. */}
-          {!esCotizacion && <FacturarBoton folio={venta.folio} cliente={cliente} variant="full" />}
+          {!esCotizacion && <FacturarBoton folio={venta.folio} cliente={clienteFactura} variant="full" />}
           <button className="btn-confirmar" onClick={handleImprimir}>
             🖨 Imprimir {esCotizacion ? "cotización" : "ticket"}
           </button>

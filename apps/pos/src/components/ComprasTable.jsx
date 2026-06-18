@@ -47,7 +47,7 @@ const STATUS_META = {
 
 // ── Header: proveedor + fecha + status ────────────────────────────────────────
 
-function TableHeader({ proveedor, proveedores, onProveedorChange, fecha, onFechaChange, numFactura, onNumFacturaChange }) {
+function TableHeader({ proveedor, proveedores, onProveedorChange, fecha, onFechaChange, numFactura, onNumFacturaChange, tipoDoc, onTipoDocChange }) {
   return (
     <div className="cpx-table-header">
       {/* Proveedor */}
@@ -79,13 +79,43 @@ function TableHeader({ proveedor, proveedores, onProveedorChange, fecha, onFecha
         />
       </div>
 
-      {/* Núm. factura — alineado a la derecha */}
+      {/* Tipo de documento — define si recarga el saldo facturable */}
       <div className="cpx-th-field" style={{ marginLeft: "auto" }}>
-        <label className="cpx-th-label">Núm. factura</label>
+        <label className="cpx-th-label">Tipo de compra</label>
+        <div style={{ display: "inline-flex", border: "1px solid var(--at-border, #d1d5db)", borderRadius: 8, overflow: "hidden" }}>
+          {[
+            { v: "Factura", lbl: "Con factura" },
+            { v: "Nota",    lbl: "Nota de venta" },
+          ].map((opt) => {
+            const activo = (tipoDoc ?? "Factura") === opt.v
+            return (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => onTipoDocChange?.(opt.v)}
+                title={opt.v === "Factura"
+                  ? "Con factura de proveedor: suma al saldo facturable de cada artículo"
+                  : "Nota de venta: NO suma al saldo facturable (solo stock físico)"}
+                style={{
+                  padding: "7px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer", border: "none",
+                  background: activo ? "#ea580c" : "#fff",
+                  color: activo ? "#fff" : "#6b7280",
+                }}
+              >
+                {opt.lbl}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Núm. factura */}
+      <div className="cpx-th-field">
+        <label className="cpx-th-label">{(tipoDoc ?? "Factura") === "Nota" ? "Núm. nota" : "Núm. factura"}</label>
         <input
           type="text"
           className="cpx-th-select"
-          placeholder="Ej. F-2024-001"
+          placeholder={(tipoDoc ?? "Factura") === "Nota" ? "Ej. N-2024-001" : "Ej. F-2024-001"}
           value={numFactura ?? ""}
           onChange={(e) => onNumFacturaChange(e.target.value)}
           style={{ minWidth: 130 }}
@@ -179,6 +209,7 @@ export default function ComprasTable({
   proveedor, proveedores, onProveedorChange,
   fecha, onFechaChange,
   numFactura, onNumFacturaChange,
+  tipoDoc, onTipoDocChange,
   status,
   subtotal, ivaTotal, total,
   onPonerEnEspera, onConfirmar,
@@ -210,6 +241,8 @@ export default function ComprasTable({
         onFechaChange={onFechaChange}
         numFactura={numFactura}
         onNumFacturaChange={onNumFacturaChange}
+        tipoDoc={tipoDoc}
+        onTipoDocChange={onTipoDocChange}
       />
 
       {/* Scrollable table */}

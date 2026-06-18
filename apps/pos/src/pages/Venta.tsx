@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react"
-import { ShoppingCart, X, Settings, LogOut, RefreshCw } from "lucide-react"
+import { useState, useEffect, useRef } from "react"
+import { ShoppingCart, X, Settings, LogOut, RefreshCw, UserCircle, ChevronDown } from "lucide-react"
 import { Navigate, useSearchParams, useNavigate } from "react-router-dom"
 import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
@@ -34,6 +34,9 @@ export function Venta() {
   const [esperaAbierta, setEsperaAbierta] = useState(false)
   const [cargarCotAbierto, setCargarCotAbierto] = useState(false)
   const [cambiarUsuario, setCambiarUsuario] = useState(false)
+  // Menú "Sesión": agrupa Cambiar usuario + Cerrar sesión en un solo botón.
+  const [menuSesion, setMenuSesion] = useState(false)
+  const menuSesionRef = useRef<HTMLDivElement>(null)
   // Selector de caja. `obligatorio` = se abrió porque intentó cobrar sin caja
   // (al elegir caja se reanuda el cobro). false = cambio voluntario desde el chip.
   const [selectorCaja, setSelectorCaja] = useState<null | { obligatorio: boolean }>(null)
@@ -67,6 +70,21 @@ export function Venta() {
     window.addEventListener("keydown", fn)
     return () => window.removeEventListener("keydown", fn)
   }, [carritoFijo, carritoAbierto])
+
+  // Cerrar el menú "Sesión" con Escape o clic fuera.
+  useEffect(() => {
+    if (!menuSesion) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setMenuSesion(false) }
+    const onClick = (e: MouseEvent) => {
+      if (menuSesionRef.current && !menuSesionRef.current.contains(e.target as Node)) setMenuSesion(false)
+    }
+    window.addEventListener("keydown", onKey)
+    window.addEventListener("mousedown", onClick)
+    return () => {
+      window.removeEventListener("keydown", onKey)
+      window.removeEventListener("mousedown", onClick)
+    }
+  }, [menuSesion])
 
   // Deep-link "Cargar en venta" desde el módulo admin (?cotizacion=folio): abre
   // el popup auto-seleccionando esa cotización y limpia el parámetro de la URL.
@@ -173,7 +191,11 @@ export function Venta() {
     <div className={`venta-page${carritoFijo ? " venta-page--carrito-fijo" : ""}`}>
       {/* ===== Header fila 1 — identidad y contexto ===== */}
       <header className="pos-header">
-        <span className="pos-marca">FERREMEX POS</span>
+        {/* Bloque izquierdo: marca + fecha/turno de contexto (no interactiva). */}
+        <div className="pos-header-izquierda">
+          <span className="pos-marca">FERREMEX POS</span>
+          <span className="pos-sesion-turno pos-marca-turno">{cajero.turno_id}</span>
+        </div>
         <div className="pos-header-derecha">
           <span className="pos-sesion">
             {/* Chip de caja clickeable: cambia la caja activa de la sesión. Si no
@@ -187,29 +209,45 @@ export function Venta() {
             >
               {cajero.caja_nombre ? `🟢 ${cajero.caja_nombre}` : "○ Sin caja"}
             </button>
-            <span className="pos-sesion-sep">·</span>
-            <span className="pos-sesion-cajero">👤 {cajero.alias || cajero.nombre}</span>
-            <span className="pos-sesion-sep">·</span>
-            <span className="pos-sesion-turno">{cajero.turno_id}</span>
           </span>
           {/* Vendedor de la venta actual (atribución; no afecta el corte). */}
           <SelectorVendedor />
-          {/* Cambiar de usuario sin cerrar la caja (relevo a media jornada). */}
-          <button className="pos-header-btn" onClick={() => setCambiarUsuario(true)} title="Cambiar usuario sin cerrar caja">
-            <RefreshCw size={16} /> Cambiar usuario
-          </button>
           {cajero.permisos.puede_ver_admin && (
             <button className="pos-header-btn" onClick={() => navigate("/admin")} title="Panel de administración">
               <Settings size={16} /> Panel
             </button>
           )}
-          <button
-            className="pos-header-btn pos-header-btn--salir"
-            onClick={() => navigate("/", { replace: true })}
-            title="Cerrar sesión"
-          >
-            <LogOut size={16} /> Salir
-          </button>
+          {/* Menú "Sesión": agrupa Cambiar usuario + Cerrar sesión. */}
+          <div className="pos-sesion-menu-wrap" ref={menuSesionRef}>
+            <button
+              className="pos-header-btn"
+              onClick={() => setMenuSesion((v) => !v)}
+              title="Opciones de sesión"
+              aria-haspopup="menu"
+              aria-expanded={menuSesion}
+            >
+              <UserCircle size={16} /> Sesión
+              <ChevronDown size={14} style={{ marginLeft: 2, transform: menuSesion ? "rotate(180deg)" : "none", transition: "transform .15s" }} />
+            </button>
+            {menuSesion && (
+              <div className="pos-sesion-menu" role="menu">
+                <button
+                  role="menuitem"
+                  className="pos-sesion-menu-item"
+                  onClick={() => { setMenuSesion(false); setCambiarUsuario(true) }}
+                >
+                  <RefreshCw size={16} /> Cambiar usuario
+                </button>
+                <button
+                  role="menuitem"
+                  className="pos-sesion-menu-item pos-sesion-menu-item--salir"
+                  onClick={() => { setMenuSesion(false); navigate("/", { replace: true }) }}
+                >
+                  <LogOut size={16} /> Cerrar sesión
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 

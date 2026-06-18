@@ -11,6 +11,7 @@ import {
 import ArticleDrawer from "./ArticleDrawer"
 import ArticleDeleteModal from "./ArticleDeleteModal"
 import PaquetesPanel from "./PaquetesPanel"
+import FacturablePanel from "./FacturablePanel"
 import { useToasts } from "../hooks/useToasts"
 
 // ── Iconos inline ─────────────────────────────────────────────────────────────
@@ -288,15 +289,38 @@ export default function ArticlesModule({ vista = "articulos" }) {
 
       {tab === "paquetes" ? (
         <PaquetesPanel taxonomy={taxonomy} taxLoading={taxLoading} pushToast={pushToast} />
+      ) : tab === "facturable" ? (
+        <FacturablePanel taxonomy={taxonomy} taxLoading={taxLoading} pushToast={pushToast} />
       ) : (
       <>
 
-      {/* Encabezado */}
+      {/* Encabezado — título + búsqueda (en línea) + acciones */}
       <div className="ar-header">
-        <div>
+        <div className="ar-header-titulo">
           <p className="admin-seccion-titulo" style={{ marginBottom: 0 }}>Artículos</p>
           <p className="ar-header-meta">{subtitulo()}</p>
         </div>
+
+        {/* Búsqueda al lado del título */}
+        <div className="ar-header-search">
+          <div className="ar-search-input-wrap">
+            <span className="ar-search-icon"><IconSearch /></span>
+            <input
+              type="text"
+              className="ar-input"
+              placeholder="Buscar por clave, descripción…"
+              value={search}
+              onChange={(e) => handleSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              style={{ paddingLeft: "32px" }}
+            />
+          </div>
+          <button className="ar-btn-action" onClick={handleBuscar}
+            disabled={(!search.trim() && !hayFiltros) || loading}>
+            <IconSearch /> Buscar
+          </button>
+        </div>
+
         <div className="ar-header-actions">
           <button className="ar-btn-add" onClick={() => { setDrawerMode("add"); setDrawerOpen(true) }}>
             <IconPlus /> Agregar
@@ -315,26 +339,6 @@ export default function ArticlesModule({ vista = "articulos" }) {
             <IconTrash /> Eliminar
           </button>
         </div>
-      </div>
-
-      {/* Fila de búsqueda */}
-      <div className="ar-search-row">
-        <div className="ar-search-input-wrap">
-          <span className="ar-search-icon"><IconSearch /></span>
-          <input
-            type="text"
-            className="ar-input"
-            placeholder="Buscar por clave, descripción…"
-            value={search}
-            onChange={(e) => handleSearch(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            style={{ paddingLeft: "32px" }}
-          />
-        </div>
-        <button className="ar-btn-action" onClick={handleBuscar}
-          disabled={(!search.trim() && !hayFiltros) || loading}>
-          <IconSearch /> Buscar
-        </button>
       </div>
 
       {/* Filtros en cascada */}

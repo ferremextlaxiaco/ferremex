@@ -66,6 +66,14 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-monedero",
     },
     {
+      // Saldo facturable (doble inventario fiscal). Cada artículo lleva un
+      // contador de piezas con respaldo de factura de compra + clave SAT,
+      // independiente del stock físico. Sube al recibir compras "Con Factura",
+      // baja solo al FACTURAR (no al vender). La factura global del día excluye
+      // artículos sin respaldo. Ver src/modules/ferremex-facturable.
+      resolve: "./src/modules/ferremex-facturable",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [
