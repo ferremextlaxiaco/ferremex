@@ -66,7 +66,7 @@ export async function construirResolverFiscal(
   // problema de que ProductVariant no expone metadata del product directamente.
   const { data: variants } = await query.graph({
     entity: "product_variant",
-    fields: ["sku", "product.metadata"],
+    fields: ["sku", "title", "product.metadata"],
     filters: { sku: unicos },
   })
 
@@ -79,6 +79,10 @@ export async function construirResolverFiscal(
       claveUnidad: unidadAClaveSat(metaStr(meta, "unidadVenta", "unidadCompra")),
       unidadNombre: metaStr(meta, "unidadVenta") || undefined,
       aplicaIva: metaBool(meta, "impuesto", "aplicarIva"),
+      // departamento: para que la factura global decida si el SKU es facturable
+      // según su depto. La metadata lo guarda como "departamento".
+      departamento: metaStr(meta, "departamento") || undefined,
+      descripcion: (v?.title as string) || undefined,
     })
   }
 

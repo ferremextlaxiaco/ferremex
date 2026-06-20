@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useMemo } from "react"
 import type { VentaResponse } from "../lib/client"
 import type { Cliente } from "../lib/clientes"
 import { FacturarBoton } from "./FacturarBoton"
@@ -17,9 +17,16 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
   // estado se resetea al terminar la venta, así que no sirve aquí). Si la venta
   // trae cliente_id, construimos un cliente mínimo (el FacturarBoton hidrata el
   // resto desde la BD). Fallback al prop `cliente` para cotizaciones/compat.
-  const clienteFactura: Cliente | null = venta.cliente_id
-    ? ({ id: venta.cliente_id, nombre: venta.cliente_nombre ?? "" } as Cliente)
-    : (cliente ?? null)
+  // Memoizado para que NO se recree en cada render: si fuera un objeto literal
+  // nuevo cada vez, el useEffect de hidratación del FacturarBoton (dep: cliente)
+  // se re-dispararía en bucle y podría no estabilizar los datos fiscales.
+  const clienteFactura: Cliente | null = useMemo(
+    () =>
+      venta.cliente_id
+        ? ({ id: venta.cliente_id, nombre: venta.cliente_nombre ?? "" } as Cliente)
+        : (cliente ?? null),
+    [venta.cliente_id, venta.cliente_nombre, cliente]
+  )
 
   // Cerrar la vista previa con Escape (igual que el botón "Cerrar").
   useEffect(() => {

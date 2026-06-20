@@ -2,10 +2,11 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../../lib/json-store"
-import { FacturamaClient, FacturamaError, facturamaConfigurado } from "../../../../lib/facturama"
+import { FacturamaClient, FacturamaError, facturamaConfigurado, httpDeFacturamaError } from "../../../../lib/facturama"
 import { ventaACfdiNominativo, validarEmisor, type VentaParaCFDI } from "../../../../lib/cfdi-mapper"
 import { construirResolverFiscal } from "../../../../lib/facturable-resolver"
 import { customerAClientePOS } from "../../clientes/_mapper"
+import { leerConfigFacturacion } from "../_config"
 
 /**
  * POST /caja/facturama/factura — timbra una venta NOMINATIVA (cliente con RFC).
@@ -145,7 +146,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       cp: cliente.cp,
     },
     client.emisor,
-    resolver
+    resolver,
+    { serie: leerConfigFacturacion().serie_nominativa || null }
   )
 
   // Timbrar.
@@ -154,11 +156,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     timbrada = await client.crearCfdi(cfdi)
   } catch (e) {
     if (e instanceof FacturamaError) {
-      res.status(e.status >= 400 && e.status < 500 ? 400 : 502).json({
-        error: e.message,
-        detalle: e.detalle,
-        skus_sin_clave: skusSinClave.length ? skusSinClave : undefined,
-      })
+      const { status, body } = httpDeFacturamaError(e)
+      res.status(status).json({ ...body, skus_sin_clave: skusSinClave.length ? skusSinClave : undefined })
       return
     }
     console.error("[caja/facturama/factura] Error inesperado:", e)

@@ -20,27 +20,44 @@ function calcCostos(form) {
   return { costoSinIva, costoConIva, costoCalc, precio4 }
 }
 
-// value = precio s/IVA (siempre, igual que como se guarda en DB)
-// El input muestra c/IVA cuando aplicarIva=true; onChange convierte de vuelta a s/IVA
+// El VALOR GUARDADO (`value`) es el precio SIN IVA (base), igual que el Precio de
+// Compra. El input MUESTRA el precio CON IVA cuando el artículo aplica IVA (×1.16),
+// y al escribir lo convierte de vuelta a s/IVA para guardar. Así el toggle "Aplicar
+// IVA" se comporta como el de compra: activado muestra c/IVA, apagado muestra s/IVA.
+//
+// Separador: type="text" (no "number") porque en number el navegador impone el
+// separador del SO (coma en es-MX) y no se puede forzar punto. Con text controlamos
+// el formato → siempre PUNTO.
 function PrecioRow({ label, required, value, onChange, readOnly, costoCalc, aplicarIva, error }) {
-  const precioSinIva = Number(value) || 0
-  const precioDisplay = aplicarIva ? round2(precioSinIva * 1.16) : precioSinIva
-  // Margen sobre precio s/IVA vs costo s/IVA — sin conversiones, sin error de redondeo
+  const sinIva = Number(value) || 0
+  // Precio mostrado: con IVA si aplica.
+  const conIva = aplicarIva ? round2(sinIva * 1.16) : sinIva
+  // Margen sobre el precio s/IVA vs costo s/IVA (sin error de redondeo).
   const margen = readOnly ? 0
-    : precioSinIva > 0 && costoCalc > 0
-      ? round2(((precioSinIva - costoCalc) / precioSinIva) * 100) : null
+    : sinIva > 0 && costoCalc > 0
+      ? round2(((sinIva - costoCalc) / sinIva) * 100) : null
+  // Estado local del texto mientras se escribe (permite "65", "65.", "65.5").
+  const [texto, setTexto] = useState(null)
+  const valorMostrado = texto !== null ? texto : (conIva ? String(conIva) : "")
   return (
     <>
       <span className="ar-pr-label">{label}{required ? " *" : ""}</span>
       <input
-        type="number" min="0" step="0.01" placeholder="0.00"
+        type="text" inputMode="decimal" placeholder="0.00"
         className={`ar-input${readOnly ? " ar-input-ro" : ""}${error ? " error" : ""}`}
-        value={precioDisplay || ""} readOnly={readOnly} tabIndex={readOnly ? -1 : 0}
+        value={readOnly ? (conIva ? String(conIva) : "") : valorMostrado}
+        readOnly={readOnly} tabIndex={readOnly ? -1 : 0}
         onChange={readOnly ? undefined : (e) => {
-          // Usuario ingresa c/IVA → almacenamos s/IVA
-          const v = Number(e.target.value) || 0
-          onChange(aplicarIva ? round2(v / 1.16) : v)
+          // Limpiar a dígitos + un punto (acepta coma, normaliza a punto).
+          let raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "")
+          const i = raw.indexOf(".")
+          if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
+          setTexto(raw)
+          // El usuario teclea el precio CON IVA → guardamos SIN IVA.
+          const v = Number(raw) || 0
+          onChange(raw === "" ? "" : (aplicarIva ? round2(v / 1.16) : round2(v)))
         }}
+        onBlur={readOnly ? undefined : () => setTexto(null)}  // re-formatea desde value
       />
       <span className={`ar-pr-pct${margen !== null && margen < 0 ? " neg" : ""}`}>
         {margen !== null ? `${margen.toFixed(1)}%` : "—"}
@@ -157,12 +174,9 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   }, [open, onClose])
 
   function f(name, value) {
-    setForm((prev) => {
-      const next = { ...prev, [name]: value }
-      // Los precios se guardan s/IVA — no necesitan ajustarse al cambiar toggles.
-      // PrecioRow convierte a c/IVA solo para mostrar.
-      return next
-    })
+    setForm((prev) => ({ ...prev, [name]: value }))
+    // Los precios se guardan SIN IVA (base). PrecioRow muestra con IVA cuando
+    // aplica, recalculando solo (no hay que tocar los valores al cambiar toggles).
     setErrors((prev) => ({ ...prev, [name]: undefined }))
   }
 
@@ -187,7 +201,8 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
   function handleSave() {
     const errs = validate()
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    // precios ya están en s/IVA — se guardan directamente
+    // Los precios se guardan SIN IVA (base), igual que como entran (PrecioRow ya
+    // convirtió de c/IVA a s/IVA al teclear). precio4 = break-even s/IVA (costoCalc).
     const { costoCalc } = calcCostos(form)
     onSave({
       ...form,
@@ -198,7 +213,7 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
       precio1: Number(form.precio1) || 0,
       precio2: Number(form.precio2) || 0,
       precio3: Number(form.precio3) || 0,
-      precio4: costoCalc,   // break-even s/IVA
+      precio4: costoCalc,   // break-even s/IVA (se muestra c/IVA en PrecioRow)
       inventarioMin: Number(form.inventarioMin) || 0,
       inventarioMax: Number(form.inventarioMax) || 0,
       peso: Number(form.peso) || 0,
@@ -325,8 +340,16 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
           <div style={{ display: "flex", alignItems: "flex-end", gap: "12px" }}>
             <div style={{ flex: "0 0 160px" }}>
               <Field label="Precio de Compra">
-                <input type="number" min="0" step="0.01" className="ar-input"
-                  value={form.precioCompra} onChange={(e) => f("precioCompra", e.target.value)}
+                {/* type="text" para forzar PUNTO decimal (en number el navegador
+                    impone la coma del locale es-MX y no se puede cambiar). */}
+                <input type="text" inputMode="decimal" className="ar-input"
+                  value={form.precioCompra ?? ""}
+                  onChange={(e) => {
+                    let raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "")
+                    const i = raw.indexOf(".")
+                    if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
+                    f("precioCompra", raw)
+                  }}
                   placeholder="0.00" />
               </Field>
             </div>

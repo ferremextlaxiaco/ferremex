@@ -94,14 +94,31 @@ export interface CrearCfdiInput {
   Items: CfdiItem[]
 }
 
-/** Respuesta (parcial) de crear/consultar un CFDI. */
+/** Respuesta (parcial) de crear/consultar/listar un CFDI. */
 export interface CfdiResponse {
   Id: string
   CfdiType?: string
+  /** Tipo en el LISTADO: "issued"/"received"/etc. */
+  Type?: string
   Serie?: string | null
   Folio?: string | null
   Date?: string
+  Subtotal?: number
   Total?: number
+  /** UUID a nivel listado (en crear viene en Complement.TaxStamp.Uuid). */
+  Uuid?: string | null
+  /** RFC del receptor (listado). */
+  Rfc?: string
+  /** RFC del emisor (listado). */
+  RfcIssuer?: string
+  /** Nombre/razón social del receptor (listado). */
+  TaxName?: string
+  /** "Vigente"/"Cancelado" o "active"/"canceled" según versión. */
+  Status?: string
+  IsActive?: boolean
+  Email?: string | null
+  EmailSent?: boolean
+  PaymentMethod?: string
   Complement?: {
     TaxStamp?: {
       Uuid?: string
@@ -196,6 +213,24 @@ export class FacturamaError extends Error {
     this.status = status
     this.detalle = detalle
   }
+  /** ¿El error es de CONEXIÓN (sin internet / Facturama inalcanzable)? status 0. */
+  get esSinConexion(): boolean {
+    return this.status === 0
+  }
+}
+
+/**
+ * Traduce un FacturamaError a { status HTTP, mensaje } para responder al POS.
+ * - Sin conexión → 503 (servicio externo no disponible).
+ * - 4xx de Facturama (datos del CFDI) → 400.
+ * - Resto → 502 (Facturama respondió pero con error de servidor).
+ */
+export function httpDeFacturamaError(e: FacturamaError): { status: number; body: { error: string; detalle?: unknown; sin_conexion?: boolean } } {
+  if (e.esSinConexion) {
+    return { status: 503, body: { error: e.message, sin_conexion: true } }
+  }
+  const status = e.status >= 400 && e.status < 500 ? 400 : 502
+  return { status, body: { error: e.message, detalle: e.detalle } }
 }
 
 /**
@@ -251,7 +286,13 @@ export class FacturamaClient {
         body: body !== undefined ? JSON.stringify(body) : undefined,
       })
     } catch (e: any) {
-      throw new FacturamaError(`No se pudo conectar con Facturama: ${e?.message ?? e}`, 0, null)
+      // status 0 = fallo de red (sin internet / Facturama inalcanzable). Mensaje
+      // claro para el cajero: el problema es la conexión, no los datos del CFDI.
+      throw new FacturamaError(
+        "Sin conexión con Facturama. Revisa tu internet e intenta de nuevo (no se generó ningún comprobante).",
+        0,
+        null
+      )
     }
 
     const text = await resp.text()
@@ -304,10 +345,31 @@ export class FacturamaClient {
     return this.req<CfdiResponse>("GET", `cfdi/${encodeURIComponent(id)}?type=${tipo}`)
   }
 
-  /** Lista/busca CFDIs emitidos. GET /cfdi?type=issued&keyword= */
-  async listarCfdis(params?: { keyword?: string; tipo?: TipoCfdi }): Promise<CfdiResponse[]> {
+  /**
+   * Lista/busca CFDIs emitidos. GET /cfdi con filtros del API de Facturama.
+   * Acepta rango de fecha (DateStart/DateEnd, formato YYYY-MM-DD), Status
+   * ("active"/"canceled"), Keyword, Folio/Uuid/RfcReceipt y paginación (Page).
+   */
+  async listarCfdis(params?: {
+    keyword?: string
+    tipo?: TipoCfdi
+    dateStart?: string
+    dateEnd?: string
+    status?: string
+    page?: number
+    folio?: string
+    uuid?: string
+    rfcReceipt?: string
+  }): Promise<CfdiResponse[]> {
     const qs = new URLSearchParams({ type: params?.tipo ?? "issued" })
     if (params?.keyword) qs.set("keyword", params.keyword)
+    if (params?.dateStart) qs.set("dateStart", params.dateStart)
+    if (params?.dateEnd) qs.set("dateEnd", params.dateEnd)
+    if (params?.status) qs.set("status", params.status)
+    if (params?.page != null) qs.set("page", String(params.page))
+    if (params?.folio) qs.set("folio", params.folio)
+    if (params?.uuid) qs.set("uuid", params.uuid)
+    if (params?.rfcReceipt) qs.set("rfcReceipt", params.rfcReceipt)
     return this.req<CfdiResponse[]>("GET", `cfdi?${qs.toString()}`)
   }
 

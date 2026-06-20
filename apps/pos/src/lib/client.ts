@@ -534,7 +534,14 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`Error ${res.status}: ${body}`)
+    // Si el backend respondió JSON con { error }, usar ESE mensaje (limpio, como
+    // "Sin conexión con Facturama…"). Solo caer al crudo si no es JSON.
+    let msg = `Error ${res.status}: ${body}`
+    try {
+      const j = JSON.parse(body)
+      if (j?.error) msg = j.error
+    } catch { /* body no-JSON: queda el genérico */ }
+    throw new Error(msg)
   }
   return res.json() as Promise<T>
 }
@@ -1501,6 +1508,208 @@ export async function abrirArchivoFacturaAPI(folio: string, formato: "pdf" | "xm
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+// ── Factura GLOBAL del día (público en general, desglose por artículo) ─────────
+// Agrupa las ventas de público sin factura nominativa del día, respetando el
+// SALDO FACTURABLE (doble inventario fiscal): solo entran artículos de depto
+// facturable con saldo suficiente; al timbrar se CONSUME el saldo (el "switch").
+// Consumido por FacturacionModule (Tab Global).
+
+/** Una línea agregada por SKU en el preview de la global. */
+export interface LineaGlobal {
+  sku: string
+  descripcion: string
+  cantidad: number
+  importe: number
+  claveSat: string
+  departamento: string
+  deptoFacturable: boolean
+  /** Saldo facturable disponible; null = ilimitado (el SKU no maneja saldo). */
+  saldoDisponible: number | null
+  motivoExclusion?: "depto_no_facturable" | "saldo_insuficiente" | "sin_clave_sat"
+}
+
+/** Preview de la factura global de un período. */
+export interface PreviewGlobalData {
+  fecha: string
+  caja_id: string | null
+  forzar: boolean
+  configurado: boolean
+  foliosCandidatos: string[]
+  entran: LineaGlobal[]
+  excluidas: LineaGlobal[]
+  sinClaveSat: LineaGlobal[]
+  totales: {
+    ventasCandidatas: number
+    importeTotal: number
+    importeEntran: number
+    importeExcluido: number
+    hayBloqueante: boolean
+  }
+}
+
+/** Registro de una factura global ya timbrada. */
+export interface GlobalRegistro {
+  id: string
+  cfdi_id: string
+  uuid: string | null
+  fecha_periodo: string
+  caja_id: string | null
+  fecha_timbrado: string
+  total: number | null
+  folios_incluidos: string[]
+  cancelada?: boolean
+}
+
+/** Calcula el preview de la global del día (no timbra). `forzar` incluye las excluidas solo por saldo. */
+export async function previewGlobalAPI(
+  fecha: string,
+  opts: { caja_id?: string; forzar?: boolean } = {}
+): Promise<PreviewGlobalData> {
+  const qs = new URLSearchParams({ fecha })
+  if (opts.caja_id) qs.set("caja_id", opts.caja_id)
+  if (opts.forzar) qs.set("forzar", "1")
+  return apiFetch<PreviewGlobalData>(`/caja/facturama/global/preview?${qs.toString()}`)
+}
+
+/** Timbra la factura global del día. Consume saldo facturable y marca las ventas. */
+export async function emitirGlobalAPI(
+  fecha: string,
+  opts: { caja_id?: string; forzar?: boolean } = {}
+): Promise<{
+  global: GlobalRegistro
+  consumos: { sku: string; cantidad: number }[]
+  /** SKUs cuyo descuento de saldo falló (el CFDI ya está timbrado): ajustar manual. */
+  consumos_fallidos?: { sku: string; cantidad: number; error: string }[]
+  /** Se detectó otra global vigente del mismo período (carrera): conciliar. */
+  duplicado_detectado?: boolean
+}> {
+  return apiFetch("/caja/facturama/global", {
+    method: "POST",
+    body: JSON.stringify({ fecha, caja_id: opts.caja_id, forzar: !!opts.forzar }),
+  })
+}
+
+// ── Comprobantes (historial CFDI: Facturama + cruce con ventas) ────────────────
+// Lee los CFDIs reales emitidos en Facturama (estado vigente/cancelada en vivo) y
+// los cruza con las ventas/globales del POS para mostrar el folio ligado.
+// Consumido por FacturacionModule (Tab Comprobantes).
+
+/** Un comprobante (CFDI) en el historial. */
+export interface ComprobanteCFDI {
+  /** Id de Facturama (necesario para descargar/cancelar/reenviar). */
+  cfdi_id: string
+  uuid: string | null
+  serie: string | null
+  folio_cfdi: string | null
+  fecha: string
+  tipo: "nominativa" | "global"
+  receptor_rfc: string
+  receptor_nombre: string
+  total: number | null
+  /** "Vigente" | "Cancelado" según Facturama. */
+  estado: string
+  /** Folio de la venta POS ligada (si es nominativa y se pudo cruzar). */
+  folio_venta: string | null
+  email?: string | null
+}
+
+export interface ComprobantesData {
+  comprobantes: ComprobanteCFDI[]
+  total: number
+}
+
+/** Lista comprobantes por rango de fecha + filtros. */
+export async function listarComprobantesAPI(params: {
+  desde?: string
+  hasta?: string
+  tipo?: "nominativa" | "global" | ""
+  estado?: string
+  q?: string
+} = {}): Promise<ComprobantesData> {
+  const qs = new URLSearchParams()
+  if (params.desde) qs.set("desde", params.desde)
+  if (params.hasta) qs.set("hasta", params.hasta)
+  if (params.tipo) qs.set("tipo", params.tipo)
+  if (params.estado) qs.set("estado", params.estado)
+  if (params.q) qs.set("q", params.q)
+  const s = qs.toString()
+  return apiFetch<ComprobantesData>(`/caja/facturama/comprobantes${s ? "?" + s : ""}`)
+}
+
+/** Cancela un CFDI (por cfdi_id de Facturama). motivo 01–04 (02 default). 01 requiere uuid sustituto. */
+export async function cancelarComprobanteAPI(
+  cfdiId: string,
+  motivo: "01" | "02" | "03" | "04",
+  uuidReplacement?: string
+): Promise<{ ok: true }> {
+  return apiFetch("/caja/facturama/comprobantes/cancelar", {
+    method: "POST",
+    body: JSON.stringify({ cfdi_id: cfdiId, motivo, uuid_replacement: uuidReplacement }),
+  })
+}
+
+/** Reenvía un CFDI por correo. */
+export async function reenviarComprobanteAPI(cfdiId: string, email: string): Promise<{ ok: true }> {
+  return apiFetch("/caja/facturama/comprobantes/reenviar", {
+    method: "POST",
+    body: JSON.stringify({ cfdi_id: cfdiId, email }),
+  })
+}
+
+/**
+ * Descarga el blob (PDF/XML) de un comprobante por cfdi_id. Devuelve el Blob para
+ * que el llamador decida qué hacer (guardar en carpeta vía File System Access API,
+ * abrir en pestaña, etc.). NO dispara la descarga por sí mismo.
+ */
+export async function obtenerArchivoComprobanteAPI(cfdiId: string, formato: "pdf" | "xml"): Promise<Blob> {
+  const res = await fetch(
+    `/caja/facturama/comprobantes/${encodeURIComponent(cfdiId)}/archivo?formato=${formato}`,
+    { headers: posHeaders() }
+  )
+  if (!res.ok) {
+    let msg = `No se pudo descargar el ${formato.toUpperCase()}`
+    try { const j = await res.json(); if (j?.error) msg = j.error } catch { /* no-JSON */ }
+    throw new Error(msg)
+  }
+  return res.blob()
+}
+
+/** Abre/descarga un comprobante (PDF en pestaña, XML como archivo). Para acciones sueltas. */
+export async function abrirArchivoComprobanteAPI(cfdiId: string, formato: "pdf" | "xml", nombre?: string): Promise<void> {
+  const blob = await obtenerArchivoComprobanteAPI(cfdiId, formato)
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement("a")
+  a.href = url
+  if (formato === "pdf") { a.target = "_blank"; a.rel = "noopener" }
+  else { a.download = `${nombre ?? cfdiId}.xml` }
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
+// ── Configuración de facturación (serie/folio, correo contador, periodicidad) ──
+// NO incluye credenciales (esas viven en .env del backend). Consumido por
+// FacturacionModule (Tab Config).
+
+export interface ConfigFacturacion {
+  serie_nominativa: string
+  serie_global: string
+  periodicidad_global: "01" | "02" | "03" | "04" | "05"
+  correo_contador: string
+}
+
+export async function obtenerConfigFacturacionAPI(): Promise<ConfigFacturacion> {
+  return apiFetch<ConfigFacturacion>("/caja/facturama/config")
+}
+
+export async function guardarConfigFacturacionAPI(cfg: Partial<ConfigFacturacion>): Promise<ConfigFacturacion> {
+  return apiFetch<ConfigFacturacion>("/caja/facturama/config", {
+    method: "PUT",
+    body: JSON.stringify(cfg),
+  })
 }
 
 // ── Monedero Electrónico (módulo ferremex_monedero) ───────────────────────────

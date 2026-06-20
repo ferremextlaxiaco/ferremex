@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature, Tag, Wallet,
+  Coins, FileSignature, Tag, Wallet, Receipt,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -32,6 +32,8 @@ export function Admin() {
     ? "clientes"
     : path.includes("/admin/monedero")
     ? "monedero"
+    : path.includes("/admin/facturacion")
+    ? "facturacion"
     : path.includes("/admin/articulos") || path.includes("/admin/paquetes") || path.includes("/admin/facturable")
     ? "articulos"
     : path.includes("/admin/promociones")
@@ -150,6 +152,13 @@ export function Admin() {
           >
             <span className="admin-side-icon"><Wallet size={18} /></span>
             Monedero Electrónico
+          </button>
+          <button
+            className={`admin-side-item${tab === "facturacion" ? " active" : ""}`}
+            onClick={() => navigate("/admin/facturacion")}
+          >
+            <span className="admin-side-icon"><Receipt size={18} /></span>
+            Facturación
           </button>
           <button
             className={`admin-side-item${tab === "articulos" ? " active" : ""}`}

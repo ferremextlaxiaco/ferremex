@@ -435,7 +435,9 @@ export default function ArticlesModule({ vista = "articulos" }) {
                       </p>
                     </div>
                     <div className="ar-list-right">
-                      <p className="ar-list-price">${(a.aplicarIva ? a.precio1 * 1.16 : a.precio1).toFixed(2)}</p>
+                      {/* precio1 se guarda SIN IVA; se muestra CON IVA si el artículo
+                          aplica IVA (igual que en el drawer y el preview). */}
+                      <p className="ar-list-price">${(a.aplicarIva ? (Number(a.precio1) || 0) * 1.16 : (Number(a.precio1) || 0)).toFixed(2)}</p>
                       <p className={`ar-list-stock${(a.existencia ?? 0) > 0 ? " ok" : (a.existencia ?? 0) < 0 ? " neg" : " zero"}`}>
                         {a.existencia ?? 0} en stock
                       </p>
@@ -582,7 +584,9 @@ export default function ArticlesModule({ vista = "articulos" }) {
                 </p>
                 <div className="ar-detail-price-grid">
                   {[1, 2, 3, 4].map((n) => {
-                    const base = selected[`precio${n}`] ?? 0
+                    // precio se guarda SIN IVA; se muestra CON IVA si aplica (igual
+                    // que la venta, que recibe el precio ya con IVA del backend).
+                    const base = Number(selected[`precio${n}`]) || 0
                     const con  = selected.aplicarIva ? base * 1.16 : base
                     return (
                       <div key={n} className="ar-detail-price-item">

@@ -728,8 +728,19 @@ export type Routes = {
             deptos: typeof import("../../src/api/caja/facturable/deptos/route");
         };
         facturama: {
+            comprobantes: typeof import("../../src/api/caja/facturama/comprobantes/route") & {
+                $cfdiId: {
+                    archivo: typeof import("../../src/api/caja/facturama/comprobantes/[cfdiId]/archivo/route");
+                };
+                cancelar: typeof import("../../src/api/caja/facturama/comprobantes/cancelar/route");
+                reenviar: typeof import("../../src/api/caja/facturama/comprobantes/reenviar/route");
+            };
+            config: typeof import("../../src/api/caja/facturama/config/route");
             factura: typeof import("../../src/api/caja/facturama/factura/route") & {
                 $folio: typeof import("../../src/api/caja/facturama/factura/[folio]/route");
+            };
+            global: typeof import("../../src/api/caja/facturama/global/route") & {
+                preview: typeof import("../../src/api/caja/facturama/global/preview/route");
             };
         };
         folioContador: typeof import("../../src/api/caja/folio-contador/route");

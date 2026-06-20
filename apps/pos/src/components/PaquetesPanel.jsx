@@ -14,9 +14,9 @@ import {
 
 // ── Helpers de precio ───────────────────────────────────────────────────────
 
-// Suma de precios individuales de los componentes a un nivel dado (1-4).
 // Precio de venta de un componente a un nivel (1-4), CON IVA si el artículo lo
-// aplica (16%). Los precio1..4 se guardan sin IVA, igual que en Artículos.
+// aplica (16%). Los precio1..4 se guardan SIN IVA; la venta los recibe ya con IVA
+// del backend, así que aquí también mostramos con IVA para que cuadre.
 function precioVentaIva(comp, nivel) {
   const base = Number(comp[`precio${nivel}`]) || 0
   return comp.aplicarIva ? base * 1.16 : base

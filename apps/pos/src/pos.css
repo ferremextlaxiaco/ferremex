@@ -7428,6 +7428,226 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .pk-precio-step:hover { background: #fff7ed; color: var(--at-orange, #ea580c); }
 .pk-price-stats { text-align: right; }
 .pk-stat { font-size: 12.5px; color: var(--at-text-muted, #6b7280); }
+
+/* ============================================================
+   FACTURACIÓN — Centro de control CFDI (Facturama)
+   ============================================================ */
+.fac-root { padding: 12px 24px 24px; }
+.fac-header {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding-bottom: 12px; border-bottom: 1px solid #e5e7eb; margin-bottom: 16px;
+}
+.fac-titulo { font-size: 20px; font-weight: 700; color: #111827; margin: 0; }
+.fac-tabs { display: flex; gap: 6px; }
+.fac-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #fff; border: 1px solid #d1d5db; color: #374151;
+  padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.fac-tab:hover { background: #f9fafb; }
+.fac-tab.active { background: #fff7ed; border-color: #f96302; color: #c2410c; }
+
+.fac-pane { display: flex; flex-direction: column; gap: 16px; }
+
+/* Toolbar de criterios */
+.fac-toolbar { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.fac-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: #6b7280; }
+.fac-input {
+  border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 11px; font-size: 13px;
+  background: #fff; color: #111827; min-width: 160px;
+}
+.fac-input:focus { outline: none; border-color: #f96302; }
+
+/* Botones */
+.fac-btn-primary {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: #f96302; color: #fff; border: none; padding: 10px 16px; border-radius: 8px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.fac-btn-primary:hover { background: #d95500; }
+.fac-btn-primary:disabled { opacity: .45; pointer-events: none; }
+.fac-btn-lg { padding: 12px 22px; font-size: 14px; }
+.fac-btn-secondary {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: #fff; border: 1px solid #d1d5db; color: #374151; padding: 10px 16px;
+  border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.fac-btn-secondary:hover { background: #f9fafb; }
+.fac-btn-secondary:disabled { opacity: .45; pointer-events: none; }
+.fac-btn-ghost {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid #e5e7eb; color: #6b7280; width: 38px; height: 38px;
+  border-radius: 8px; cursor: pointer; padding: 0; flex-shrink: 0;
+}
+/* El SVG de lucide se encogía bajo el flex (sin tamaño fijo el reset lo aplastaba
+   → ícono invisible). Tamaño explícito + flex-shrink:0, como el resto del POS. */
+.fac-btn-ghost svg { width: 18px; height: 18px; flex-shrink: 0; }
+.fac-btn-ghost:hover { background: #f9fafb; color: #111827; }
+
+/* KPIs */
+.fac-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.fac-kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 14px 16px; }
+.fac-kpi-label { font-size: 12px; color: #6b7280; margin-bottom: 4px; }
+.fac-kpi-value { font-size: 20px; font-weight: 700; color: #111827; }
+.fac-kpi--ok .fac-kpi-value { color: #16a34a; }
+.fac-kpi--muted .fac-kpi-value { color: #9ca3af; }
+
+/* Columnas entran / excluyen */
+.fac-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 900px) { .fac-cols { grid-template-columns: 1fr; } }
+.fac-col { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+.fac-col-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  font-size: 13px; font-weight: 600; border-bottom: 1px solid #e5e7eb;
+}
+.fac-col-head--ok { background: #f0fdf4; color: #15803d; }
+.fac-col-head--warn { background: #fffbeb; color: #b45309; }
+.fac-col-empty { padding: 20px 14px; text-align: center; color: #9ca3af; font-size: 13px; }
+
+/* Tablas */
+.fac-tabla { width: 100%; border-collapse: collapse; font-size: 13px; }
+.fac-tabla th {
+  text-align: left; font-weight: 600; color: #6b7280; font-size: 11px; text-transform: uppercase;
+  padding: 8px 14px; border-bottom: 1px solid #f3f4f6; letter-spacing: .03em;
+}
+.fac-tabla td { padding: 9px 14px; border-bottom: 1px solid #f3f4f6; color: #111827; vertical-align: top; }
+.fac-tabla th.num, .fac-tabla td.num { text-align: right; }
+.fac-tabla tr:last-child td { border-bottom: none; }
+.fac-art { font-weight: 500; }
+.fac-sku { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+.fac-neg { color: #dc2626; font-weight: 600; }
+
+.fac-motivo { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.fac-motivo--depto_no_facturable { background: #f3f4f6; color: #6b7280; }
+.fac-motivo--saldo_insuficiente { background: #fef3c7; color: #b45309; }
+.fac-motivo--sin_clave_sat { background: #fee2e2; color: #b91c1c; }
+
+/* Toggle forzar */
+.fac-forzar {
+  display: flex; align-items: flex-start; gap: 9px; font-size: 13px; color: #374151;
+  background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 11px 14px; cursor: pointer;
+}
+.fac-forzar input { margin-top: 2px; }
+
+/* Alertas */
+.fac-alert { display: flex; align-items: flex-start; gap: 10px; border-radius: 8px; padding: 12px 14px; font-size: 13px; line-height: 1.5; }
+.fac-alert--warn { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+.fac-alert--error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+
+/* Acciones */
+.fac-acciones { display: flex; justify-content: flex-end; }
+
+/* Estado vacío */
+.fac-empty { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 60px 20px; color: #9ca3af; text-align: center; }
+.fac-empty p { font-size: 14px; max-width: 460px; }
+
+/* Resultado timbrado */
+.fac-resultado { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.fac-check { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.fac-check--ok { color: #15803d; }
+.fac-resultado-datos { font-size: 13px; color: #374151; line-height: 1.7; }
+.fac-uuid { word-break: break-all; font-family: monospace; font-size: 12px; }
+.fac-resultado-acciones { display: flex; gap: 10px; }
+
+/* Modal switch */
+.fac-overlay { position: fixed; inset: 0; background: rgba(17,24,39,.55); z-index: 6000; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.fac-modal { background: #fff; border-radius: 12px; width: 100%; max-width: 640px; max-height: 88vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+.fac-modal-head { display: flex; align-items: center; padding: 16px 20px; border-bottom: 1px solid #e5e7eb; font-size: 16px; font-weight: 700; color: #111827; }
+.fac-modal-head span { display: inline-flex; align-items: center; gap: 9px; }
+.fac-modal-body { padding: 16px 20px; overflow-y: auto; }
+.fac-modal-intro { font-size: 13px; color: #374151; line-height: 1.6; margin-bottom: 12px; }
+.fac-modal-nota { font-size: 13px; color: #6b7280; }
+.fac-tabla--switch th, .fac-tabla--switch td { padding: 7px 12px; }
+.fac-modal-acciones { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid #e5e7eb; }
+
+/* Botón peligro */
+.fac-btn-danger {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: #fff; border: 1px solid #fecaca; color: #dc2626; padding: 10px 16px;
+  border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.fac-btn-danger:hover { background: #fef2f2; }
+.fac-btn-danger:disabled { opacity: .45; pointer-events: none; }
+
+/* Barra de lote (selección + descarga) */
+.fac-lote-bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.fac-lote-sel { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: #374151; cursor: pointer; }
+.fac-lote-nota { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #b45309; }
+
+/* Chips de tipo/estado */
+.fac-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+.fac-chip--global { background: #eff6ff; color: #1d4ed8; }
+.fac-chip--nomina { background: #fff7ed; color: #c2410c; }
+.fac-chip--ok { background: #f0fdf4; color: #15803d; }
+.fac-chip--cancel { background: #fef2f2; color: #b91c1c; }
+
+/* Fila cancelada */
+.fac-row-cancel td { color: #9ca3af; }
+.fac-row-cancel .fac-art { text-decoration: line-through; }
+
+/* Filas seleccionables (1 clic resalta, doble clic abre detalle) */
+.fac-tabla--rows .fac-row-click { cursor: pointer; user-select: none; }
+.fac-tabla--rows .fac-row-click:hover td { background: #f9fafb; }
+.fac-tabla--rows .fac-row-active td { background: #fff7ed; }
+.fac-tabla--rows .fac-row-active td:first-child { box-shadow: inset 3px 0 0 #f96302; }
+.fac-tabla-hint { padding: 9px 14px; font-size: 12px; color: #9ca3af; border-top: 1px solid #f3f4f6; }
+
+/* ── Visor de comprobante: pantalla completa, fondo difuminado ──
+   Izquierda (flexible): la factura PDF centrada, flotando sobre el blur.
+   Derecha (fija): panel blanco con los detalles + acciones. */
+.fac-visor-overlay {
+  position: fixed; inset: 0; z-index: 6000; display: flex;
+  background: rgba(17, 24, 39, .45);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+}
+/* Zona izquierda: el visor del PDF cubre TODO el alto y ancho disponibles,
+   sin márgenes (de borde a borde con la barra del navegador y el panel). */
+.fac-visor-zona {
+  flex: 1; min-width: 0; display: flex;
+}
+/* La factura PDF: ocupa el alto y ancho completos de su zona. */
+.fac-visor-doc {
+  width: 100%; height: 100%; border: none;
+  background: #fff;
+}
+.fac-visor-estado {
+  margin: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  color: #6b7280; font-size: 13px; text-align: center;
+}
+.fac-visor-estado--flot {
+  background: #fff; border-radius: 12px; padding: 40px 48px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+/* Panel derecho de detalles. */
+.fac-detalle-panel {
+  width: 400px; flex-shrink: 0; height: 100vh; background: #fff;
+  box-shadow: -8px 0 30px rgba(0, 0, 0, .25); display: flex; flex-direction: column;
+}
+.fac-detalle-panel .fac-modal-head { justify-content: space-between; }
+.fac-detalle-panel .fac-modal-head span { display: inline-flex; align-items: center; gap: 9px; }
+.fac-detalle-info { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
+@media (max-width: 820px) {
+  .fac-visor-overlay { flex-direction: column; }
+  .fac-visor-zona { padding: 12px; min-height: 50vh; }
+  .fac-detalle-panel { width: 100%; height: auto; flex: 1; box-shadow: 0 -8px 30px rgba(0, 0, 0, .25); }
+}
+
+/* Secciones del drawer */
+.fac-seccion { display: flex; flex-direction: column; gap: 8px; }
+.fac-seccion-titulo { font-size: 12px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .03em; }
+.fac-cancel-box { display: flex; flex-direction: column; gap: 10px; }
+
+/* Config form */
+.fac-config { max-width: 560px; display: flex; flex-direction: column; gap: 16px; }
+.fac-config-row { display: flex; flex-direction: column; gap: 5px; }
+.fac-config-row > span { font-size: 13px; font-weight: 500; color: #374151; }
+.fac-config-row small { font-size: 12px; color: #9ca3af; }
+.fac-config-acciones { display: flex; justify-content: flex-end; margin-top: 4px; }
+
+/* Spinner */
+.fac-spin { animation: fac-rot 0.8s linear infinite; }
+@keyframes fac-rot { to { transform: rotate(360deg); } }
 .pk-stat.save { color: #16a34a; font-weight: 600; }
 .pk-stat.warn { color: #dc2626; font-weight: 600; }
 .pk-hint { font-size: 11.5px; color: #9ca3af; margin-top: 10px; }

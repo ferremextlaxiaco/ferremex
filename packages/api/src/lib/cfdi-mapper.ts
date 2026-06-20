@@ -63,6 +63,11 @@ export interface DatosFiscalesArticulo {
   claveUnidad: string    // ClaveUnidad (catálogo SAT). Default H87 (pieza).
   unidadNombre?: string  // p.ej. "Pieza" (informativo)
   aplicaIva: boolean     // si el precio del artículo incluye 16%
+  /** Departamento del artículo (metadata) — usado por la factura global para
+   *  decidir si el artículo es facturable según el depto. Informativo aquí. */
+  departamento?: string
+  /** Descripción del producto (informativo, para el preview de la global). */
+  descripcion?: string
 }
 
 /** Resolvedor de datos fiscales por SKU. Si no hay datos, usa fallbacks seguros. */
@@ -215,7 +220,8 @@ export function ventaACfdiNominativo(
   venta: VentaParaCFDI,
   receptor: ReceptorNominativo,
   emisor: FacturamaEmisor,
-  resolver: ResolverFiscal
+  resolver: ResolverFiscal,
+  opts: { serie?: string | null } = {}
 ): { cfdi: CrearCfdiInput; skusSinClave: string[] } {
   const { conceptos, skusSinClave } = construirConceptos(venta.items, resolver)
 
@@ -234,6 +240,70 @@ export function ventaACfdiNominativo(
     ExpeditionPlace: emisor.cpExpedicion.trim(),
     Exportation: "01",
     Currency: "MXN",
+    ...(opts.serie ? { Serie: opts.serie } : {}),
+    Receiver,
+    Items: conceptos,
+  }
+  return { cfdi, skusSinClave }
+}
+
+/**
+ * CFDI GLOBAL a partir de ITEMS YA AGREGADOS Y FILTRADOS (las líneas que "entran"
+ * según el saldo facturable). Esta es la entrada que usa la ruta de la global:
+ * el filtrado por depto/saldo/clave SAT lo hace `global-builder.ts` ANTES, y aquí
+ * solo se desglosa el IVA y se arma el comprobante. Desglosa cada artículo.
+ *
+ * @param fechaPeriodo Fecha base del período (se usa para derivar mes/año).
+ * @param periodicidad "01" Diario por defecto (factura del día).
+ * @param serie/folio  Opcionales (config de facturación).
+ */
+export function itemsACfdiGlobal(
+  items: ItemVentaCFDI[],
+  emisor: FacturamaEmisor,
+  resolver: ResolverFiscal,
+  opts: {
+    fechaPeriodo: string
+    periodicidad?: CfdiGlobalInformation["Periodicity"]
+    serie?: string | null
+    folio?: string | null
+  }
+): { cfdi: CrearCfdiInput; skusSinClave: string[] } {
+  const { conceptos, skusSinClave } = construirConceptos(items, resolver)
+
+  // Mes/año del período. Parseamos del string "YYYY-MM-DD" (NO con `new Date`,
+  // que interpreta la fecha en UTC y a las 00:00–05:00 hora de Oaxaca devolvería
+  // el mes del día anterior → GlobalInformation.Months incorrecto → rechazo SAT).
+  const [yStr, mStr] = String(opts.fechaPeriodo).split("-")
+  const year = yStr || String(new Date().getFullYear())
+  const month = (mStr || "01").padStart(2, "0")
+
+  const GlobalInformation: CfdiGlobalInformation = {
+    Periodicity: opts.periodicidad ?? "01", // Diario
+    Months: month,
+    Year: year,
+  }
+
+  const Receiver: CfdiReceiver = {
+    Rfc: RECEPTOR_PUBLICO.Rfc,
+    Name: RECEPTOR_PUBLICO.Name,
+    CfdiUse: RECEPTOR_PUBLICO.CfdiUse,
+    FiscalRegime: RECEPTOR_PUBLICO.FiscalRegime,
+    TaxZipCode: emisor.cpExpedicion.trim(),
+  }
+
+  const cfdi: CrearCfdiInput = {
+    CfdiType: "I",
+    // La global agrupa ventas con formas de pago mixtas (efectivo, tarjeta,
+    // transferencia). El SAT acepta "99" (Por definir) para globales con mezcla,
+    // que es la práctica fiscal correcta para público en general.
+    PaymentForm: "99",
+    PaymentMethod: "PUE",
+    ExpeditionPlace: emisor.cpExpedicion.trim(),
+    Exportation: "01",
+    Currency: "MXN",
+    ...(opts.serie ? { Serie: opts.serie } : {}),
+    ...(opts.folio ? { Folio: opts.folio } : {}),
+    GlobalInformation,
     Receiver,
     Items: conceptos,
   }
@@ -245,6 +315,8 @@ export function ventaACfdiNominativo(
  * período en un solo comprobante con el nodo GlobalInformation. Desglosa cada
  * artículo (decisión del usuario).
  *
+ * @deprecated La ruta usa `itemsACfdiGlobal` con líneas ya filtradas por saldo.
+ *   Se conserva por compatibilidad / pruebas.
  * @param fechaPeriodo Fecha base del período (se usa para derivar mes/año).
  * @param periodicidad "01" Diario por defecto (factura del día).
  */

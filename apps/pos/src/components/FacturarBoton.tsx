@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
-import { FileText, X, CheckCircle2, AlertTriangle, Loader2, Download, FileCode2 } from "lucide-react"
+import { FileText, X, CheckCircle2, AlertTriangle, Loader2 } from "lucide-react"
 import { camposFiscalesFaltantes, type Cliente } from "../lib/clientes"
 import {
-  facturarVentaAPI, estadoFacturaAPI, abrirArchivoFacturaAPI, obtenerClienteAPI,
+  facturarVentaAPI, estadoFacturaAPI, obtenerClienteAPI,
   type FacturaVenta,
 } from "../lib/client"
+// @ts-expect-error — VisorComprobante es .jsx (sin tipos); interfaz estable por props.
+import VisorComprobante from "./VisorComprobante"
 
 /**
  * Facturación de una venta (CFDI 4.0 nominativo vía Facturama).
@@ -35,9 +37,6 @@ export function FacturarBoton({ folio, cliente, variant = "full" }: FacturarBoto
   const [factura, setFactura] = useState<FacturaVenta | null>(null)
   const [timbrando, setTimbrando] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Formato que se está descargando ("pdf"|"xml"|null) → spinner + bloqueo del
-  // botón mientras la petición está en vuelo (la descarga tarda ~1-2s).
-  const [descargando, setDescargando] = useState<"pdf" | "xml" | null>(null)
   // El cliente que llega por props puede venir parcial (solo id/nombre, como en
   // SalesHistory). Al abrir, hidratamos el cliente COMPLETO desde la BD (con sus
   // datos fiscales reales) para validar bien si se puede timbrar.
@@ -67,17 +66,23 @@ export function FacturarBoton({ folio, cliente, variant = "full" }: FacturarBoto
 
   // Al abrir, hidrata el cliente completo (con datos fiscales) desde la BD si el
   // que llegó por props no los trae. Si ya viene completo (tiene rfc), lo usa tal cual.
+  // Depende de PRIMITIVOS (id/rfc) y no del objeto `cliente`, para que no se
+  // re-dispare en bucle si el padre recrea ese objeto en cada render.
+  const clienteId = cliente?.id
+  const clienteRfc = cliente?.rfc
   useEffect(() => {
-    if (!abierto || !cliente?.id) { setClienteCompleto(cliente ?? null); return }
-    if (cliente.rfc) { setClienteCompleto(cliente); return }
+    if (!abierto) return
+    if (!clienteId) { setClienteCompleto(cliente ?? null); return }
+    if (clienteRfc) { setClienteCompleto(cliente ?? null); return }
     let on = true
     setCargandoCliente(true)
-    obtenerClienteAPI(cliente.id)
+    obtenerClienteAPI(clienteId)
       .then((c) => { if (on) setClienteCompleto(c) })
-      .catch(() => { if (on) setClienteCompleto(cliente) }) // fallback al parcial
+      .catch(() => { if (on) setClienteCompleto(cliente ?? null) }) // fallback al parcial
       .finally(() => { if (on) setCargandoCliente(false) })
     return () => { on = false }
-  }, [abierto, cliente])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abierto, clienteId, clienteRfc])
 
   // Validación fiscal sobre el cliente COMPLETO (no el parcial de props).
   const clienteEf = clienteCompleto ?? cliente ?? null
@@ -97,18 +102,6 @@ export function FacturarBoton({ folio, cliente, variant = "full" }: FacturarBoto
     }
   }
 
-  async function descargar(formato: "pdf" | "xml") {
-    if (descargando) return // evita disparar varias peticiones por doble clic
-    setDescargando(formato); setError(null)
-    try {
-      await abrirArchivoFacturaAPI(folio, formato)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : `No se pudo abrir el ${formato.toUpperCase()}`)
-    } finally {
-      setDescargando(null)
-    }
-  }
-
   return (
     <>
       <button
@@ -120,7 +113,28 @@ export function FacturarBoton({ folio, cliente, variant = "full" }: FacturarBoto
         <FileText size={variant === "full" ? 16 : 14} /> Facturar
       </button>
 
-      {abierto &&
+      {/* Ya facturada → visor a PANTALLA COMPLETA (PDF + barra lateral de detalles),
+          el mismo del módulo de Comprobantes. Sin cancelar (no se pasa onCancelado). */}
+      {abierto && factura && !cargandoEstado &&
+        createPortal(
+          <VisorComprobante
+            comprobante={{
+              cfdi_id: factura.cfdi_id,
+              uuid: factura.uuid,
+              tipo: "nominativa",
+              receptor_rfc: factura.receptor_rfc,
+              receptor_nombre: factura.receptor_nombre,
+              total: factura.total,
+              folio_venta: folio,
+              estado: factura.cancelada ? "Cancelado" : "Vigente",
+            }}
+            onClose={() => setAbierto(false)}
+          />,
+          document.body
+        )}
+
+      {/* No facturada (o cargando) → panelito de validación + timbrado. */}
+      {abierto && !(factura && !cargandoEstado) &&
         createPortal(
           <div className="facturar-overlay" onClick={() => setAbierto(false)}>
             <div
@@ -144,32 +158,6 @@ export function FacturarBoton({ folio, cliente, variant = "full" }: FacturarBoto
                   <Loader2 size={16} className="animate-spin" />
                   <span>{cargandoEstado ? "Consultando estado de facturación…" : "Cargando datos del cliente…"}</span>
                 </div>
-              ) : factura ? (
-                /* ── Ya facturada: mostrar folio fiscal + descargas ── */
-                <>
-                  <div className="facturar-check facturar-check--ok" style={{ marginBottom: 12 }}>
-                    <CheckCircle2 size={15} />
-                    <span>Esta venta ya está facturada.</span>
-                  </div>
-                  <div className="facturar-seccion">
-                    <div className="facturar-seccion-titulo">Comprobante fiscal</div>
-                    <div style={{ fontSize: 13, color: "var(--text-soft, #6b7280)", lineHeight: 1.7 }}>
-                      <div><b>Receptor:</b> {factura.receptor_nombre} ({factura.receptor_rfc})</div>
-                      {factura.uuid && (
-                        <div style={{ wordBreak: "break-all" }}><b>Folio fiscal (UUID):</b> {factura.uuid}</div>
-                      )}
-                      {factura.total != null && <div><b>Total:</b> ${factura.total.toFixed(2)}</div>}
-                    </div>
-                  </div>
-                  <div className="facturar-panel-acciones">
-                    <button className="btn-secondary" onClick={() => descargar("xml")} disabled={!!descargando}>
-                      {descargando === "xml" ? <><Loader2 size={15} className="animate-spin" /> XML…</> : <><FileCode2 size={15} /> XML</>}
-                    </button>
-                    <button className="btn-confirmar" onClick={() => descargar("pdf")} disabled={!!descargando}>
-                      {descargando === "pdf" ? <><Loader2 size={15} className="animate-spin" /> Generando PDF…</> : <><Download size={15} /> Descargar PDF</>}
-                    </button>
-                  </div>
-                </>
               ) : (
                 /* ── No facturada: validar cliente y permitir timbrar ── */
                 <>

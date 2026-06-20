@@ -21,6 +21,17 @@ import DeptoFacturable from "./models/depto-facturable"
  */
 type TipoMov = "recarga" | "consumo" | "ajuste"
 
+/** Forma mínima de una fila de saldo (lo que consumen las rutas). */
+export interface SaldoFila {
+  id: string
+  sku: string
+  saldo: number
+  clave_sat: string | null
+  descripcion: string | null
+  departamento: string | null
+  actualizado_el: string | null
+}
+
 interface AplicarMovInput {
   sku: string
   tipo: TipoMov
@@ -55,8 +66,8 @@ class FerremexFacturableService extends MedusaService({
   }
 
   /** Lista todos los saldos (filtrables). */
-  async listarSaldos(filtro: Record<string, any> = {}): Promise<any[]> {
-    return (await this.listSaldoFacturables(filtro)) as any[]
+  async listarSaldos(filtro: Record<string, any> = {}): Promise<SaldoFila[]> {
+    return (await this.listSaldoFacturables(filtro)) as SaldoFila[]
   }
 
   /**
@@ -137,6 +148,19 @@ class FerremexFacturableService extends MedusaService({
   async listarMovimientos(sku: string): Promise<any[]> {
     const movs = (await this.listMovimientoFacturables({ sku })) as any[]
     return movs.sort((a, b) => String(b.fecha).localeCompare(String(a.fecha)))
+  }
+
+  /**
+   * Movimientos asociados a un CFDI (por `cfdi_ref`). Usado por la cancelación de
+   * una factura global para revertir (recargar) lo que consumió. Filtra en MEMORIA
+   * sobre los movimientos de tipo "consumo" para no depender de que el adapter
+   * ORM acepte `cfdi_ref` como filtro (defensivo): trae todos los consumos y los
+   * cruza por cfdi_ref aquí.
+   */
+  async listarConsumosPorCfdi(cfdiRef: string): Promise<any[]> {
+    if (!cfdiRef) return []
+    const movs = (await this.listMovimientoFacturables({ tipo: "consumo" })) as any[]
+    return movs.filter((m) => String(m.cfdi_ref ?? "") === cfdiRef)
   }
 
   // ── Departamentos facturables ───────────────────────────────────────────────
