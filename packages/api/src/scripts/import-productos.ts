@@ -2,6 +2,7 @@ import { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
 import * as path from "path"
 import * as fs from "fs"
+import { pesosAAmount } from "../lib/precio"
 
 // ---------------------------------------------------------------------------
 // Tipos auxiliares
@@ -230,7 +231,7 @@ export default async function importProductos({ container }: ExecArgs) {
 
         const prices: { amount: number; currency_code: string }[] = []
         if (a.precio1 > 0) {
-          prices.push({ amount: Math.round(a.precio1 * 100), currency_code: "mxn" })
+          prices.push({ amount: pesosAAmount(a.precio1), currency_code: "mxn" })
         }
 
         return {

@@ -1,6 +1,7 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { normalizarFonetico } from "../../../lib/text"
+import { amountAPesos } from "../../../lib/precio"
 
 /** Convierte una URL absoluta de thumbnail a ruta relativa /static/... */
 function thumbnailPath(url: string | null | undefined): string | null {
@@ -287,7 +288,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
   const resultados = variantesBase
     .map((v) => {
-      const precioBase = (precioPorVariantId.get(v.id) ?? 0) / 100
+      const precioBase = amountAPesos(precioPorVariantId.get(v.id))
       // Si el producto tiene impuesto, el precio base es sin IVA → aplicar 16%
       const precio = v.impuesto ? Math.round(precioBase * 1.16 * 100) / 100 : precioBase
       const precio2 = v.precio2 > 0 && v.impuesto ? Math.round(v.precio2 * 1.16 * 100) / 100 : v.precio2

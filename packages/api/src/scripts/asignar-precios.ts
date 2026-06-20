@@ -16,6 +16,7 @@ import { ExecArgs } from "@medusajs/framework/types"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import * as fs from "fs"
+import { pesosAAmount } from "../lib/precio"
 
 function parseNum(val: unknown): number {
   const n = parseFloat(String(val ?? "0"))
@@ -56,7 +57,7 @@ export default async function asignarPrecios({ container }: ExecArgs) {
     if (!clave) continue
     const precio1 = parseNum(r[7]) // columna H = precio1
     if (precio1 > 0) {
-      precioPorSku.set(clave, Math.round(precio1 * 100))
+      precioPorSku.set(clave, pesosAAmount(precio1))
     }
   }
   logger.info(`Precios en Excel: ${precioPorSku.size} artículos con precio > 0`)

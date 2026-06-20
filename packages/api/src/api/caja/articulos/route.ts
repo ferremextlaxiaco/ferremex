@@ -1,6 +1,7 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
 import { slugify as slugifyText, normalizarFonetico } from "../../../lib/text"
+import { pesosAAmount, amountAPesos } from "../../../lib/precio"
 
 // ---------------------------------------------------------------------------
 // Helper — existencias por SKU (misma lógica que /caja/productos)
@@ -220,7 +221,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     for (const v of fVarsPrecio) {
       const precios: any[] = (v as any).price_set?.prices ?? []
       const mxn = precios.find((p) => p.currency_code === "mxn")?.amount
-      if (mxn !== undefined) precioPorVarId.set(v.id, mxn / 100)
+      if (mxn !== undefined) precioPorVarId.set(v.id, amountAPesos(mxn))
     }
 
     const result = (faltantesProds as any[]).map((p) => {
@@ -316,7 +317,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     const fPrecioMap = new Map<string, number>()
     for (const v of fVarsPrecios) {
       const mxn = ((v as any).price_set?.prices ?? []).find((p: any) => p.currency_code === "mxn")?.amount
-      if (mxn !== undefined) fPrecioMap.set(v.id, mxn / 100)
+      if (mxn !== undefined) fPrecioMap.set(v.id, amountAPesos(mxn))
     }
     const fSkus = withRelations.flatMap((p: any) => (p.variants as any[])?.map((v: any) => v.sku).filter(Boolean) ?? []) as string[]
     const fStock = await existenciasPorSku(inventoryModule, fSkus)
@@ -436,7 +437,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const precios: any[] = (v as any).price_set?.prices ?? []
     const mxn = precios.find((p) => p.currency_code === "mxn")?.amount
-    if (mxn !== undefined) precioPorVariantId.set(v.id, mxn / 100)
+    if (mxn !== undefined) precioPorVariantId.set(v.id, amountAPesos(mxn))
   }
 
   // ── Paso 5: existencias por SKU ─────────────────────────────────────────────
@@ -558,7 +559,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           allow_backorder: false,
           prices:
             body.precio1 > 0
-              ? [{ amount: Math.round(body.precio1 * 100), currency_code: "mxn" }]
+              ? [{ amount: pesosAAmount(body.precio1), currency_code: "mxn" }]
               : [],
         },
       ],
@@ -706,14 +707,14 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
         const mxnPrice = (vd?.price_set?.prices ?? []).find((p: any) => p.currency_code === "mxn")
         if (mxnPrice) {
           await pricingModule.updatePrices([
-            { id: mxnPrice.id, amount: Math.round(body.precio1 * 100) },
+            { id: mxnPrice.id, amount: pesosAAmount(body.precio1) },
           ])
         } else {
           await pricingModule.addPrices([
             {
               priceSetId,
               prices: [
-                { amount: Math.round(body.precio1 * 100), currency_code: "mxn" },
+                { amount: pesosAAmount(body.precio1), currency_code: "mxn" },
               ],
             },
           ])

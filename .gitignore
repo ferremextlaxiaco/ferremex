@@ -76,3 +76,4 @@ CLAUDE.md.bak-*
 # Artefactos de diseño y datos pesados (no son código)
 design2/
 ArticulosClaveSat.xlsx
+backup_ferremex_*.sql

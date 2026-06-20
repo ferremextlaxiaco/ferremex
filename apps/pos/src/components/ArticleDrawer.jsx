@@ -3,6 +3,9 @@ import { UNIDADES_SAT } from "../lib/unidades-sat"
 import { subirImagenArticulo } from "../lib/client"
 
 function round2(n) { return Math.round(n * 100) / 100 }
+// El precio SIN IVA se guarda con 4 decimales para que el CON IVA cierre exacto
+// (65/1.16 = 56.0345 → ×1.16 = 65.00). La BD lo soporta (price set en diezmilésimas).
+function round4(n) { return Math.round(n * 10000) / 10000 }
 
 function calcCostos(form) {
   const base   = Number(form.precioCompra) || 0
@@ -53,9 +56,10 @@ function PrecioRow({ label, required, value, onChange, readOnly, costoCalc, apli
           const i = raw.indexOf(".")
           if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
           setTexto(raw)
-          // El usuario teclea el precio CON IVA → guardamos SIN IVA.
+          // El usuario teclea el precio CON IVA → guardamos SIN IVA con 4 decimales
+          // (así el CON IVA reconstruido cierra exacto: 65 → 56.0345 → 65.00).
           const v = Number(raw) || 0
-          onChange(raw === "" ? "" : (aplicarIva ? round2(v / 1.16) : round2(v)))
+          onChange(raw === "" ? "" : (aplicarIva ? round4(v / 1.16) : round4(v)))
         }}
         onBlur={readOnly ? undefined : () => setTexto(null)}  // re-formatea desde value
       />

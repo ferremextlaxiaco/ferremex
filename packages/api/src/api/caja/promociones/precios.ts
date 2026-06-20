@@ -1,4 +1,5 @@
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
+import { amountAPesos } from "../../../lib/precio"
 
 /**
  * Precios relevantes de un artículo para validar la regla de "no por debajo de
@@ -58,7 +59,7 @@ export async function resolverPreciosPorSku(
   for (const v of conPrecios) {
     const precios: any[] = (v as any).price_set?.prices ?? []
     const mxn = precios.find((p) => p.currency_code === "mxn")?.amount
-    if (mxn !== undefined) precio1PorVariant.set(v.id, mxn / 100)
+    if (mxn !== undefined) precio1PorVariant.set(v.id, amountAPesos(mxn))
   }
 
   for (const v of variantes as any[]) {
