@@ -164,6 +164,7 @@ El POS vive en `apps/pos/` (Vite, puerto 7002, `base: "/pos"`). React 18 + React
   /pedidos      → Pedidos a proveedor (PedidosModule — backend en /caja/pedidos)
   /catalogos    → Taxonomía Dept→Cat→Marca (CatalogosModule — Miller Columns)
   /cartera-credito → Cartera de crédito (CarteraCredito.jsx — BD Medusa vía módulo ferremex_cartera; FIFO/semáforo en cliente)
+  /facturacion  → **NUEVO:** Centro de control CFDI vía Facturama (AdminFacturacion → FacturacionModule: 3 tabs Global/Comprobantes/Config)
   /caja         → Movimientos de caja / arqueo (CashMovementsModule)
   /perifericos  → Config de hardware: impresora térmica, lector de huella, escáner
 /pos/admin/generador → Generador/probador de tickets (FUERA del layout admin — sin sidebar)
@@ -285,6 +286,10 @@ Sistemas compartidos y sus consumidores actuales:
 | `useToasts` (`hooks/useToasts`), `uuid` (`lib/utils`), `formatMXN` (`lib/format`) | módulos POS que los importan |
 | **`SelectorVendedor` (NUEVO)** + `vendedorVenta` en pos-store | `Venta` (header), `ModalCobro` (propaga vendedor a venta) |
 | **`CambiarUsuarioModal` (NUEVO)** | `Venta` (header, botón "Cambiar usuario") |
+| **`lib/precio.ts` (NUEVO)** — `pesosAAmount()`/`amountAPesos()` (factor 10000) | Rutas articulos/productos/promociones/precios, scripts de migración, drawers de precio |
+| **Saldo facturable consumido** (`/caja/facturama/global`) | `FacturacionModule` (preview/emisión/cancelación), `/caja/facturama/global*` (transaccional devengo/reversa), módulo `ferremex_facturable` (BD) |
+| **`VisorComprobante.jsx` (NUEVO)** — componente reutilizable | `ComprobantesPanel` (historial CFDIs), **`FacturarBoton` (post-venta, ticket)** — backdrop-filter blur + PDF pantalla completa |
+| **Facturación CFDI vía Facturama** (`/caja/facturama/*`) | `FacturacionModule` (3 tabs: Global/Comprobantes/Config), `FacturaGlobalPanel` (preview desglose), `ComprobantesPanel` (CRUD CFDI), `FacturacionConfigPanel` (config), Ticket (post-venta), `AdminFacturacion` (página) |
 
 **Protocolo:** cuando un cambio toca uno de estos sistemas, Claude debe:
 1. Listar qué otros módulos consumen el mismo sistema.
@@ -327,6 +332,7 @@ React Context + useReducer. Estado clave: `cajero` (+ `caja_id`, `caja_nombre`),
   - **Compras (Fase 3 cont.):** `listarComprasAPI(proveedorId?)`, `crearCompraAPI`, `cancelarCompraAPI`. Módulo ferremex_compras (Compra + ArticuloCompra). Shape `CompraAPI` con `proveedorId`, artículos en `precioUnit` (camelCase).
   - **Monedero (Fase 3 cont.):** `obtenerConfigMonederoAPI`/`guardarConfigMonederoAPI`, `listarReglasMonederoAPI`/`crearReglaMonederoAPI`/`actualizarReglaMonederoAPI`/`eliminarReglaMonederoAPI`, `listarNivelesMonederoAPI`/`crearNivelMonederoAPI`/`actualizarNivelMonederoAPI`/`eliminarNivelMonederoAPI`, `listarClientesMonederoAPI`, `obtenerDetalleMonederoAPI`, `inscribirMonederoAPI`, `darDeBajaMonederoAPI`, `ajustarPuntosMonederoAPI`, `resetearPuntosMonederoAPI`. Tipos `ConfigMonederoAPI`, `ReglaPuntosAPI`, `NivelMonederoAPI`, `MovimientoMonederoAPI`, `ClienteMonederoFila`, `DetalleMonedero`. Módulo ferremex_monedero. **NUEVO:** helpers `precargarMonederoGlobal(customerId?)`, `invalidarMonederoCache()`, `invalidarDetalleMonedero()`.
   - **Turnos (Fase 3 cont.):** `obtenerConfigTurnos`/`guardarConfigTurnos`. Tipos `TurnosConfig`, `FranjaTurno`. Ruta `/caja/turnos-config` (GET/PUT).
+  - **Facturación CFDI (NUEVO):** `previewGlobalAPI(depto_id?, forzado?)`, `emitirGlobalAPI(articulos_id[], serie, forzado?)`, `listarComprobantesAPI(filtros)`, `cancelarComprobanteAPI(cfdiId, motivo)`, `reenviarComprobanteAPI(cfdiId, email)`, `obtenerArchivoComprobanteAPI(cfdiId, tipo)`, `abrirArchivoComprobanteAPI(url)`, `obtenerConfigFacturacionAPI()`, `guardarConfigFacturacionAPI(config)`. Tipos `LineaGlobal`, `PreviewGlobalData`, `GlobalRegistro`, `ComprobanteCFDI`, `ConfigFacturacion`. Módulo ferremex_facturable. **Nueva utilidad:** `apiFetch` ahora extrae `{error}` del backend.
   - **OC/ticket/folio/catálogos:** `generarOCPdf`, `obtenerTicketConfig`/`guardarTicketConfig`/`migrarTicketConfig`, `obtenerFolioContador`/`reiniciarFolioContador`, `listarCatalogos` (+ invalidación de cache), `actualizarCatalogo`.
 - `pos-store.ts` — estado global (Context + useReducer).
 - `clientes.ts` — **FACHADA ASYNC** sobre BD (`/caja/clientes/*`, `/caja/cartera/*`, `/caja/grupos/*`). Tipos preservados (Cliente, Movimiento, NotaCartera, HistorialLimite, CartEntrada). Funciones `*Local` solo para migración desde localStorage. Lógica de negocio: `calcularSaldos()` (FIFO, EXCLUYE cancelados), semáforo, `anularAbono()` wrapper de ruta PATCH.
@@ -334,6 +340,7 @@ React Context + useReducer. Estado clave: `cajero` (+ `caja_id`, `caja_nombre`),
 - `monedero.ts` — **MOTOR COMPARTIDO** de cálculo de puntos (backend-concept/UI). Funciones `tasaDeLinea(linea, reglas, catalogos?)` (recibe `LineaPuntos` completo con marca/categoria/departamento REALES, resuelve por orden: marca → categoría → departamento → base, fallback a catálogos si faltan), `redondearPuntos()` (aplica modo), `calcularPuntosGanados()` (por línea, cap servidor). Tipos `LineaPuntos` (subtotal + marca? + categoria? + departamento?). Consumido por ModalCobro (preview), ReglaDrawer (validación), /caja/ventas POST (cálculo transaccional).
 - `serial.ts` — impresora ESC/POS + cajón (Chrome/Web Serial).
 - `unidades-sat.ts` — unidades de medida SAT.
+- **`precio.ts` (NUEVO)** — **SISTEMA COMPARTIDO:** `pesosAAmount(pesos)`, `amountAPesos(amount)`, constante `PRECIO_FACTOR = 10000` (diezmilésimas). Convención: precios guardados SIN IVA, devueltos a venta CON IVA (×1.16). Consumido por rutas de artículos/productos, drawers de precio, scripts import/asignar.
 
 ### ESC/POS y cajón de dinero
 `apps/pos/src/lib/serial.ts` usa **Web Serial API** (solo Chrome). Envía comandos ESC/POS a la impresora térmica y
@@ -411,6 +418,13 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 | POST | `/caja/migrar-proveedores-cajas` | One-shot idempotente: migra proveedores (por num_proveedor) + cajas (por nombre) + asignaciones + compras (por folio) desde localStorage a BD. |
 | GET/POST | `/caja/compras` | Historial de compras (módulo ferremex_compras). GET `?proveedor_id=` filtra por proveedor. POST registra compra + artículos. Consumido por ComprasModule (escribe), ConsultarCompras (lee), AdminProveedores (compras por proveedor). |
 | PATCH | `/caja/compras/[id]` | Cancela una compra (estado → Cancelada + motivo). Idempotente. El descuento de inventario lo hace el frontend. |
+| **GET** | **`/caja/facturama/global/preview`** | **NUEVO:** Preview de factura global del día. Query `?depto_id=` (depto facturable), `?forzado=1` (sobregiro). Clasifica artículos: ENTRAN / EXCLUYEN / SIN_CLAVE_SAT por saldo. Devuelve LineaGlobal[]. |
+| **POST** | **`/caja/facturama/global`** | **NUEVO:** Timbra factura global en Facturama. Body: `{ articulos_id[], serie, forzado? }`. Devuelve cfdi_id/uuid. Marca ventas con `global_uuid`, consume saldo en módulo ferremex_facturable. |
+| **GET** | **`/caja/facturama/comprobantes`** | **NUEVO:** Lista CFDIs desde Facturama + cruza con globales. Filtros: DateStart, DateEnd, Status, Page. Manejo "sin conexión" (status 0 → 503 + sin_conexion:true). |
+| **PATCH** | **`/caja/facturama/comprobantes/[cfdiId]`** | **NUEVO:** Cancela CFDI (motivo SAT 01-04). Body: `{ motivo }`. Reversa saldo si es global. Auditable en ConsumoFacturable. |
+| **POST** | **`/caja/facturama/comprobantes/[cfdiId]/reenviar`** | **NUEVO:** Reenvía CFDI por email. Body: `{ email }`. |
+| **GET** | **`/caja/facturama/comprobantes/[cfdiId]/archivo`** | **NUEVO:** Descarga PDF/XML de CFDI. Query: `?tipo=pdf|xml`. |
+| **GET/PUT** | **`/caja/facturama/config`** | **NUEVO:** Lee/escribe configuración. GET devuelve serie nominativa/global, periodicidad, correo contador (módulo ferremex_facturable). PUT persiste cambios. |
 
 ### Seguridad y concurrencia de las rutas `/caja/*`
 - **Token POS:** un middleware (`middlewares.ts` + `lib/pos-auth.ts`) exige el header `X-POS-Token` (= env `POS_TOKEN`) en todos los métodos mutantes (POST/PUT/PATCH/DELETE), **excepto** `/caja/login`. Si `POS_TOKEN` no está definido, la validación se desactiva (dev). El cliente lo envía vía `posHeaders()` en `client.ts` (`VITE_POS_TOKEN`). La vista admin de usuarios usa además `POS_ADMIN_TOKEN` / `VITE_POS_ADMIN_TOKEN`.
@@ -574,6 +588,7 @@ Las skills viven en `.claude/skills/`. Carga la que corresponda antes de trabajo
 - **Alias de blocks.json** controlan dónde el CLI de Mercur coloca los bloques instalados: `api` → `packages/api/src`, `vendor` → `apps/vendor/src`, `admin` → `apps/admin/src`. Actualízalos si cambia la estructura de directorios.
 - **PedidosModule ya tiene backend**: "Mis Pedidos" se persiste vía `/caja/pedidos` (GET/POST/PUT/DELETE) con folio secuencial server-side. `HISTORIAL_MOCK` y `_folioCount` fueron removidos. Los "pedidos en espera" y el borrador en curso siguen en `localStorage` (`ferremex_pedidos_espera`, `ferremex_pedido_draft`) por ser borradores locales por terminal. Los `window.confirm` se reemplazaron por `ConfirmDialog.jsx`.
 - **`listProducts({ category_id })` no funciona en Medusa 2.x**: pasar `{ category_id: [uuid] }` a `productModule.listProducts()` lanza error ("Trying to query by not existing property"). La solución es el patrón de dos pasos: `listProductCategories({ id: [uuid] }, { relations: ["products"] })` para obtener los product IDs, luego `listProducts({ id: productIds })`. Ya implementado en `/caja/productos` y `/caja/articulos`.
+- **Precios: factor 10000 (diezmilésimas):** desde 2026-06-19, `Price.amount` se guarda en diezmilésimas (factor 10000, 4 decimales) en lugar de centavos (factor 100, 2 decimales). Permite exactitud con IVA ($65 en lugar de 64.99). Helper central: `lib/precio.ts` (`pesosAAmount()` / `amountAPesos()`). Convención: guardados SIN IVA, devueltos a venta CON IVA (×1.16). Migración one-shot ya aplicada (19986 precios).
 - **CLI de Medusa (`db:generate`, `db:migrate`) fallando vía bun**: `bun x medusa db:generate` y afines fallan por PATH de PostgreSQL no resuelto. Workaround: usar `node "../../node_modules/.bun/@medusajs+cli@<version>/.../cli.js" db:generate <module>` directo desde `packages/api`, donde `launch-api.js` ya ha resuelto el PATH de PostgreSQL.
 
 ---

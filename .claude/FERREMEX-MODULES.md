@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-06-12.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-06-19.
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -45,6 +45,7 @@
 | Proveedores | `pages/AdminProveedores.tsx` | — | Gestión de proveedores + facturas a crédito | 🟢 módulo ferremex_proveedores |
 | Compras | `pages/AdminCompras.jsx`, `AdminComprasNueva.jsx`, `AdminConsultarCompras.jsx` | `components/ComprasModule.jsx`, `modules/ConsultarCompras.jsx` (+ `ComprasTable`, `ComprasDetailPanel`, `OC*`) | Alta + historial de compras, generación OC PDF | 🟢 módulo ferremex_compras |
 | Pedidos | `pages/AdminPedidos.jsx` | `components/PedidosModule.jsx` (+ `PedidosTabla`, `PedidosPreview`, `PedidosFiltros`, `ConfirmDialog`) | Pedidos a proveedor desde faltantes. **Backend en `/caja/pedidos`** (folio server-side); espera/draft 🔴 | 🟡 `pedidos-pos.json` + 🔴 espera/draft |
+| **Facturación CFDI** | **`pages/AdminFacturacion.tsx`** (`/admin/facturacion`) | **`components/FacturacionModule.jsx`** (3 tabs: Global/Comprobantes/Config; + `FacturaGlobalPanel`, `ComprobantesPanel`, `FacturacionConfigPanel`, `VisorComprobante`) | **NUEVO:** Centro de control CFDI vía Facturama. Factura global del día (pública) con preview de desglose (ENTRAN/EXCLUYEN/SIN CLAVE SAT por saldo facturable). Historial de CFDIs (filtros fecha/tipo/estado, descarga lote, cancelación, reenvío email). Config de serie/periodicidad. Backend en `/caja/facturama/*` | 🟢 módulo ferremex_facturable (BD) + 🟡 `globales-pos.json`, `facturacion-config.json` |
 | Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón) con preview en vivo | 🟡 `ticket-config.json` |
 | Periféricos | `pages/AdminPerifericos.tsx` | — | Config impresora/huella/escáner (Web Serial) + toggle confirmación de puntos + toggle monedero confirmación | navegador |
 | Generador | `pages/GeneradorTickets.tsx` (`/admin/generador`, fuera del layout) | — | Probador de tickets/periféricos | — |
@@ -61,8 +62,10 @@
 - **`lib/unidades-sat.ts`** — unidades SAT. Consumido por ArticleDrawer.
 - **`lib/utils.ts`** — `uuid()` (id local para keys/borradores). Consumido por PedidosModule (y otros pendientes de migrar su `uuid` v4 local).
 - **`lib/format.ts`** — `formatMXN` / `formatMXNAbs`. Consumido por SalesHistory, CashMovementsModule, CarteraCredito, ModalCobro.
+- **`lib/precio.ts`** — **NUEVO:** `pesosAAmount(pesos)`, `amountAPesos(amount)` (factor 10000 = diezmilésimas para 4 decimales exactos). Consumido por rutas/componentes de precios (articulos, productos, promociones, scripts de migración).
 - **`hooks/useToasts.ts`** — hook de toasts compartido `{ toasts, push }`. Consumido por SalesHistory, EmployeesModule, ArticlesModule.
 - **`components/ConfirmDialog.jsx`** — diálogo de confirmación reutilizable (reemplaza `window.confirm`). Consumido por PedidosModule.
+- **`components/VisorComprobante.jsx`** — **NUEVO:** previsualizador reutilizable de CFDI (PDF a pantalla completa + panel lateral de detalles, backdrop-filter blur). Consumido por ComprobantesPanel + FacturarBoton.
 
 ### Backend — librerías compartidas (`packages/api/src/lib/`)
 - **`json-store.ts`** — `readJson` / `writeJsonAtomic` (tmp+rename) / `withFileLock` (mutex en-memoria por archivo) / `updateJson`. Consumido por rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `ventas/[folio]`.
@@ -72,6 +75,7 @@
 ### Backend — módulos de negocio (`packages/api/src/modules/`)
 - **`ferremex_cartera`** — módulo custom de Medusa. Entidades: `CarteraCliente` (raíz única por customer_id), `MovimientoCartera` (compra/pago transaccional, `cancelado`, `motivo_cancelacion`, `fecha_cancelacion`), `NotaCartera` (registros textuales), `HistorialLimite` (auditoría de cambios de límite). Registrado en `medusa-config.ts` y migración aplicada. Consumido por rutas `/caja/cartera/*`.
 - **`ferremex_monedero`** — módulo custom de Medusa (Fase 3 continuación). Entidades: `ConfigMonedero` (singleton: `valor_punto`, `tasa_base`, `max_canje_pct`, `min_puntos_canje`, `vencimiento_meses`, `confirmar_huella`, `confirmar_codigo`, `redondeo`, `periodo_nivel_meses`), `ReglaPuntos` (ámbito marca/departamento/categoría + ref + tasa%; tasa 0 = excluido), `NivelMonedero` (tiers: nombre, orden, umbral_periodo, multiplicador, valor_punto_bonus, nivel_precio, color), `MovimientoMonedero` (customer_id, tipo ganado/canjeado/ajuste/vencido/reset, puntos, folio, soft-cancel auditable). Registrado en `medusa-config.ts` y migraciones aplicadas. **GOTCHA:** pluralizador runtime genera "…Monederos" (un -s), pero codegen sugiere "…Monederoes" (mismatch resuelto con interface merge en service.ts). El nivel del cliente se DERIVA (no almacena) del período de compras vía `/caja/monedero/_nivel.ts`. Consumido por rutas `/caja/monedero/*` y transaccional en `/caja/ventas` (devengo + canje).
+- **`ferremex_facturable`** — **NUEVO:** módulo custom de Medusa (doble inventario fiscal). Entidades: `SaldoFacturable` (saldo por SKU: piezas con respaldo fiscal, independiente del stock; puede ser negativo = sobregiro), `MovimientoFacturable` (bitácora auditable recarga/consumo/ajuste; `cfdi_ref` para reversa al cancelar global), `DeptoFacturable` (qué departamentos son facturables). El saldo sube al recibir compra "Con Factura" (`/caja/compras`), baja solo al FACTURAR (consumo en `/caja/facturama/global` y nominativas). Service: `obtenerSaldo`, `saldoDeSku`, `recargar`, `consumir`, `ajustarA`, `listarConsumosPorCfdi`, `mapaDeptos`, `marcarDepto`. **GOTCHA:** pluralización inglesa (`listSaldoFacturables`, `listMovimientoFacturables`, `listDeptoFacturables`). Consumido por rutas `/caja/facturable/*` (tab Saldo facturable de Artículos) y `/caja/facturama/*` (global).
 
 ---
 
@@ -104,6 +108,11 @@ EmployeesModule ──listarCajasAPI(), crearCajaAPI, actualizarCajaAPI──►
 EmployeesModule ──TurnosConfigModal (modo/franjas)──► /caja/turnos-config (GET/PUT)
 ComprasModule ──generarOCPdf()──► /caja/generar-oc (PDF)
 Login ──obtenerConfigTurnos() + buildTurnoId(cfg)──► turno_id por modo (día: YYYY-MM-DD; turnos: -franjaId)
+**FacturacionModule (3 tabs)** ──previewGlobalAPI, emitirGlobalAPI, listarComprobantesAPI, cancelarComprobanteAPI, reenviarComprobanteAPI, obtenerArchivoComprobanteAPI──► /caja/facturama/* (global preview/emit, comprobantes CRUD, config)
+**FacturaGlobalPanel** ──previewGlobalAPI (clasificación ENTRAN/EXCLUYEN/SIN_CLAVE por saldo)──► /caja/facturama/global/preview (depto facturable, desglose)
+**ComprobantesPanel** ──listarComprobantesAPI (filtros fecha/tipo/estado), cancelarComprobanteAPI (motivo SAT), reenviarComprobanteAPI (email)──► /caja/facturama/comprobantes (* CRUD + descarga lote)
+**Ticket / FacturarBoton** ──VisorComprobante (previsualización CFDI)──► componente reutilizable (PDF + detalles panel)
+**FacturacionModule** ──obtener/guardarConfigFacturacionAPI──► /caja/facturama/config (serie, periodicidad, correo contador)
 ```
 
 ---

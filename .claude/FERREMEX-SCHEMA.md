@@ -1,8 +1,8 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-12.
-> **Medusa:** módulos nativos + `metadata` en producto + **módulos custom ferremex_cartera + ferremex_monedero + ferremex_turnos** (Fase 3).
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-19.
+> **Medusa:** módulos nativos + `metadata` en producto + **módulos custom ferremex_cartera + ferremex_monedero + ferremex_facturable** (Fase 3).
 
 ---
 
@@ -18,7 +18,7 @@
 | InventoryLevel | `inventory_level` | `id`, `inventory_item_id`, `location_id`, `stocked_quantity`, `reserved_quantity` | Stock real. Se descuenta en venta |
 | StockLocation | `stock_location` | `id`, `name` | Almacén principal |
 | PriceSet | `price_set` | `id` | Vinculado a variante (link) |
-| Price | `price` | `id`, `price_set_id`, `currency_code`, `amount` | MXN, en **centavos** (entero) |
+| Price | `price` | `id`, `price_set_id`, `currency_code`, `amount` | MXN, en **diezmilésimas** (factor 10000, 4 decimales para exactitud con IVA) |
 | File | `file` | `id`, `filename`, `mime_type`, `url` | Imágenes subidas vía `/caja/imagen` |
 | **Customer** | **`customer`** | `id`, `email`, `first_name`, `last_name`, `phone`, **`metadata` (JSONB)** | **Ahora guarda clientes POS en metadata** (Fase 3). `metadata.pos_cliente = true` marca cliente POS |
 | **CustomerGroup** | **`customer_group`** | `id`, `name`, **`metadata` (JSONB)** | Grupos de clientes. `metadata.pos_grupo = true` marca grupo POS |
@@ -42,6 +42,14 @@
 | **ReglaPuntos** | `regla_puntos` | `id`, `ambito` ("marca" / "departamento" / "categoria"), `ref` (nombre), `tasa` (%), `activa` (bool) | Tasas por taxonomía. Tasa 0 = excluye la línea. Resolución: marca → categoría → departamento → tasa_base. |
 | **NivelMonedero** | `nivel_monedero` | `id`, `nombre`, `orden`, `umbral_periodo` (pesos acumulados en período), `multiplicador` (tasa), `valor_punto_bonus` (decimal), `nivel_precio` (1-4), `color` (hex) | Tiers de lealtad. El nivel se DERIVA en cliente (no almacena). Multiplicador aplica a puntos ganados. |
 | **MovimientoMonedero** | `movimiento_monedero` | `id`, `customer_id` (FK), `tipo` ("ganado" / "canjeado" / "ajuste" / "vencido" / "reset"), `puntos` (int), `fecha`, `folio_venta?`, `motivo?`, `cancelado` (bool), `motivo_cancelacion` (text) | Auditable. Devengo + canje transaccionales en POST `/caja/ventas` dentro del lock. Cancelación de venta marca soft-cancel el devengo. |
+
+### Módulo custom: `ferremex_facturable` (Fase 3 continuación — Facturación CFDI)
+
+| Entidad | Tabla | Campos clave | Notas |
+|---|---|---|---|
+| **SaldoFacturable** | `saldo_facturable` | `id` (PK), `sku` (unique), `saldo` (number, default 0, PUEDE ser negativo = sobregiro), `clave_sat` (nullable), `descripcion` (nullable), `departamento` (nullable), `actualizado_el` (ISO) | Piezas con respaldo fiscal por artículo (independiente del stock físico). Sube al recibir compra "Con Factura"; baja solo al FACTURAR (consumo). |
+| **MovimientoFacturable** | `movimiento_facturable` | `id` (PK), `sku`, `tipo` ("recarga"/"consumo"/"ajuste"), `cantidad` (con signo), `folio_ref` (nullable), `cfdi_ref` (nullable, para reversa al cancelar global), `motivo` (nullable), `fecha` (ISO) | Bitácora auditable; el saldo = suma de movimientos del SKU. Pluralización inglesa: listMovimientoFacturables. |
+| **DeptoFacturable** | `depto_facturable` | `id` (PK), `departamento` (unique), `facturable` (bool, default true), `actualizado_el` (ISO) | Marca qué departamentos son facturables (depto define, artículo limita). |
 
 ### Relaciones (links Medusa 2.x)
 ```
@@ -75,10 +83,11 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
   "proveedor": "Distribuidora ABC",
   "inventarioMin": 5, "inventarioMax": 100,
   "localizacion": "Pasillo 3, Repisa 2",
-  "unidadCompra": "Caja", "unidadVenta": "Pieza", "factor": 12
+  "unidadCompra": "Caja", "unidadVenta": "Pieza", "factor": 12,
+  "facturable": true                   // NUEVO: marcado en depto facturable (CFDI global)
 }
 ```
-- **Precios:** `precio1` vive en el price_set (BD); `precio2-4` en metadata. Nivel elegido por venta según `clienteActivo.num_precio` (1–4): Mostrador / Cliente / Distribuidor / Especial.
+- **Precios:** `precio1` vive en el price_set (BD, en **diezmilésimas** factor 10000); `precio2-4` en metadata. Nivel elegido por venta según `clienteActivo.num_precio` (1–4): Mostrador / Cliente / Distribuidor / Especial. Helper central: `lib/precio.ts` `pesosAAmount()` / `amountAPesos()`. Convención: guardados SIN IVA, devueltos a venta YA CON IVA (×1.16).
 - **Taxonomía:** `departamento`, `categoria`, `marca` son metadata. Ahora `/caja/productos` expone `departamento` y `categoria` en respuesta para cálculo de puntos REAL (no derivado de marca). El motor `lib/monedero.ts` `tasaDeLinea()` recibe `LineaPuntos` con campos `departamento?`, `categoria?`, `marca?` y resuelve por orden: marca → categoría → departamento → tasa_base.
 
 ## 2b. `customer.metadata` (JSONB) — Cliente POS (Fase 3)
@@ -126,7 +135,9 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 
 | Archivo | Forma | Escrito por |
 |---|---|---|
-| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales de producto), PATCH `/caja/ventas/:folio` (cancelación revierte puntos) |
+| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion?, global_uuid?, global_cfdi_id? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales de producto), PATCH `/caja/ventas/:folio` (cancelación revierte puntos). **NUEVO:** `global_uuid`, `global_cfdi_id` marcan inclusión en factura global. |
+| `globales-pos.json` | `{ uuid, fecha, serie, folio, cfdi_id, estado, monto_total, articulos_incluidos, consumo_saldo, timbrado_en }[]` | `/caja/facturama/global` POST (timbra) + PATCH (cancelación reversible) |
+| `facturacion-config.json` | `{ serie_nominativa: string, serie_global: string, periodicidad_global: "diaria"|"manual", correo_contador: string }` | `/caja/facturama/config` GET/PUT |
 | `pedidos-pos.json` | `{ id, folio, fecha, proveedor?, proveedorId?, status, articulos[{clave?, descripcion?, cantidad}], ... }[]` | `/caja/pedidos` |
 | `pedido-counter.json` | `{ contador: number }` | `/caja/pedidos` POST (folio secuencial) |
 | `cortes-pos.json` | `{ caja_id, periodo_desde, franja_id?, cerrado_en, franja_dia?, ventas_total, ventas_efectivo, ventas_transferencia, ventas_credito, ventas_tarjeta?, movimientos_total, movimientos_entrada, movimientos_salida, ... }[]` | `/caja/corte` POST (por CAJA, periodo continuo desde último cierre, no por cajero/turno) |
@@ -212,17 +223,24 @@ LineaPuntos { subtotal: number, marca?: string | null, departamento?: string | n
 
 ---
 
-## 4b. Rutas `/caja/*` nuevas y refactorizadas (Sesión 2026-06-12)
+## 4b. Rutas `/caja/*` nuevas y refactorizadas (Sesión 2026-06-12 y 2026-06-19)
 
 | Método | Ruta | Cambio | Notas |
 |--------|------|--------|-------|
 | GET/POST | `/caja/corte` | Refactorizado por CAJA (no cajero/turno) | Ahora `calcularResumen(caja_id, desde, filtroFranja)`. Período continuo desde último corte cerrado. Respuesta += `caja_id`, `periodo_desde`, `franja_id`, `modo`. Query: `?caja_id=` (sin cajero/turno obligatorios). |
-| POST | `/caja/cortes-pendientes` | **NUEVO** | Lista cajas con ventas posteriores a su último corte. Consumido por banner de CorteModule. |
+| GET | `/caja/cortes-pendientes` | **NUEVO** | Lista cajas con ventas posteriores a su último corte. Consumido por banner de CorteModule. |
 | GET | `/caja/turnos-config` | **NUEVO** | Lee configuración de turnos: `{ modo: "dia"|"turnos", franjas: [{id,nombre,desde,hasta}] }`. |
 | PUT | `/caja/turnos-config` | **NUEVO** | Guarda configuración de turnos. |
-| POST | `/caja/ventas` | Extendido | Ahora persiste `caja_id`, `caja_name` (del cajero), `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items (desde producto). Devengo/canje monedero con taxonomía REAL. |
+| POST | `/caja/ventas` | Extendido | Ahora persiste `caja_id`, `caja_name` (del cajero), `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items (desde producto). Devengo/canje monedero con taxonomía REAL. **NUEVO:** `global_uuid`, `global_cfdi_id` marca inclusión en factura global. |
 | PATCH | `/caja/ventas/:folio` | Mejorado | Cancelación revierte `puntos_ganados`/`puntos_canjeados` (soft-cancel en BD). |
 | GET/PUT/DELETE | `/caja/usuarios` | Extendido | PosUsuario += `caja_id`, `horario?: {dias,entrada,salida,turno_id}`. |
+| **GET** | **`/caja/facturama/global/preview`** | **NUEVO** | Preview de factura global del día (clasificación por saldo). Query: `?depto_id=` (opcional, depto facturable), `?forzado=1` (sobregiro). Respuesta: LineaGlobal[], clasificadas. |
+| **POST** | **`/caja/facturama/global`** | **NUEVO** | Timbra factura global en Facturama. Body: `{ articulos_id[], serie, forzado? }`. Devuelve uuid timbrado, marca ventas con `global_uuid`, consume saldo. |
+| **GET** | **`/caja/facturama/comprobantes`** | **NUEVO** | Lista CFDIs desde Facturama (con filtros DateStart/DateEnd/Status/Page). Cruza con globales persisted. |
+| **PATCH** | **`/caja/facturama/comprobantes/[cfdiId]`** | **NUEVO** | Cancela CFDI (motivo SAT 01-04, reversible). Body: `{ motivo }`. Revierte saldo si es global. |
+| **POST** | **`/caja/facturama/comprobantes/[cfdiId]/reenviar`** | **NUEVO** | Reenvía CFDI por correo. Body: `{ email }`. |
+| **GET** | **`/caja/facturama/comprobantes/[cfdiId]/archivo`** | **NUEVO** | Descarga PDF/XML de CFDI. Query: `?tipo=pdf|xml`. |
+| **GET/PUT** | **`/caja/facturama/config`** | **NUEVO** | Lee/escribe configuración (serie, periodicidad, correo contador). |
 
 ---
 

@@ -4,7 +4,7 @@
 > `MEMORIA_INSTALACIÓN.md` (estado por fases/infra, mantenido por el skill `actualizador`).
 > **Actualiza este archivo al cierre de cada sesión** (regla abajo). Convierte fechas relativas a absolutas.
 >
-> Última actualización: **2026-06-12**
+> Última actualización: **2026-06-19**
 
 ---
 
@@ -24,6 +24,8 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 - **POS:** React 18 + Vite, puerto 7002 (`base: /pos`). Montado como módulo `vendor-ui`.
 - **Servicios (PM2):** `ferremex-admin` (7000), `ferremex-pos` (7002), `ferremex-api` (9000). Redis (Docker) 6379, PostgreSQL 16 (5432).
 - **Últimos commits:**
+  - `97d7e19` Facturación CFDI vía Facturama: centro de control, doble inventario fiscal, global del día, historial, cancelación reversible, VisorComprobante reutilizable (2026-06-19)
+  - `a85b733` Precios: precisión factor 10000 (diezmilésimas) para exactitud con IVA; migración one-shot y lib/precio.ts centralizado (2026-06-19)
   - `[SESIÓN 2026-06-12]` Sistema de TURNOS/CORTES refactorizado (Fases 1-3) + ModalCobro v2 (Tailwind/lucide, canje puntos, método Tarjeta) + monedero motor con taxonomía REAL (2026-06-12)
   - `[TBD]` Monedero Electrónico: programa de lealtad por puntos (2026-06-08)
   - `f2d8aac` Cartera: cancelar (anular) abonos con devolución a la deuda (2026-06-01)
@@ -83,6 +85,17 @@ El agente `doc-updater` puede ayudar a refrescar este archivo.
 
 ## Latest Execution Notes
 
+- **2026-06-19 (Feature: Facturación CFDI + Precisión de precios):**
+  - **Módulo de Facturación (CFDI vía Facturama):** 3 tabs (`FacturaGlobalPanel`, `ComprobantesPanel`, `FacturacionConfigPanel`). **Global:** factura diaria de público en general (CFDI 4.0) con preview que clasifica artículos por estado respecto al saldo facturable (depto facturable, desglose ENTRAN/EXCLUYEN/SIN_CLAVE SAT). Modal de confirmación con "switch" de forzado (sobregiro). Filtra por depto facturable. **Comprobantes:** historial de CFDIs desde Facturama (1 clic = selecciona, doble clic = abre), filtros fecha/tipo/estado/texto. Descarga lote a carpeta (File System Access API, PDF+XML individuales). Cancelación con motivo SAT 01-04 + reversa de saldo. Reenvío por email. **Config:** serie (nominativa/global), periodicidad global, correo contador. Ruta `/admin/facturacion` (module mount en sidebar). Backend: `/caja/facturama/*` (global/preview POST, global POST timbra, comprobantes GET+PATCH cancelar+POST reenviar, config GET/PUT, archivos GET).
+  - **Librerías de soporte:** `lib/global-builder.ts` (lógica pura de agrupación/clasificación), `cfdi-mapper.ts` (mapeo de líneas a CFDI global), `facturable-resolver.ts` (depto/descripcion por SKU), `facturama.ts` mejorado (listarCfdis con filtros, manejo "sin conexión"). Módulo `ferremex_facturable` (BD Medusa): ConfigFacturable + ConsumoFacturable (auditable).
+  - **Frontend:** `client.ts` extendido con 9 funciones Facturama + tipos (LineaGlobal, PreviewGlobalData, GlobalRegistro, ComprobanteCFDI, ConfigFacturacion). `VisorComprobante.jsx` componente reutilizable (PDF pantalla completa + panel detalles, backdrop-filter blur), montado en ComprobantesPanel + FacturarBoton (ticket post-venta). `apiFetch` ahora extrae `{error}` del backend.
+  - **Datos:** nuevos JSONs: `globales-pos.json` (registro de globales timbradas), `facturacion-config.json`. `ventas-pos.json` += `global_uuid`, `global_cfdi_id` (marca de inclusión en global).
+  - **Fixes:** atribución cliente venta→ticket→factura (memoiza clienteFactura en Ticket), régimen Facturama cambiado a 621 (RIF, del perfil TaxEntity, no .env).
+- **2026-06-19 (Feature: Precisión de precios × 10000):**
+  - **Cambio de factor de precios:** Price amount = DIEZMILÉSIMAS (factor 10000, 4 decimales) en lugar de CENTAVOS (factor 100, 2 decimales). Permite exactitud en precios con IVA cerrados (ej. $65 en lugar de 64.99).
+  - **Centralización:** `lib/precio.ts` nuevo con `pesosAAmount(pesos)`, `amountAPesos(amount)`, constante `PRECIO_FACTOR = 10000`. Consumido por: rutas articulos (POST+PUT+3 GET), productos, promociones/precios, scripts import/asignar.
+  - **Convención:** precio1..4 guardados SIN IVA en BD; `/caja/productos` los devuelve YA CON IVA (×1.16) a la venta. Drawer muestra con IVA, guarda sin IVA. Separador decimal: punto, no coma del locale.
+  - **Migración:** script `migrar-precios-decimales.ts` (×100 a amounts existentes, control `MIGRAR_APLICAR=1`). Ya aplicada: 19986 precios.
 - **2026-06-12 (Feature: Sistema de TURNOS/CORTES, ModalCobro v2, monedero con taxonomía real):**
   - **TURNOS/CORTES refactorizado (Fases 1-3):** Cambio arquitectónico mayor. Antes: corte por `cajero` exacto + `turno_id` exacto (formato YYYY-MM-DD-m/t, corte rígido a 14h). Ahora: corte por CAJA con período continuo desde último corte cerrado.
     - **Fase 1 — Corte por caja:** `/caja/ventas` persiste `caja_id` + `caja_name` (de cajero logueado) + `vendedor`. `corte/route.ts`: `calcularResumen(caja_id, desde, filtroFranja)` filtra por caja (no cajero/turno) en período continuo. `CorteCerrado` identifica por `(caja_id, periodo_desde)` no `(cajero, turno_id)`. Tiene `periodo_desde`, `franja_id`, `franja_dia`. GET `/caja/corte?caja_id=` sin cajero/turno obligatorios. NUEVA ruta `/caja/cortes-pendientes` (banner en CorteModule).
