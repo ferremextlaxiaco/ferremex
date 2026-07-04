@@ -1,0 +1,21 @@
+# Ferremex — Proxy local del POS para las cajas
+# ------------------------------------------------------------------
+# Expone el POS en http://localhost:8080 reenviando TODO al servidor
+# central (192.168.1.50:9000). Como el navegador ve "localhost", Chrome
+# lo trata como CONTEXTO SEGURO y habilita Web Serial → el cajón de
+# dinero y la impresora térmica ESC/POS funcionan SIN certificados.
+#
+# El POS y su API (/caja, /static) comparten origen en el servidor, así
+# que un solo reverse_proxy reenvía /pos, /caja y /static de un golpe.
+#
+# Si la IP del servidor cambia, edita SOLO la línea de abajo.
+# ------------------------------------------------------------------
+{
+	# Sin administración remota ni HTTPS automático: es un proxy local simple.
+	admin off
+	auto_https off
+}
+
+http://localhost:8080 {
+	reverse_proxy 192.168.1.50:9000
+}
