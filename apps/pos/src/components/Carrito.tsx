@@ -347,7 +347,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
         <div className="carrito-acciones">
           <button
             className="btn-vaciar"
-            onClick={() => dispatch({ type: "CLEAR" })}
+            onClick={() => dispatch({ type: "CLEAR_ITEMS" })}
             disabled={items.length === 0}
           >
             🗑 Vaciar

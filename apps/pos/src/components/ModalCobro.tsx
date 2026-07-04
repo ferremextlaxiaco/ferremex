@@ -213,6 +213,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     try {
       const ventaItems = state.items
       const ventaCliente = state.clienteActivo
+      // Diagnóstico (Bug: venta sin cliente pese a estar elegido): registra el
+      // cliente EXACTO que se enviará en el payload, en el momento del cobro. Si
+      // esto sale null pero el cajero veía un cliente, comparar con la traza de
+      // [POS clienteActivo] en pos-store para ver dónde se perdió. Quitar tras diagnosticar.
+      // eslint-disable-next-line no-console
+      console.info(
+        `[POS cobro] registrando venta — cliente:`,
+        ventaCliente ? `${ventaCliente.nombre} (${ventaCliente.id})` : "∅ público en general"
+      )
       // El cargo a crédito lo registra el backend de forma TRANSACCIONAL dentro
       // de POST /caja/ventas (dentro del lock de la venta). Por eso enviamos
       // cliente_id/plazo y ya NO llamamos a agregarMovimientoCredito por separado:
@@ -603,6 +612,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           </div>
         </div>
       )}
+
     </div>
   )
 }

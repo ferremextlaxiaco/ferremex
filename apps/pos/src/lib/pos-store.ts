@@ -126,6 +126,13 @@ type PosAction =
   | { type: "REMOVE"; sku: string }
   | { type: "ADD_PAQUETE"; paqueteId: string; paqueteNombre: string; lineas: LineaPaquete[] }
   | { type: "REMOVE_PAQUETE"; paqueteId: string }
+  // Vacía SOLO los productos del carrito. NO toca el cliente, el vendedor ni el
+  // modo cotización — es lo que hace el botón "Vaciar" (quitar lo agregado). Para
+  // el reset total de fin de transacción usa CLEAR.
+  | { type: "CLEAR_ITEMS" }
+  // Reset TOTAL de la transacción: items + cliente + vendedor + modo cotización.
+  // Se usa al completar la venta o al poner el carrito en espera (ya guardado
+  // aparte). NO lo uses para el botón "Vaciar".
   | { type: "CLEAR" }
   | { type: "SET_TICKET_CONFIG"; config: TicketConfig }
   | { type: "SET_CLIENTE"; cliente: Cliente | null }
@@ -253,9 +260,16 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // Quita por completo todas las líneas de ese paquete del carrito.
       return { ...state, items: state.items.filter((i) => i.paquete_id !== action.paqueteId) }
 
+    case "CLEAR_ITEMS":
+      // Botón "Vaciar": quita SOLO los productos agregados. Conserva el cliente,
+      // el vendedor y el modo cotización — la transacción sigue en curso, el
+      // cajero solo quiere reempezar la captura de artículos.
+      return { ...state, items: [] }
+
     case "CLEAR":
-      // Al vaciar el carrito (o completar una venta) se reinicia el cliente
-      // activo, el vendedor manual y se sale del modo cotización (transacción terminada).
+      // Reset TOTAL: al completar una venta o poner el carrito en espera se
+      // reinicia el cliente activo, el vendedor manual y se sale del modo
+      // cotización (la transacción terminó / se guardó aparte).
       return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, cotizacionCargadaFolio: null }
 
     case "RESTORE_CART":
@@ -285,6 +299,34 @@ function posReducer(state: PosState, action: PosAction): PosState {
 }
 
 // ---------------------------------------------------------------------------
+// Instrumentación de diagnóstico (Bug: venta sin cliente pese a estar elegido)
+// ---------------------------------------------------------------------------
+// Envuelve el reducer y registra TODA transición de `clienteActivo` (id + nombre)
+// junto con la acción que la causó y un stack trace, para poder identificar qué
+// acción borra el cliente la próxima vez que ocurra. Ligero: solo hace algo
+// cuando el cliente realmente cambia. Se puede quitar una vez diagnosticado.
+function posReducerConTraza(state: PosState, action: PosAction): PosState {
+  const next = posReducer(state, action)
+  const antes = state.clienteActivo
+  const despues = next.clienteActivo
+  if (antes?.id !== despues?.id) {
+    const marca = `[POS clienteActivo] ${action.type}: ` +
+      `${antes ? `${antes.nombre} (${antes.id})` : "∅"} → ` +
+      `${despues ? `${despues.nombre} (${despues.id})` : "∅"}`
+    // Perder el cliente (algo → ∅) es lo sospechoso: lo marcamos con warn + stack
+    // para ver desde qué componente se despachó. Ganarlo o cambiarlo va como info.
+    if (antes && !despues) {
+      // eslint-disable-next-line no-console
+      console.warn(marca, "\n", new Error("traza de dispatch").stack)
+    } else {
+      // eslint-disable-next-line no-console
+      console.info(marca)
+    }
+  }
+  return next
+}
+
+// ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
@@ -306,7 +348,7 @@ interface PosContextValue {
 const PosContext = createContext<PosContextValue | null>(null)
 
 export function PosProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(posReducer, {
+  const [state, dispatch] = useReducer(posReducerConTraza, {
     cajero: null,
     items: [],
     ticketConfig: null,

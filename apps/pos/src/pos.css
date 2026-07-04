@@ -7985,6 +7985,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .facturar-btn--full { padding: 10px 16px; font-size: 14px; }
 .facturar-btn--compact { flex: 1; padding: 8px 0; font-size: 12px; }
 
+/* Venta ya facturada → "Ver factura" en verde (vigente/hecho), para distinguirla
+   de un vistazo del botón "Facturar" (naranja). */
+.facturar-btn--vista { border-color: rgba(22, 163, 74, 0.35); color: #16a34a; }
+.facturar-btn--vista:hover { background: rgba(22, 163, 74, 0.08); border-color: #16a34a; color: #16a34a; }
+.facturar-btn--vista svg { color: #16a34a; }
+
 .facturar-overlay {
   position: fixed; inset: 0; z-index: 1600;
   background: rgba(17,24,39,0.4); backdrop-filter: blur(2px);
@@ -8036,6 +8042,26 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .facturar-check--ok svg { color: var(--green); }
 .facturar-check--warn { background: #fef3c7; color: #92400e; }
 .facturar-check--warn svg { color: #d97706; }
+
+/* Botón "Elegir cliente" (facturar una venta a público en general) */
+.btn-elegir-cliente {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  margin-top: 10px; width: 100%;
+  background: var(--orange); color: #fff; border: none; border-radius: 8px;
+  padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.btn-elegir-cliente:hover { filter: brightness(0.95); }
+.btn-elegir-cliente svg { color: #fff; }
+
+/* Aviso de "switch" de cliente al facturar una venta que era pública */
+.facturar-nota-switch {
+  margin-top: 8px; font-size: 12px; color: var(--text-muted);
+  line-height: 1.5;
+}
+.facturar-link {
+  background: none; border: none; padding: 0 0 0 4px; cursor: pointer;
+  color: var(--orange); font-size: 12px; font-weight: 600; text-decoration: underline;
+}
 
 .facturar-panel-acciones {
   display: flex; justify-content: flex-end; gap: 10px;
@@ -8312,3 +8338,48 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .venta-toast--error { background: #dc2626; }
 .venta-toast--info { background: #374151; }
 .venta-toast--warning { background: #d97706; }
+
+/* ── SelectorClienteModal — ventana flotante para buscar/elegir cliente ───────── */
+.scm-overlay {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+}
+.scm-modal {
+  width: 100%; max-width: 440px; max-height: 78vh;
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 14px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.scm-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px; border-bottom: 1px solid var(--border);
+}
+.scm-titulo { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; color: var(--text); }
+.scm-titulo svg { color: var(--orange); }
+.scm-cerrar {
+  background: none; border: none; cursor: pointer; color: var(--text-muted);
+  display: inline-flex; padding: 4px; border-radius: 6px;
+}
+.scm-cerrar:hover { background: var(--border); color: var(--text); }
+.scm-search-wrap { position: relative; padding: 12px 16px 8px; }
+.scm-search-icon { position: absolute; left: 28px; top: 50%; transform: translateY(-25%); color: var(--text-muted); pointer-events: none; }
+.scm-search {
+  width: 100%; border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px 12px 9px 34px; font-size: 14px; color: var(--text);
+  background: var(--bg-panel); outline: none;
+}
+.scm-search:focus { border-color: var(--orange); }
+.scm-results { overflow-y: auto; padding: 4px 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.scm-item {
+  display: flex; flex-direction: column; gap: 2px; text-align: left;
+  width: 100%; background: none; border: none; cursor: pointer;
+  padding: 9px 10px; border-radius: 8px;
+}
+.scm-item:hover { background: rgba(249, 99, 2, 0.08); }
+.scm-item-nombre { font-size: 14px; font-weight: 600; color: var(--text); }
+.scm-item-meta { font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.scm-item--todos { border-bottom: 1px solid var(--border); border-radius: 8px 8px 0 0; margin-bottom: 2px; }
+.scm-item--todos .scm-item-nombre { color: var(--orange); }
+.scm-vacio { text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 12px; }

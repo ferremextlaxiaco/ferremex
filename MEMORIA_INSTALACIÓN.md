@@ -39,7 +39,7 @@
 
 | Pantalla | URL local | URL desde cajas |
 |---------|-----------|-----------------|
-| **POS** | **https://localhost:7002/pos/** | **https://192.168.1.105:7002/pos/** |
+| **POS** | **https://localhost:7002/pos/** | **https://192.168.1.102:7002/pos/** |
 
 > ⚠️ El POS ahora usa HTTPS. La primera vez que se acceda desde un dispositivo, Chrome
 > mostrará "Tu conexión no es privada" — dar clic en **Avanzado → Acceder al sitio (no seguro)**.
@@ -57,10 +57,10 @@
 
 | Pantalla | URL local | URL desde cajas |
 |---------|-----------|-----------------|
-| Login Admin | http://localhost:9000/login | http://192.168.1.105:9000/login |
-| Panel Admin | http://localhost:9000/orders | http://192.168.1.105:9000/orders |
-| Vendor Portal | http://localhost:9000/seller | http://192.168.1.105:9000/seller |
-| **POS** | **http://localhost:7002/pos/** | **http://192.168.1.105:7002/pos/** |
+| Login Admin | http://localhost:9000/login | http://192.168.1.102:9000/login |
+| Panel Admin | http://localhost:9000/orders | http://192.168.1.102:9000/orders |
+| Vendor Portal | http://localhost:9000/seller | http://192.168.1.102:9000/seller |
+| **POS** | **https://localhost:7002/pos/** | **https://192.168.1.102:7002/pos/** |
 
 ### Credenciales del sistema
 - **Admin email:** ferremextlaxiaco@gmail.com
@@ -69,9 +69,10 @@
 - **Base de datos:** ferremex
 
 ### Red local
-- **IP de la Matriz:** 192.168.1.105
-- **Firewall:** Puertos 9000 y 3000 abiertos para red local
-- **Cajas:** acceden por WiFi a http://192.168.1.105:9000/dashboard
+- **IP LAN de la Matriz:** 192.168.1.102 (⚠️ DHCP — puede cambiar; verificar con `ipconfig` si las cajas dejan de conectar. Considerar reserva de IP en el router).
+- **IP Tailscale de la Matriz:** 100.102.72.105 (estable — usar para acceso remoto).
+- **Firewall:** Puertos 9000 y 7002 abiertos para red local
+- **Cajas:** acceden por WiFi a http://192.168.1.102:9000/dashboard (Admin) y https://192.168.1.102:7002/pos/ (POS)
 
 ### Software instalado
 
@@ -233,24 +234,24 @@ en `packages/api/src/api/middlewares.ts`.
 
 ---
 
-## ⚠️ PENDIENTE: Instalar CA de mkcert para HTTPS completo y sin advertencias
+## CA de mkcert para HTTPS sin advertencias
 
-### Situación actual (2026-05-22)
-El POS corre en HTTPS con un certificado auto-firmado por mkcert. Chrome muestra
-"Tu conexión no es privada" la primera vez, pero funciona si el usuario hace clic en
-"Avanzado → Acceder al sitio". Las descargas de PDF ya funcionan sin advertencias una
-vez aceptada la excepción.
+### Estado actual (2026-07-03)
+- ✅ **Matriz (servidor):** CA raíz de mkcert **instalada y confiada** en `CurrentUser\Root`.
+  El POS carga en `https://localhost:7002/pos/` con candado, sin advertencia.
+- ⏳ **Cajas / otros dispositivos:** PENDIENTE. Cada uno mostrará "Tu conexión no es
+  privada" hasta que se les instale la misma CA raíz (ver Paso 2 abajo).
 
-### Lo que falta hacer (requiere presencia física en la computadora de Oaxaca)
-
-**Paso 1 — Instalar el CA en el servidor Windows (1 vez)**
-
-Abrir PowerShell como Administrador:
+### Cómo se instaló en la Matriz (2026-07-03)
+`mkcert -install` y `certutil -user -addstore Root` **fallaron** en esta máquina con
+`ERROR_NOT_SUPPORTED (0x80070032)`. El método que SÍ funcionó (PowerShell interactivo,
+requiere confirmar el diálogo de seguridad de Windows):
 ```powershell
-mkcert -install
+Import-Certificate -FilePath "$env:LOCALAPPDATA\mkcert\rootCA.pem" -CertStoreLocation Cert:\CurrentUser\Root
 ```
-Esto instala el certificado raíz en el sistema. Chrome dejará de mostrar advertencias en
-la máquina del servidor.
+Al ejecutarlo, Windows pide confirmar la instalación del certificado raíz → **Sí**.
+Verificar: `Get-ChildItem Cert:\CurrentUser\Root | Where Thumbprint -eq 67E2323C0EE8DFF2A82B7C3C9973AF9F6C6924E8`
+debe devolver una fila (esa es la CA). Luego cerrar Chrome por completo y reabrir.
 
 **Paso 2 — Instalar el CA en cada Mac / dispositivo de la tienda**
 
@@ -273,7 +274,7 @@ certutil -user -addstore Root "C:\Users\andre\AppData\Local\mkcert\rootCA.pem"
 ```
 
 **Paso 3 — Verificar**
-Después de instalar, visitar https://192.168.1.105:7002/pos/ — debe cargar con candado verde sin advertencias.
+Después de instalar, visitar https://192.168.1.102:7002/pos/ — debe cargar con candado verde sin advertencias.
 
 ### Archivos generados por mkcert
 - Certificados del servidor: `C:\ferremex\certs\cert.pem` y `key.pem`
