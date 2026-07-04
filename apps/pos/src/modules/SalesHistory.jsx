@@ -3,6 +3,7 @@ import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta } from ".
 import { useToasts } from "../hooks/useToasts"
 import { formatMXNAbs as fmt } from "../lib/format"
 import { FacturarBoton } from "../components/FacturarBoton"
+import SelectorClienteModal from "../components/SelectorClienteModal"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -400,15 +401,21 @@ const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Mixto
 
 const FP_KEY = "pos_sales_filters"
 function loadFilters() {
-  try { return JSON.parse(localStorage.getItem(FP_KEY) ?? "null") ?? defaultFilters() } catch { return defaultFilters() }
+  // Merge con defaults: usuarios con filtros viejos en localStorage no traen los
+  // campos nuevos (cliente / clienteTodoPeriodo); el merge evita `undefined`.
+  try {
+    const saved = JSON.parse(localStorage.getItem(FP_KEY) ?? "null")
+    return saved ? { ...defaultFilters(), ...saved } : defaultFilters()
+  } catch { return defaultFilters() }
 }
 function defaultFilters() {
-  return { desde: isoToday(), hasta: isoToday(), articulo: "", monto: "", cajero: "", metodo: "", estados: { vigente: true, cancelada: true } }
+  return { desde: isoToday(), hasta: isoToday(), articulo: "", monto: "", cajero: "", metodo: "", cliente: "", clienteTodoPeriodo: false, estados: { vigente: true, cancelada: true } }
 }
 
 function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
   const [artModal, setArtModal] = useState(false)
   const [artObj, setArtObj]     = useState(null)
+  const [cliModal, setCliModal] = useState(false)
 
   useEffect(() => { if (!filters.articulo) setArtObj(null) }, [filters.articulo])
 
@@ -446,7 +453,7 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 16, padding: "16px 12px" }}>
 
       {/* Presets */}
-      <div>
+      <div style={filters.clienteTodoPeriodo ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
         <span style={labelStyle}>Período</span>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
           {PRESETS.map(p => {
@@ -461,9 +468,14 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
         </div>
       </div>
 
-      {/* Rango de fechas */}
-      <div>
+      {/* Rango de fechas — se desactiva visualmente si "todo el periodo" está activo */}
+      <div style={filters.clienteTodoPeriodo ? { opacity: 0.45, pointerEvents: "none" } : undefined}>
         <span style={labelStyle}>Rango de fechas</span>
+        {filters.clienteTodoPeriodo && (
+          <div style={{ fontSize: 11, color: "var(--orange)", marginBottom: 4 }}>
+            Desactivado: mostrando todo el historial del cliente.
+          </div>
+        )}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ fontSize: 11, color: "var(--text-muted)", width: 38, flexShrink: 0 }}>Desde</span>
@@ -525,6 +537,53 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
           <option value="">Todos</option>
           {cajeros.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
+      </div>
+
+      {/* Cliente + "todo el periodo" */}
+      <div>
+        <span style={labelStyle}>Cliente</span>
+        {filters.cliente?.trim() ? (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8, border: "1px solid var(--border)",
+            borderRadius: 6, padding: "6px 8px", background: "#fff",
+          }}>
+            <span style={{ fontSize: 13, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)", fontWeight: 600 }}>
+              {filters.cliente}
+            </span>
+            <button onClick={() => setCliModal(true)} title="Cambiar cliente"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--orange)", fontSize: 12, fontWeight: 600, padding: "0 2px" }}>
+              Cambiar
+            </button>
+            <button onClick={() => set("cliente", "")} title="Quitar filtro de cliente"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", fontSize: 14, padding: "0 2px", lineHeight: 1 }}>✕</button>
+          </div>
+        ) : (
+          <button onClick={() => setCliModal(true)} style={{
+            ...inputStyle, textAlign: "left", cursor: "pointer", color: "var(--text-muted)",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            Buscar cliente…
+            <span style={{ fontSize: 12 }}>🔍</span>
+          </button>
+        )}
+        <label style={{
+          display: "flex", alignItems: "center", gap: 7, marginTop: 7,
+          fontSize: 12, color: "var(--text-muted)", cursor: "pointer", userSelect: "none",
+        }}>
+          <input
+            type="checkbox"
+            checked={!!filters.clienteTodoPeriodo}
+            onChange={e => set("clienteTodoPeriodo", e.target.checked)}
+            style={{ cursor: "pointer" }}
+          />
+          Todo el periodo (ignora el rango de fechas)
+        </label>
+
+        <SelectorClienteModal
+          open={cliModal}
+          onClose={() => setCliModal(false)}
+          onSelect={(c) => { set("cliente", c ? c.nombre : ""); setCliModal(false) }}
+        />
       </div>
 
       {/* Método de pago */}
@@ -885,9 +944,13 @@ function SaleDrawer({ venta, onClose, onCancel }) {
             flex: 1, background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
             padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",
           }}>🖨️ Reimprimir</button>
+          {/* Facturar SIEMPRE disponible. Para ventas a público en general, el
+              FacturarBoton pide elegir cliente y reasigna la venta antes de timbrar.
+              Si ya está facturada, muestra "Ver factura". */}
           <FacturarBoton
             folio={venta.folio}
             cliente={venta.cliente_id ? { id: venta.cliente_id, nombre: venta.cliente_nombre } : null}
+            facturaInicial={venta.factura ?? null}
             variant="compact"
           />
           {vigente && (
@@ -1081,10 +1144,15 @@ export default function SalesHistory() {
   const recargar = useCallback(() => {
     setLoading(true)
     setFetchError(null)
-    return listarVentas(applied.desde || undefined, applied.hasta || undefined)
+    // "Todo el periodo" (checkbox del filtro por cliente): ignora el rango de
+    // fechas y trae TODAS las ventas, para ver el historial completo del cliente.
+    const todoPeriodo = applied.clienteTodoPeriodo
+    const desde = todoPeriodo ? undefined : (applied.desde || undefined)
+    const hasta = todoPeriodo ? undefined : (applied.hasta || undefined)
+    return listarVentas(desde, hasta)
       .then(data => { setAllVentas(data.map(v => ({ ...v, estado: v.estado ?? "vigente" }))); setLoading(false) })
       .catch(err => { setFetchError(err.message ?? "Error al cargar ventas"); setLoading(false) })
-  }, [applied.desde, applied.hasta])
+  }, [applied.desde, applied.hasta, applied.clienteTodoPeriodo])
 
   useEffect(() => { recargar() }, [recargar])
 
@@ -1116,9 +1184,19 @@ export default function SalesHistory() {
       list = list.filter(v => v.folio.toLowerCase().includes(q) ||
         v.items.some(i => i.descripcion.toLowerCase().includes(q)))
     } else {
-      // Apply panel filters
-      if (applied.desde) list = list.filter(v => v.fecha.slice(0, 10) >= applied.desde)
-      if (applied.hasta) list = list.filter(v => v.fecha.slice(0, 10) <= applied.hasta)
+      // Apply panel filters. El rango de fechas se OMITE cuando "todo el periodo"
+      // está activo (el historial completo del cliente, sin importar la fecha).
+      if (!applied.clienteTodoPeriodo) {
+        if (applied.desde) list = list.filter(v => v.fecha.slice(0, 10) >= applied.desde)
+        if (applied.hasta) list = list.filter(v => v.fecha.slice(0, 10) <= applied.hasta)
+      }
+      // Filtro por cliente: coincidencia parcial (case-insensitive) sobre el
+      // nombre del cliente de la venta. "Público en general" (sin cliente) no
+      // coincide con ninguna búsqueda de cliente.
+      if (applied.cliente?.trim()) {
+        const q = applied.cliente.trim().toLowerCase()
+        list = list.filter(v => (v.cliente_nombre || "").toLowerCase().includes(q))
+      }
       if (applied.articulo.trim()) {
         const q = applied.articulo.trim().toLowerCase()
         list = list.filter(v => v.items.some(i => i.descripcion.toLowerCase().includes(q)))

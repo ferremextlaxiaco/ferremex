@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import { UNIDADES_SAT } from "../lib/unidades-sat"
 import { subirImagenArticulo } from "../lib/client"
 
@@ -141,7 +141,7 @@ function Field({ label, error, children, tooltip }) {
   )
 }
 
-export default function ArticleDrawer({ open, mode, article, articles, onSave, onClose, getNextClave, saving = false, onCrearPromocion }) {
+export default function ArticleDrawer({ open, mode, article, articles, taxonomy = { depts: [], cats: [], marcas: [] }, proveedores = [], onSave, onClose, getNextClave, saving = false, onCrearPromocion }) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [errors, setErrors] = useState({})
   const [uploading, setUploading] = useState(0)
@@ -182,6 +182,32 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
     // Los precios se guardan SIN IVA (base). PrecioRow muestra con IVA cuando
     // aplica, recalculando solo (no hay que tocar los valores al cambiar toggles).
     setErrors((prev) => ({ ...prev, [name]: undefined }))
+  }
+
+  // ── Taxonomía Dept→Cat (patrón obligatorio: siempre de listarCatalogos) ──────
+  // El form guarda `departamento` y `categoria` como NOMBRES (strings). Las
+  // categorías se filtran por el departamento elegido (cats[].depId → depts[].id).
+  const deptItem = useMemo(
+    () => taxonomy.depts.find((d) => d.nombre === form.departamento) ?? null,
+    [taxonomy.depts, form.departamento]
+  )
+  const catOpts = useMemo(
+    () => (deptItem ? taxonomy.cats.filter((c) => c.depId === deptItem.id) : []),
+    [taxonomy.cats, deptItem]
+  )
+
+  // Al cambiar el departamento, si la categoría actual ya no pertenece a él, se
+  // resetea (mismo comportamiento de cascada que FiltroBar/ArticlesModule).
+  function cambiarDepartamento(nombreDepto) {
+    const nuevoDept = taxonomy.depts.find((d) => d.nombre === nombreDepto) ?? null
+    const catSiguePerteneciendo =
+      nuevoDept && taxonomy.cats.some((c) => c.depId === nuevoDept.id && c.nombre === form.categoria)
+    setForm((prev) => ({
+      ...prev,
+      departamento: nombreDepto,
+      categoria: catSiguePerteneciendo ? prev.categoria : "",
+    }))
+    setErrors((prev) => ({ ...prev, departamento: undefined, categoria: undefined }))
   }
 
   function handleGenerarClave() {
@@ -280,18 +306,57 @@ export default function ArticleDrawer({ open, mode, article, articles, onSave, o
           </Field>
 
           <Field label="Proveedor">
-            <input type="text" className="ar-input" value={form.proveedor}
-              onChange={(e) => f("proveedor", e.target.value)} placeholder="Ej: Truper, Cintac, Foset" />
+            <select
+              className="ar-input"
+              value={form.proveedor}
+              onChange={(e) => f("proveedor", e.target.value)}
+            >
+              <option value="">— Selecciona —</option>
+              {proveedores.map((p) => (
+                <option key={p.id} value={p.nombre}>{p.nombre}</option>
+              ))}
+              {/* Conserva el proveedor actual aunque ya no esté en el catálogo
+                  (artículos viejos con proveedor en texto libre), para no borrarlo. */}
+              {form.proveedor && !proveedores.some((p) => p.nombre === form.proveedor) && (
+                <option value={form.proveedor}>{form.proveedor} (actual)</option>
+              )}
+            </select>
           </Field>
 
           <div className="ar-grid-2">
-            <Field label="Categoría">
-              <input type="text" className="ar-input" value={form.categoria}
-                onChange={(e) => f("categoria", e.target.value)} placeholder="Ej: Ferretería" />
-            </Field>
             <Field label="Departamento">
-              <input type="text" className="ar-input" value={form.departamento}
-                onChange={(e) => f("departamento", e.target.value)} placeholder="Ej: Tornillos" />
+              <select
+                className="ar-input"
+                value={form.departamento}
+                onChange={(e) => cambiarDepartamento(e.target.value)}
+              >
+                <option value="">— Selecciona —</option>
+                {taxonomy.depts.map((d) => (
+                  <option key={d.id} value={d.nombre}>{d.nombre}</option>
+                ))}
+                {/* Conserva el valor actual aunque ya no exista en la taxonomía
+                    (artículos viejos), para no borrarlo al editar. */}
+                {form.departamento && !taxonomy.depts.some((d) => d.nombre === form.departamento) && (
+                  <option value={form.departamento}>{form.departamento} (actual)</option>
+                )}
+              </select>
+            </Field>
+            <Field label="Categoría">
+              <select
+                className="ar-input"
+                value={form.categoria}
+                onChange={(e) => f("categoria", e.target.value)}
+                disabled={!form.departamento}
+                title={!form.departamento ? "Selecciona un departamento primero" : undefined}
+              >
+                <option value="">{form.departamento ? "— Selecciona —" : "Elige departamento primero"}</option>
+                {catOpts.map((c) => (
+                  <option key={c.id} value={c.nombre}>{c.nombre}</option>
+                ))}
+                {form.categoria && !catOpts.some((c) => c.nombre === form.categoria) && (
+                  <option value={form.categoria}>{form.categoria} (actual)</option>
+                )}
+              </select>
             </Field>
           </div>
 

@@ -8,6 +8,7 @@ import {
   actualizarArticulo,
   eliminarArticulo,
 } from "../lib/client"
+import { loadProveedores } from "../lib/proveedores"
 import ArticleDrawer from "./ArticleDrawer"
 import ArticleDeleteModal from "./ArticleDeleteModal"
 import PaquetesPanel from "./PaquetesPanel"
@@ -91,6 +92,9 @@ export default function ArticlesModule({ vista = "articulos" }) {
   // ── Taxonomía ────────────────────────────────────────────────────────────────
   const [taxonomy,     setTaxonomy]     = useState({ depts: [], cats: [], marcas: [] })
   const [taxLoading,   setTaxLoading]   = useState(true)
+  // Proveedores (para el desplegable del drawer). Se cargan de la BD (módulo
+  // ferremex_proveedores) igual que la taxonomía.
+  const [proveedores,  setProveedores]  = useState([])
   const [filterDept,   setFilterDept]   = useState("")  // dep-id
   const [filterCat,    setFilterCat]    = useState("")  // cat-id
   const [filterMarca,  setFilterMarca]  = useState("")  // mar-id
@@ -112,6 +116,13 @@ export default function ArticlesModule({ vista = "articulos" }) {
       .then(data => setTaxonomy(data))
       .catch(() => {})
       .finally(() => setTaxLoading(false))
+  }, [])
+
+  // Cargar proveedores al montar (para el desplegable del drawer).
+  useEffect(() => {
+    loadProveedores()
+      .then(data => setProveedores(data))
+      .catch(() => {})
   }, [])
 
   // Opciones en cascada derivadas de la taxonomía
@@ -634,6 +645,8 @@ export default function ArticlesModule({ vista = "articulos" }) {
         mode={drawerMode}
         article={drawerMode === "edit" ? selected : null}
         articles={articles}
+        taxonomy={taxonomy}
+        proveedores={proveedores}
         saving={saving}
         onSave={handleSave}
         onClose={() => setDrawerOpen(false)}

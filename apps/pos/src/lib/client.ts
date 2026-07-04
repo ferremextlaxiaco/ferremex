@@ -93,6 +93,11 @@ export interface VentaResponse {
   // estado, que se resetea al terminar la venta).
   cliente_id?: string | null
   cliente_nombre?: string | null
+  // CFDI nominativo timbrado de esta venta (si ya se facturó). Lo persiste el
+  // backend al timbrar y lo devuelve tanto en el registro como en el listado.
+  // Presencia de `factura.cfdi_id` ⇒ venta ya facturada (permite mostrar
+  // "Ver factura" en vez de "Facturar" sin una consulta extra por fila).
+  factura?: FacturaVenta | null
 }
 
 export interface VentaRegistro {

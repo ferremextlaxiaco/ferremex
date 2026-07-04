@@ -729,7 +729,19 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const updatedVariant = (updated.variants as any[])?.[0]
-  res.json(toArticuloPOS(updated, updatedVariant, body.precio1 ?? 0))
+
+  // Calcular la existencia REAL del artículo para devolverla en la respuesta.
+  // Sin esto, toArticuloPOS usaría el default existencia=0 y el frontend
+  // (ArticlesModule) pisaría el stock correcto con 0 tras cada edición —
+  // el PUT no toca inventario, así que el stock en BD sigue intacto; era un
+  // bug puramente de visualización.
+  const inventoryModule = req.scope.resolve(Modules.INVENTORY)
+  const sku = updatedVariant?.sku
+  const existencia = sku
+    ? (await existenciasPorSku(inventoryModule, [sku])).get(sku) ?? 0
+    : 0
+
+  res.json(toArticuloPOS(updated, updatedVariant, body.precio1 ?? 0, existencia))
 }
 
 // ---------------------------------------------------------------------------
