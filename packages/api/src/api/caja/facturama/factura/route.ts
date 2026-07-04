@@ -7,6 +7,8 @@ import { ventaACfdiNominativo, validarEmisor, type VentaParaCFDI } from "../../.
 import { construirResolverFiscal } from "../../../../lib/facturable-resolver"
 import { customerAClientePOS } from "../../clientes/_mapper"
 import { leerConfigFacturacion } from "../_config"
+import { FERREMEX_FACTURABLE } from "../../../../modules/ferremex-facturable"
+import type FerremexFacturableService from "../../../../modules/ferremex-facturable/service"
 
 /**
  * POST /caja/facturama/factura — timbra una venta NOMINATIVA (cliente con RFC).
@@ -34,6 +36,10 @@ interface VentaRegistro {
   pago_credito?: number
   pago_puntos?: number
   cliente_id?: string | null
+  cliente_nombre?: string | null
+  // Marca de inclusión en una factura global timbrada (bloquea la nominativa).
+  global_uuid?: string | null
+  global_cfdi_id?: string | null
   // Datos de la factura, una vez timbrada:
   factura?: {
     cfdi_id: string
@@ -73,6 +79,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // Idempotencia: ya facturada.
   if (venta.factura?.cfdi_id) {
     res.json({ ya_facturada: true, factura: venta.factura }); return
+  }
+  // Ya incluida en una factura GLOBAL timbrada: no se puede facturar nominativa
+  // (ese ingreso ya está declarado al SAT; sería doble facturación). El operador
+  // debe cancelar la global primero si quiere emitir nominativa.
+  if (venta.global_uuid || venta.global_cfdi_id) {
+    res.status(409).json({
+      error: "Esta venta ya está incluida en la factura global del día. Para facturarla a nombre del cliente, primero cancela la factura global correspondiente.",
+    }); return
   }
   if (!venta.items?.length) {
     res.status(400).json({ error: "La venta no tiene artículos" }); return
@@ -150,6 +164,25 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     { serie: leerConfigFacturacion().serie_nominativa || null }
   )
 
+  // BLOQUEO: todos los artículos deben tener clave SAT para poder facturar. Sin
+  // ella no se puede emitir un CFDI válido (antes se usaba una clave genérica;
+  // ahora se rechaza para no timbrar comprobantes con datos incompletos).
+  if (skusSinClave.length) {
+    const descPorSku = new Map<string, string>()
+    for (const it of venta.items ?? []) {
+      if (it.sku) descPorSku.set(it.sku, it.descripcion ?? it.sku)
+    }
+    const nombres = skusSinClave.map((sku) => `"${descPorSku.get(sku) ?? sku}"`)
+    const lista = nombres.length === 1
+      ? `el artículo ${nombres[0]} no tiene`
+      : `los artículos ${nombres.join(", ")} no tienen`
+    res.status(422).json({
+      error: `No se puede facturar: ${lista} clave SAT. Asígnala en Artículos (o en Saldo facturable) e inténtalo de nuevo.`,
+      skus_sin_clave: skusSinClave,
+    })
+    return
+  }
+
   // Timbrar.
   let timbrada
   try {
@@ -174,12 +207,22 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     receptor_nombre: cliente.razon_social,
     total: timbrada.Total ?? null,
   }
+  // Switch de cliente: si la venta era a público en general (sin cliente) y se
+  // facturó eligiendo uno, se REASIGNA el cliente a la venta de forma permanente
+  // (queda atribuida a él en el historial y ya no es candidata a la global).
+  const reasignarCliente = !venta.cliente_id && !!clienteId
   try {
     await withFileLock(VENTAS_FILE, async () => {
       const ventas = cargarVentas()
       const idx = ventas.findIndex((v) => v.folio === folio)
       if (idx !== -1 && !ventas[idx].factura?.cfdi_id) {
-        ventas[idx] = { ...ventas[idx], factura }
+        ventas[idx] = {
+          ...ventas[idx],
+          factura,
+          ...(reasignarCliente
+            ? { cliente_id: clienteId, cliente_nombre: cliente.razon_social || cliente.nombre || null }
+            : {}),
+        }
         writeJsonAtomic(VENTAS_FILE, ventas)
       }
     })
@@ -187,6 +230,39 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     // El CFDI ya se timbró; si falla guardar, lo logueamos pero devolvemos éxito
     // con el folio fiscal para que no se intente timbrar de nuevo.
     console.error(`[caja/facturama/factura] Timbrado OK pero no se guardó en la venta ${folio}:`, e?.message ?? e)
+  }
+
+  // Consumir saldo facturable de cada SKU facturado (igual que la global). La
+  // factura nominativa SÍ respalda piezas, así que baja el saldo. Se PERMITE
+  // sobregiro: si un SKU no tiene saldo suficiente (o su depto no es "facturable"
+  // —eso solo excluye de la GLOBAL, no de la nominativa—), el saldo queda negativo
+  // (semáforo rojo) como aviso de que falta respaldo de compra. `cfdi_ref` enlaza
+  // el consumo al CFDI para poder revertirlo si la factura se cancela.
+  // Cantidades agrupadas por SKU (una venta puede repetir un SKU en varias líneas).
+  const cantPorSku = new Map<string, number>()
+  for (const it of venta.items ?? []) {
+    const sku = (it.sku ?? "").trim()
+    if (!sku) continue
+    cantPorSku.set(sku, (cantPorSku.get(sku) ?? 0) + (Number(it.cantidad) || 0))
+  }
+  try {
+    const facturable: FerremexFacturableService = req.scope.resolve(FERREMEX_FACTURABLE)
+    for (const [sku, cantidad] of cantPorSku) {
+      if (cantidad <= 0) continue
+      try {
+        await facturable.consumir(sku, cantidad, {
+          folio_ref: venta.folio,
+          cfdi_ref: timbrada.Id,
+          motivo: `Factura nominativa ${venta.folio}`,
+        })
+      } catch (e: any) {
+        // El CFDI ya está timbrado en el SAT: un fallo de consumo NO debe romper la
+        // respuesta, pero se loguea para que el operador ajuste el saldo a mano.
+        console.error(`[caja/facturama/factura] No se consumió saldo de ${sku} (venta ${venta.folio}):`, e?.message ?? e)
+      }
+    }
+  } catch (e: any) {
+    console.error(`[caja/facturama/factura] No se pudo consumir saldo facturable de la venta ${venta.folio}:`, e?.message ?? e)
   }
 
   res.json({ factura, skus_sin_clave: skusSinClave.length ? skusSinClave : undefined })

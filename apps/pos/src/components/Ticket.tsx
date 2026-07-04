@@ -164,8 +164,13 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
           <button className="btn-secondary" onClick={onImpreso}>
             Cerrar
           </button>
-          {/* Una cotización no se factura; solo ventas. */}
-          {!esCotizacion && <FacturarBoton folio={venta.folio} cliente={clienteFactura} variant="full" />}
+          {/* Botón de facturar: SIEMPRE visible para ventas (no cotizaciones).
+              Si la venta no tiene cliente (público en general), al pulsarlo el
+              FacturarBoton pide elegir un cliente y reasigna la venta a él antes
+              de timbrar nominativo (la saca de la global del día). */}
+          {!esCotizacion && (
+            <FacturarBoton folio={venta.folio} cliente={clienteFactura} facturaInicial={venta.factura ?? null} variant="full" />
+          )}
           <button className="btn-confirmar" onClick={handleImprimir}>
             🖨 Imprimir {esCotizacion ? "cotización" : "ticket"}
           </button>

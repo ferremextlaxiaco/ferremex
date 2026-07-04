@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from "react"
 import {
   Search, RefreshCw, FileCheck2, AlertTriangle, Wallet, TriangleAlert,
-  Pencil, Building2, Download, X, Check,
+  Pencil, Building2, Download, X, Check, ImageOff,
 } from "lucide-react"
 import {
   listarArticulos, listarArticulosDeCatalogo,
@@ -20,13 +20,19 @@ import { formatMXN } from "../lib/format"
  * DEPARTAMENTOS son facturables (depto define, artículo limita), y ver el estado
  * fiscal con semáforos. Cumple el Contrato de Conexión (todo vía client.ts).
  *
- * Reglas de estado por artículo:
+ * Reglas de estado por artículo (dependen del SALDO, no del departamento):
  *  - Sin clave SAT            → ⚪ no facturable (no se puede dar saldo)
- *  - Depto no facturable      → ⚪ excluido por departamento
  *  - Saldo < 0 (sobregiro)    → 🔴 sobregirado (facturó más de lo respaldado)
  *  - Saldo < inventarioMin    → 🟡 saldo bajo (conviene comprar con factura)
  *  - Saldo > 0                → 🟢 facturable
+ *
+ * "Depto facturable" (columna Global) NO limita si un artículo se puede facturar:
+ * solo indica si entra en la factura GLOBAL del día. Un depto "no facturable" se
+ * factura de forma NOMINATIVA (a un cliente con RFC), consume saldo y muestra
+ * todos los estados igual. Marcar el depto solo decide global vs solo-nominativo.
  */
+const PAGE_SIZE = 7
+
 export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
   const [articulos, setArticulos] = useState([])
   const [saldos, setSaldos] = useState({})     // { sku: SaldoFacturableAPI }
@@ -38,6 +44,7 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
   const [soloConSaldo, setSoloConSaldo] = useState(false)
   const [ajuste, setAjuste] = useState(null)   // artículo en edición de saldo
   const [deptoModal, setDeptoModal] = useState(false)
+  const [page, setPage] = useState(0)          // página actual (0-indexed)
 
   // ── Carga de saldos + mapa de deptos (siempre, no depende de búsqueda) ──────
   const cargarFacturable = useCallback(async () => {
@@ -99,9 +106,13 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
       const deptoFacturable = !!deptos[a.departamento]
       const tieneClave = !!(a.claveSat && a.claveSat.trim())
 
+      // El estado depende del SALDO real, no del departamento. "Depto no
+      // facturable" NO significa infacturable: solo excluye de la factura GLOBAL
+      // del día. Esos artículos SÍ se facturan de forma nominativa (a un cliente
+      // con RFC), consumen saldo y muestran todos los estados normales. La marca
+      // de depto se comunica aparte (columna "Global"), no bloquea el estado.
       let estado, color
       if (!tieneClave) { estado = "Sin clave SAT"; color = "gris" }
-      else if (!deptoFacturable) { estado = "Depto no facturable"; color = "gris" }
       else if (saldo < 0) { estado = "Sobregirado"; color = "rojo" }
       else if (a.inventarioMin > 0 && saldo < a.inventarioMin) { estado = "Saldo bajo"; color = "amarillo" }
       else if (saldo > 0) { estado = "Facturable"; color = "verde" }
@@ -110,6 +121,20 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
       return { ...a, saldo, deptoFacturable, tieneClave, estado, color }
     }).filter((f) => !soloConSaldo || f.saldo !== 0)
   }, [articulos, saldos, deptos, soloConSaldo])
+
+  // ── Paginación (cliente-side sobre el set ya filtrado) ──────────────────────
+  const totalPages = Math.max(1, Math.ceil(filas.length / PAGE_SIZE))
+  const pagedFilas = useMemo(
+    () => filas.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filas, page]
+  )
+  // Volver a la página 1 cuando cambia el conjunto de resultados (nueva búsqueda,
+  // toggle "solo con saldo", recarga de saldos) para no quedar en una página vacía.
+  useEffect(() => { setPage(0) }, [filas.length])
+
+  function goPage(delta) {
+    setPage((p) => Math.min(Math.max(p + delta, 0), totalPages - 1))
+  }
 
   // ── KPIs ─────────────────────────────────────────────────────────────────────
   const kpis = useMemo(() => {
@@ -231,7 +256,7 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
       </div>
 
       {/* Tabla */}
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden flex flex-col min-h-0">
         {!hasBuscado ? (
           <Vacio texto="Busca un artículo o filtra por departamento para ver su saldo facturable." />
         ) : loading ? (
@@ -239,13 +264,14 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
         ) : filas.length === 0 ? (
           <Vacio texto="Ningún artículo coincide. Si esperabas saldo, revisa que la compra se haya registrado 'Con factura'." />
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          <div className="overflow-auto min-h-0">
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wide">
                   <th className="text-left font-semibold px-4 py-2.5">Artículo</th>
-                  <th className="text-left font-semibold px-3 py-2.5">Depto</th>
                   <th className="text-left font-semibold px-3 py-2.5">Clave SAT</th>
+                  <th className="text-center font-semibold px-3 py-2.5" title="¿Entra en la factura global del día? Si no, solo se factura nominativo (a un cliente).">Global</th>
                   <th className="text-right font-semibold px-3 py-2.5">Stock físico</th>
                   <th className="text-right font-semibold px-3 py-2.5">Saldo facturable</th>
                   <th className="text-left font-semibold px-3 py-2.5">Estado</th>
@@ -253,16 +279,23 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
                 </tr>
               </thead>
               <tbody>
-                {filas.map((f) => (
+                {pagedFilas.map((f) => (
                   <tr key={f.id} className="border-t border-gray-100 hover:bg-gray-50">
                     <td className="px-4 py-2.5">
-                      <div className="font-medium text-gray-900">{f.descripcion}</div>
-                      <div className="text-xs text-gray-400 font-mono">{f.clave}</div>
-                    </td>
-                    <td className="px-3 py-2.5 text-gray-600">
-                      {f.departamento || "—"}{f.deptoFacturable && <span className="text-orange-600" title="Depto facturable"> ✓</span>}
+                      <div className="flex items-center gap-3">
+                        <ArticuloThumb src={f.thumbnail} alt={f.descripcion} />
+                        <div className="min-w-0">
+                          <div className="font-medium text-gray-900">{f.descripcion}</div>
+                          <div className="text-xs text-gray-400 font-mono">{f.clave}</div>
+                        </div>
+                      </div>
                     </td>
                     <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{f.claveSat || <span className="text-red-500">falta</span>}</td>
+                    <td className="px-3 py-2.5 text-center">
+                      {f.deptoFacturable
+                        ? <span className="inline-flex items-center rounded-full bg-green-50 text-green-700 text-[11px] font-medium px-2 py-0.5" title="Su departamento entra en la factura global del día.">Sí</span>
+                        : <span className="inline-flex items-center rounded-full bg-gray-100 text-gray-500 text-[11px] font-medium px-2 py-0.5" title="No entra en la global; se factura nominativo (a un cliente con RFC).">Solo nominativo</span>}
+                    </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-gray-700">{f.existencia}</td>
                     <td className={`px-3 py-2.5 text-right tabular-nums font-bold ${f.saldo < 0 ? "text-red-600" : f.saldo > 0 ? "text-gray-900" : "text-gray-400"}`}>
                       {f.saldo}
@@ -283,6 +316,51 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
               </tbody>
             </table>
           </div>
+
+            {/* Pie: contador de resultados + paginación */}
+            <div className="flex items-center justify-between flex-wrap gap-2 px-4 py-3 border-t border-gray-100 bg-gray-50">
+              <span className="text-xs text-gray-500">
+                {filas.length === 0
+                  ? "Sin resultados"
+                  : `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, filas.length)} de ${filas.length} artículo${filas.length !== 1 ? "s" : ""}`}
+              </span>
+              <div className="flex items-center gap-1.5">
+                <button
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm text-gray-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+                  title="Primera página"
+                  disabled={page === 0}
+                  onClick={() => setPage(0)}
+                >
+                  «
+                </button>
+                <button
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={page === 0}
+                  onClick={() => goPage(-1)}
+                >
+                  ‹ Anterior
+                </button>
+                <span className="text-sm text-gray-600 tabular-nums px-1">
+                  Página {page + 1} de {totalPages}
+                </span>
+                <button
+                  className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => goPage(1)}
+                >
+                  Siguiente ›
+                </button>
+                <button
+                  className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm text-gray-700 hover:bg-white disabled:opacity-40 disabled:pointer-events-none"
+                  title="Última página"
+                  disabled={page >= totalPages - 1}
+                  onClick={() => setPage(totalPages - 1)}
+                >
+                  »
+                </button>
+              </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -297,6 +375,27 @@ export default function FacturablePanel({ taxonomy, taxLoading, pushToast }) {
 }
 
 // ── Sub-componentes ────────────────────────────────────────────────────────────
+
+/** Miniatura de artículo con placeholder si no hay imagen o falla la carga. */
+function ArticuloThumb({ src, alt }) {
+  const [error, setError] = useState(false)
+  if (!src || error) {
+    return (
+      <div className="w-10 h-10 shrink-0 rounded-md bg-gray-100 border border-gray-200 flex items-center justify-center text-gray-300">
+        <ImageOff size={16} />
+      </div>
+    )
+  }
+  return (
+    <img
+      src={src}
+      alt={alt || ""}
+      loading="lazy"
+      onError={() => setError(true)}
+      className="w-10 h-10 shrink-0 rounded-md object-cover border border-gray-200 bg-white"
+    />
+  )
+}
 
 function KpiCard({ icon, label, valor, alerta }) {
   return (

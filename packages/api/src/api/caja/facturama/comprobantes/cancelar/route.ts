@@ -100,7 +100,23 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.json({ ok: true, tipo: "global" }); return
   }
 
-  // Nominativa: marcar factura.cancelada en la venta.
+  // Nominativa: revertir el saldo facturable que consumió + marcar cancelada.
+  // Reversa del consumo: recargar lo que la factura nominativa había descontado
+  // (mismo mecanismo que la global, cruzando por cfdi_ref). Idempotente en la
+  // práctica porque solo se cancela una vez.
+  try {
+    const facturable: FerremexFacturableService = req.scope.resolve(FERREMEX_FACTURABLE)
+    const consumos = await facturable.listarConsumosPorCfdi(cfdiId)
+    for (const m of consumos) {
+      await facturable.recargar(m.sku, Math.abs(Number(m.cantidad) || 0), {
+        folio_ref: m.folio_ref ?? null,
+        motivo: `Reversa por cancelación de factura ${m.folio_ref ?? cfdiId}`,
+      })
+    }
+  } catch (e: any) {
+    console.error("[caja/facturama/comprobantes/cancelar] No se revirtió el saldo de la nominativa:", e?.message ?? e)
+  }
+
   try {
     await withFileLock(VENTAS_FILE, async () => {
       const ventas = readJson<any[]>(VENTAS_FILE, [])
