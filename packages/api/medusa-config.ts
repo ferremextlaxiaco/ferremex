@@ -106,7 +106,11 @@ module.exports = defineConfig({
     {
       resolve: '@mercurjs/core-plugin/modules/vendor-ui',
       options: {
-        appDir: path.join(__dirname, '../../apps/pos'),
+        // Producción: sirve el build estático del POS. El build se emite en
+        // dist/pos/ (outDir en vite.config) y appDir apunta a dist (el padre): el
+        // vendor-ui NO recorta el prefijo /pos, así que express.static(dist) + la
+        // URL /pos/assets/... resuelve a dist/pos/assets/... (existe). Ver Etapa 2.
+        appDir: path.join(__dirname, '../../apps/pos/dist'),
         path: '/pos',
         // @ts-ignore: viteDevServerPort is supported at runtime; su presencia en
         // el tipo difiere entre dev y build, así que usamos ts-ignore (no expect-error).

@@ -8,6 +8,11 @@ const certsDir = path.resolve(__dirname, "../../certs")
 
 export default defineConfig({
   base: "/pos",
+  // El vendor-ui de Mercur sirve el estático con express.static(appDir) SIN
+  // recortar el prefijo /pos de la URL. Para que /pos/assets/... resuelva, el
+  // build se emite en dist/pos/ y en medusa-config appDir apunta a dist/pos
+  // (así express.static(dist/pos) + un fallback que sirve dist/pos/index.html).
+  build: { outDir: "dist/pos" },
   plugins: [react(), tailwindcss()],
   server: {
     port: 7002,
