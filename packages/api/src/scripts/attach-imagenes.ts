@@ -74,7 +74,7 @@ export default async function attachImagenes({ container }: ExecArgs) {
 
   const productPorSkuUpper = new Map<string, string>()
   for (const v of variants) {
-    if (v.sku) {
+    if (v.sku && v.product_id) {
       productPorSkuUpper.set(v.sku.toUpperCase(), v.product_id)
     }
   }

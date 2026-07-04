@@ -194,7 +194,8 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
     }
     const cats = await productModule.listProductCategories({ name: nombre_actual }, { select: ["id"], take: 20 })
     if (!(cats as any[]).length) { res.status(404).json({ error: "Categoría no encontrada" }); return }
-    await Promise.all((cats as any[]).map(c => productModule.updateProductCategories([{ id: c.id, name: nombre_nuevo }])))
+    // Firma de un-item (id, data), no array — la forma array lanza en Medusa 2.x.
+    await Promise.all((cats as any[]).map(c => productModule.updateProductCategories(c.id, { name: nombre_nuevo })))
     // Update extras file
     const extras = readMarcasExtra()
     writeMarcasExtra(extras.map(m => m.cat_nombre === nombre_actual ? { ...m, cat_nombre: nombre_nuevo } : m))

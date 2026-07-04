@@ -23,7 +23,7 @@ async function existenciasPorSku(
     { inventory_item_id: itemIds },
     { select: ["inventory_item_id", "stocked_quantity"], take: itemIds.length + 10 }
   )
-  const itemPorId = new Map(items.map((i: any) => [i.id, i.sku]))
+  const itemPorId = new Map<string, string>(items.map((i: any) => [i.id, i.sku] as [string, string]))
   for (const nivel of niveles) {
     const sku = itemPorId.get(nivel.inventory_item_id)
     if (sku) map.set(sku, (map.get(sku) ?? 0) + (nivel.stocked_quantity ?? 0))
@@ -518,6 +518,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // imagenes son URLs absolutas devueltas por /caja/imagen (ya subidas al file module)
   const imagenes: string[] = Array.isArray(body.imagenes) ? body.imagenes : []
 
+  // El tipo CreateProductVariantDTO no incluye `prices`, pero Medusa 2.x lo
+  // acepta en runtime (crea el price set del variant). Cast para el build de prod.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [product] = await productModule.createProducts([
     {
       title: body.descripcion,
@@ -564,7 +567,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         },
       ],
     },
-  ])
+  ] as any)
 
   const full = await productModule.retrieveProduct(product.id, {
     select: ["id", "title", "thumbnail", "weight", "metadata"],
@@ -706,7 +709,10 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const mxnPrice = (vd?.price_set?.prices ?? []).find((p: any) => p.currency_code === "mxn")
         if (mxnPrice) {
-          await pricingModule.updatePrices([
+          // updatePrices existe en runtime pero no en el tipo IPricingModuleService
+          // de Medusa 2.x (que expone updatePriceSets); cast del módulo a any.
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          await (pricingModule as any).updatePrices([
             { id: mxnPrice.id, amount: pesosAAmount(body.precio1) },
           ])
         } else {

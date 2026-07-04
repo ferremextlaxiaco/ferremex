@@ -63,7 +63,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       mostrarPrecios, mostrarImagenes,
     })
 
-    const buffer = await renderToBuffer(element)
+    // renderToBuffer tipa su argumento como ReactElement<DocumentProps>; el
+    // elemento de OCDocument es válido en runtime pero no calza con ese tipo.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const buffer = await renderToBuffer(element as any)
 
     // Sanitizar ocNumber antes de interpolarlo en el header para evitar
     // header injection (comillas / saltos de línea malformarían el response).

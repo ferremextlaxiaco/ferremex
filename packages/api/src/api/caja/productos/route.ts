@@ -58,7 +58,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         { select: ["id", "sku", "title", "product_id"], take: skuCandidatos.length }
       ),
       productModule.listProductVariants(
-        { barcode: [codigoCandidato] },
+        // `barcode` es un filtro válido en runtime pero no está en el tipo
+        // FilterableProductVariantProps de Medusa 2.x; cast para el build de prod.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        { barcode: [codigoCandidato] } as any,
         { select: ["id", "sku", "title", "product_id"], take: 1 }
       ),
     ])

@@ -108,7 +108,8 @@ module.exports = defineConfig({
       options: {
         appDir: path.join(__dirname, '../../apps/pos'),
         path: '/pos',
-        // @ts-expect-error: viteDevServerPort is supported but not typed
+        // @ts-ignore: viteDevServerPort is supported at runtime; su presencia en
+        // el tipo difiere entre dev y build, así que usamos ts-ignore (no expect-error).
         viteDevServerPort: 7002,
       } as DashboardModuleOptions
     },

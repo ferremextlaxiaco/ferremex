@@ -68,7 +68,16 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   const clavesVentas = new Set<string | null>(ventas.map((v) => normCaja(v.caja_id)))
   const claves = new Set<string | null>([...catalogo.map((c) => c.id), ...clavesVentas])
 
-  const pendientes = []
+  const pendientes: Array<{
+    caja_id: string | null
+    caja_name: string
+    num_ventas: number
+    total_ventas: number
+    desde: string | null
+    primera_venta: string | null
+    ultima_venta: string | null
+    vendedores: string[]
+  }> = []
   for (const clave of claves) {
     const desde = ultimoCorte.get(clave) ?? null
     const ventasCaja = ventas.filter(
