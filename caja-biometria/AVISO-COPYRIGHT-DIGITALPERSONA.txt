@@ -1,0 +1,32 @@
+AVISO DE COPYRIGHT — Componentes DigitalPersona / HID Global
+============================================================
+
+Este paquete incorpora y redistribuye componentes de tiempo de ejecución
+("Runtime Environment") del DigitalPersona U.are.U SDK, propiedad de:
+
+    DigitalPersona, Inc. / HID Global Corporation
+    Copyright (c) DigitalPersona, Inc. Todos los derechos reservados.
+
+Componentes redistribuidos (carpeta "Redist" del U.are.U SDK):
+    - dpfj.dll     (motor de extracción/comparación de plantillas FMD)
+    - dpfpdd.dll   (interfaz de captura del lector)
+    - DLLs de soporte del lector U.are.U 4500
+
+Estos componentes se redistribuyen en forma de código objeto, incorporados en
+la aplicación FerremexBiometriaService, conforme a los términos del Acuerdo de
+Licencia del DigitalPersona U.are.U SDK (secciones 1.1 / 1.3), que permiten la
+redistribución del Runtime Environment a los usuarios finales siempre que:
+
+  (a) se distribuyan únicamente en forma de código objeto incorporado en la
+      aplicación licenciataria;
+  (b) se incluya el presente aviso de copyright;
+  (c) se usen EXCLUSIVAMENTE con hardware de reconocimiento de huella
+      DigitalPersona (en este caso, el lector U.are.U 4500 genuino).
+
+Ferremex utiliza estos componentes de forma interna, con hardware DigitalPersona
+genuino adquirido de sus distribuidores autorizados, cumpliendo dichas
+condiciones. No se redistribuye el SDK ni se usa para crear productos que
+compitan con DigitalPersona.
+
+Marcas: "DigitalPersona", "U.are.U", "HID" y "HID Global" son marcas de sus
+respectivos titulares.

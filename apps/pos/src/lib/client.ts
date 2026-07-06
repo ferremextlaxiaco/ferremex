@@ -1943,3 +1943,92 @@ export async function resetearPuntosMonederoAPI(customerId: string, motivo: stri
   invalidarDetalleMonedero(customerId)
   return r
 }
+
+// ── Biometría (huella) — capa de BD (/caja/biometria/*) ──────────────────────
+// Persistencia de plantillas + log de auditoría. La CAPTURA/COMPARACIÓN real
+// vive en lib/biometria.ts (habla con el servicio local 127.0.0.1:52700).
+
+export type SujetoBiometrico = "empleado" | "cliente"
+
+export interface HuellaAPI {
+  id: string
+  sujeto_tipo: SujetoBiometrico
+  sujeto_ref: string
+  dedo: string
+  plantilla_b64: string
+  calidad: number
+  motor: string
+  formato: string
+  activa: boolean
+  creado_en: string
+}
+
+export interface CandidatoBiometrico {
+  sujeto_ref: string
+  plantilla_b64: string
+}
+
+/** Plantillas activas de un sujeto (para verify 1:1: el cliente de la venta). */
+export async function listarHuellasAPI(
+  sujeto_tipo: SujetoBiometrico,
+  sujeto_ref: string
+): Promise<HuellaAPI[]> {
+  const params = new URLSearchParams({ sujeto_tipo, sujeto_ref })
+  return apiFetch<HuellaAPI[]>(`/caja/biometria/huellas?${params}`)
+}
+
+/** ¿El sujeto tiene al menos una huella activa? (para UI). */
+export async function tieneHuellaAPI(
+  sujeto_tipo: SujetoBiometrico,
+  sujeto_ref: string
+): Promise<boolean> {
+  const filas = await listarHuellasAPI(sujeto_tipo, sujeto_ref)
+  return filas.length > 0
+}
+
+/** Registra una plantilla nueva (tras un enroll en el servicio local). */
+export async function registrarHuellaAPI(data: {
+  sujeto_tipo: SujetoBiometrico
+  sujeto_ref: string
+  dedo?: string
+  plantilla_b64: string
+  calidad?: number
+  motor?: string
+  formato?: string
+}): Promise<HuellaAPI> {
+  return apiFetch<HuellaAPI>("/caja/biometria/huellas", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+}
+
+/** Baja (soft) de una plantilla. */
+export async function eliminarHuellaAPI(id: string): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>(`/caja/biometria/huellas/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  })
+}
+
+/** Candidatos (empleados con huella + permiso) para identify 1:N de una acción. */
+export async function listarCandidatosBiometricosAPI(accion: string): Promise<CandidatoBiometrico[]> {
+  return apiFetch<CandidatoBiometrico[]>(`/caja/biometria/candidatos?accion=${encodeURIComponent(accion)}`)
+}
+
+/** Registra un intento de autorización en el log de auditoría (append-only). */
+export async function registrarVerificacionAPI(data: {
+  accion: string
+  contexto_ref?: string | null
+  resultado: string
+  sujeto_tipo?: SujetoBiometrico | null
+  sujeto_ref?: string | null
+  score?: number | null
+  umbral?: number | null
+  caja_id?: string | null
+  cajero_id?: string | null
+  detalle?: string | null
+}): Promise<{ ok: boolean; id: string }> {
+  return apiFetch<{ ok: boolean; id: string }>("/caja/biometria/verificaciones", {
+    method: "POST",
+    body: JSON.stringify(data),
+  })
+}

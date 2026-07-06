@@ -74,6 +74,14 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-facturable",
     },
     {
+      // Biometría (huella dactilar). Plantillas FMD (base64) de empleados y
+      // clientes + log auditable de verificaciones. El motor nativo dpfj corre
+      // en un servicio local por caja (FerremexBiometriaService, 127.0.0.1:52700,
+      // ver C:/ferremex/caja-biometria); aquí solo se persisten las plantillas y
+      // el log. La huella nunca sale de la caja. Ver src/modules/ferremex-biometria.
+      resolve: "./src/modules/ferremex-biometria",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

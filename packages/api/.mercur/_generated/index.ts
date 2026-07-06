@@ -699,6 +699,13 @@ export type Routes = {
     caja: {
         ajusteInventario: typeof import("../../src/api/caja/ajuste-inventario/route");
         articulos: typeof import("../../src/api/caja/articulos/route");
+        biometria: {
+            candidatos: typeof import("../../src/api/caja/biometria/candidatos/route");
+            huellas: typeof import("../../src/api/caja/biometria/huellas/route") & {
+                $id: typeof import("../../src/api/caja/biometria/huellas/[id]/route");
+            };
+            verificaciones: typeof import("../../src/api/caja/biometria/verificaciones/route");
+        };
         cajas: typeof import("../../src/api/caja/cajas/route") & {
             $id: typeof import("../../src/api/caja/cajas/[id]/route");
         };

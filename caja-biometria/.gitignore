@@ -1,0 +1,17 @@
+# Binario compilado (se genera con compilar.bat)
+FerremexBiometriaService.exe
+*.pdb
+
+# Logs en runtime
+biometria.log
+biometria.log.old
+_test_run.log
+
+# DLLs redistribuibles de DigitalPersona (se copian del Runtime; no versionar binarios grandes)
+dpfj.dll
+dpfpdd.dll
+dpfpdd*.dll
+
+# Instalador del Runtime DigitalPersona (98MB cab — demasiado pesado para git;
+# se distribuye por otra vía, igual que caddy.exe en caja-proxy)
+runtime-digitalpersona/
