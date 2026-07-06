@@ -193,6 +193,27 @@ Get-ChildItem C:\Windows\System32\dpfpdd*.dll, C:\Windows\System32\dpfj*.dll
 Comprobar antes con: `Get-ItemProperty HKLM:\SOFTWARE\...\Uninstall\* | ? DisplayName -match "DigitalPersona"`
 — debe figurar **"DigitalPersona Biometric SDK Runtime 3.5"**, NO el "One Touch RTE 1.6.1".
 
+### 🔑 Nota clave — lector "casado" con el driver WBF (Class Biometric)
+Segundo problema en cajas con software viejo: el lector queda enganchado al
+driver **WBF de Crossmatch** (`uruwbf.inf`, Class **`Biometric`**, "U.are.U
+Fingerprint Reader **(WBF)**") en vez del driver nativo **HID Global** (Class
+**`Authentication Devices`**, v4.1.1.221) que `dpfpdd.dll` necesita. Windows
+Biometric Framework (Windows Hello) reclama el lector y no lo suelta.
+Síntoma: DLLs OK, runtime 3.5 OK, pero el lector aparece como **`Biometric (WBF)`**
+y `/health` da `conectado:false`. Ni reiniciar ni re-enumerar lo cambian.
+**Cómo detectarlo:**
+```powershell
+Get-PnpDevice -PresentOnly | ? { $_.InstanceId -match "VID_05BA" } | Select Status, Class, FriendlyName
+# Si Class = "Biometric" y dice "(WBF)" -> hay que forzar el driver nativo.
+```
+**Solución:** correr **`instalar-driver-4500.bat`** (admin) del paquete. Instala el
+driver correcto (carpeta `driver-4500\`, HID Global / Authentication Devices) y
+fuerza al lector a re-detectarlo. Si tras correrlo sigue en WBF, reinicia la caja.
+Luego reinicia el servicio y verifica `conectado:true`.
+> El driver `driver-4500\` NO viene de git (binarios). Se copia por USB desde una
+> caja/Matriz que ya lo tenga, o se regenera con
+> `pnputil /export-driver oem16.inf <carpeta>` (oem16 = el de "HID Global").
+
 ### 🔑 Nota clave — el servicio `DpHost` bloquea el lector
 El Runtime instala un servicio de Windows llamado **`DpHost`** que arranca solo y
 **se apodera del lector** (el 4500 solo admite un programa a la vez) → el POS diría

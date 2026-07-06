@@ -15,3 +15,9 @@ dpfpdd*.dll
 # Instalador del Runtime DigitalPersona (98MB cab — demasiado pesado para git;
 # se distribuye por otra vía, igual que caddy.exe en caja-proxy)
 runtime-digitalpersona/
+
+# Driver del lector 4500 (HID Global / Authentication Devices, binarios .sys/.dll
+# exportados del DriverStore). Se distribuye por USB, no se versiona en git.
+# Para regenerarlo desde una maquina que YA tiene el driver correcto:
+#   pnputil /export-driver oem16.inf <carpeta>   (oem16 = el de "HID Global"/"Authentication Devices")
+driver-4500/
