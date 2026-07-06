@@ -94,6 +94,8 @@ Si `"conectado":true` → **todo listo**. El POS ya puede registrar/verificar hu
 
 | Síntoma | Causa / solución |
 |---|---|
+| **Un `.bat` parpadea y se cierra solo** (ventana vacía, sin texto) | Windows le puso la **"Marca de la Web"** al copiarlo por USB/red y lo bloquea. Los `.bat` ya se **auto-desbloquean**, pero si aún pasa: clic derecho en el `.bat` → **Propiedades** → marca **"Desbloquear"** → Aceptar. O corre en PowerShell admin: `Get-ChildItem -Recurse \| Unblock-File` dentro de la carpeta. |
+| El runtime no instala desde el `.bat` | Corre el MSI directo en PowerShell admin: `msiexec /i "...\runtime-digitalpersona\setup.msi" /qn /norestart /l*v "$env:TEMP\dp.log"`. Revisa el log si falla. |
 | `/health` no responde | El servicio no está corriendo. Corre `iniciar-servicio.bat`, o reinicia la caja (arranca solo). |
 | `lector.conectado: false` | Lector desconectado, driver faltante (paso 2), Runtime no instalado (paso 1), **o el servicio `DpHost` tomó el lector** → corre **`deshabilitar-dphost.bat`** como administrador y reinicia el servicio. |
 | "No se detecta el lector" en el POS (pero USB y driver OK) | El servicio `DpHost` de DigitalPersona se apoderó del lector. Corre **`deshabilitar-dphost.bat`** como administrador. Causa raíz conocida — ver Paso 1. |

@@ -16,21 +16,22 @@ REM  Es REVERSIBLE. Para volver a activarlo (si algun dia se quisiera
 REM  login por huella de Windows), correr como admin:
 REM      sc config DpHost start= auto  &&  net start DpHost
 REM
-REM  Clic derecho -> "Ejecutar como administrador".
+REM  Doble clic normal: se AUTO-ELEVA a administrador.
 REM ====================================================================
+
+REM --- Auto-desbloqueo (quita la Marca de la Web de archivos copiados) ---
+powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse -File | Unblock-File" >nul 2>&1
+
+REM --- Auto-elevacion a administrador ---
+net session >nul 2>&1
+if not "%ERRORLEVEL%"=="0" (
+  echo Solicitando permisos de administrador...
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
 
 echo Liberando el lector de huella para el POS...
 echo.
-
-REM --- Comprobar permisos de administrador ---
-net session >nul 2>&1
-if not "%ERRORLEVEL%"=="0" (
-  echo [ERROR] Este script necesita permisos de administrador.
-  echo Clic derecho sobre el archivo -^> "Ejecutar como administrador".
-  echo.
-  pause
-  exit /b 1
-)
 
 REM --- Existe el servicio DpHost? (solo esta si el runtime ya se instalo) ---
 sc query DpHost >nul 2>&1

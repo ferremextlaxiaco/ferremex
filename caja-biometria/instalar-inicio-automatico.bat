@@ -3,13 +3,24 @@ REM ====================================================================
 REM  Ferremex - Instala el arranque AUTOMATICO del servicio de huella.
 REM  Crea una tarea programada de Windows que lanza el servicio al
 REM  iniciar sesion, en segundo plano (sin ventana). Ejecutar UNA vez
-REM  por caja. Clic derecho -> "Ejecutar como administrador".
+REM  por caja. Doble clic normal: se AUTO-ELEVA y AUTO-DESBLOQUEA.
 REM
 REM  REQUISITOS PREVIOS (ver LEEME-INSTALACION-CAJA.md):
 REM    1. DigitalPersona Runtime 3.5 instalado (instalar-runtime-digitalpersona.bat)
 REM    2. Driver del lector U.are.U 4500 instalado
 REM    3. Lector conectado por USB
 REM ====================================================================
+
+REM --- Auto-desbloqueo (quita la Marca de la Web de archivos copiados) ---
+powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse -File | Unblock-File" >nul 2>&1
+
+REM --- Auto-elevacion a administrador ---
+net session >nul 2>&1
+if not "%ERRORLEVEL%"=="0" (
+  echo Solicitando permisos de administrador...
+  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+  exit /b
+)
 
 setlocal
 set "CARPETA=%~dp0"
