@@ -80,3 +80,8 @@ backup_ferremex_*.sql
 
 # Binario del proxy de las cajas (53MB) — se descarga aparte, ver caja-proxy/DESCARGAR-CADDY.md
 caja-proxy/caddy.exe
+
+# Paquete .zip para copiar a las cajas por USB (~158MB) — artefacto regenerable,
+# no versionar (excede el limite de GitHub). Se arma desde caja-biometria/ + caja-proxy/.
+caja-biometria.zip
+*.zip
