@@ -1,4 +1,5 @@
 @echo off
+setlocal enableextensions
 REM ====================================================================
 REM  Ferremex - Libera el lector de huella para el POS.
 REM
@@ -24,37 +25,22 @@ powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse -File | Unb
 
 REM --- Auto-elevacion a administrador ---
 net session >nul 2>&1
-if not "%ERRORLEVEL%"=="0" (
-  echo Solicitando permisos de administrador...
-  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-  exit /b
-)
+if not "%ERRORLEVEL%"=="0" goto ELEVAR
 
 echo Liberando el lector de huella para el POS...
 echo.
 
 REM --- Existe el servicio DpHost? (solo esta si el runtime ya se instalo) ---
 sc query DpHost >nul 2>&1
-if not "%ERRORLEVEL%"=="0" (
-  echo [AVISO] El servicio DpHost no existe todavia.
-  echo Instala primero el Runtime de DigitalPersona
-  echo (instalar-runtime-digitalpersona.bat) y vuelve a correr este archivo.
-  echo.
-  pause
-  exit /b 0
-)
+if not "%ERRORLEVEL%"=="0" goto SIN_DPHOST
 
-REM --- Detener y deshabilitar DpHost ---
 echo Deteniendo el servicio DpHost...
 net stop DpHost >nul 2>&1
 
 echo Deshabilitando el arranque automatico de DpHost...
 sc config DpHost start= disabled >nul 2>&1
-if "%ERRORLEVEL%"=="0" (
-  echo   [OK] DpHost deshabilitado.
-) else (
-  echo   [ERROR] No se pudo deshabilitar DpHost. Corre esto como administrador.
-)
+if "%ERRORLEVEL%"=="0" echo   [OK] DpHost deshabilitado.
+if not "%ERRORLEVEL%"=="0" echo   [ERROR] No se pudo deshabilitar DpHost. Corre esto como administrador.
 
 REM --- Cerrar procesos residuales que pudieran tener el lector tomado ---
 echo Cerrando procesos residuales de DigitalPersona (si los hay)...
@@ -67,3 +53,17 @@ echo Verifica en el navegador:  http://127.0.0.1:52700/health
 echo Debe responder con  "lector":{"conectado":true, ...}
 echo.
 pause
+exit /b 0
+
+:SIN_DPHOST
+echo [AVISO] El servicio DpHost no existe todavia.
+echo Instala primero el Runtime de DigitalPersona
+echo (instalar-runtime-digitalpersona.bat) y vuelve a correr este archivo.
+echo.
+pause
+exit /b 0
+
+:ELEVAR
+echo Solicitando permisos de administrador...
+powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+exit /b

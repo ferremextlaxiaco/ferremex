@@ -1,4 +1,5 @@
 @echo off
+setlocal enableextensions
 REM ====================================================================
 REM  Ferremex - Instala el arranque AUTOMATICO del servicio de huella.
 REM  Crea una tarea programada de Windows que lanza el servicio al
@@ -16,13 +17,8 @@ powershell -NoProfile -Command "Get-ChildItem -Path '%~dp0' -Recurse -File | Unb
 
 REM --- Auto-elevacion a administrador ---
 net session >nul 2>&1
-if not "%ERRORLEVEL%"=="0" (
-  echo Solicitando permisos de administrador...
-  powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
-  exit /b
-)
+if not "%ERRORLEVEL%"=="0" goto ELEVAR
 
-setlocal
 set "CARPETA=%~dp0"
 if "%CARPETA:~-1%"=="\" set "CARPETA=%CARPETA:~0,-1%"
 
@@ -31,30 +27,38 @@ echo Carpeta: %CARPETA%
 echo.
 
 REM Verificar que el .exe existe.
-if not exist "%CARPETA%\FerremexBiometriaService.exe" (
-  echo [ERROR] No se encontro FerremexBiometriaService.exe en esta carpeta.
-  echo Asegurate de copiar la carpeta COMPLETA a la caja.
-  pause
-  exit /b 1
-)
+if not exist "%CARPETA%\FerremexBiometriaService.exe" goto NO_EXE
 
 REM Lanza el servicio sin ventana visible via el VBScript auxiliar.
-schtasks /Create /F /TN "Ferremex-Biometria-POS" ^
-  /TR "wscript.exe \"%CARPETA%\iniciar-servicio-oculto.vbs\"" ^
-  /SC ONLOGON /RL HIGHEST
-
-if %ERRORLEVEL%==0 (
-  echo.
-  echo [OK] Tarea creada. El servicio arrancara solo al iniciar sesion.
-  echo Iniciando el servicio ahora tambien...
-  wscript.exe "%CARPETA%\iniciar-servicio-oculto.vbs"
-  echo.
-  echo Listo. Verifica en el navegador:  http://127.0.0.1:52700/health
-  echo Debe responder con  "lector":{"conectado":true, ...}
-) else (
-  echo.
-  echo [ERROR] No se pudo crear la tarea. Ejecuta este .bat como Administrador.
-)
+schtasks /Create /F /TN "Ferremex-Biometria-POS" /TR "wscript.exe \"%CARPETA%\iniciar-servicio-oculto.vbs\"" /SC ONLOGON /RL HIGHEST
+if not "%ERRORLEVEL%"=="0" goto TAREA_ERROR
 
 echo.
+echo [OK] Tarea creada. El servicio arrancara solo al iniciar sesion.
+echo Iniciando el servicio ahora tambien...
+wscript.exe "%CARPETA%\iniciar-servicio-oculto.vbs"
+echo.
+echo Listo. Verifica en el navegador:  http://127.0.0.1:52700/health
+echo Debe responder con  "lector":{"conectado":true, ...}
+echo.
 pause
+exit /b 0
+
+:NO_EXE
+echo [ERROR] No se encontro FerremexBiometriaService.exe en esta carpeta.
+echo Asegurate de copiar la carpeta COMPLETA a la caja.
+echo.
+pause
+exit /b 1
+
+:TAREA_ERROR
+echo.
+echo [ERROR] No se pudo crear la tarea. Ejecuta este .bat como Administrador.
+echo.
+pause
+exit /b 1
+
+:ELEVAR
+echo Solicitando permisos de administrador...
+powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -Verb RunAs"
+exit /b
