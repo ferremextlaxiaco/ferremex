@@ -66,6 +66,27 @@ seguro; una IP directa (`192.168.1.50`) NO. Por eso todo pasa por el proxy local
 
 ---
 
+## 🔎 PASO 0 (OBLIGATORIO) — revisar software viejo de DigitalPersona/Crossmatch
+
+**Antes de instalar nada**, revisa si la caja trae software de huella viejo
+preinstalado. Este es el paso que evita el 90% de los dolores de cabeza (toda la
+odisea de la Caja 2 fue por esto). En PowerShell (admin):
+
+```powershell
+Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "DigitalPersona|Crossmatch|U.are.U|One Touch" } | Select-Object DisplayName, DisplayVersion
+```
+
+- **Sale vacío** → caja limpia (como la Caja 1). Sigue normal, será rápido.
+- **Sale algo viejo** (como la Caja 2: "One Touch RTE 1.6.1", "Crossmatch U.are.U
+  (WBF)") → **límpialo primero**:
+  1. Desinstala el "One Touch for Windows RTE" (bloquea el runtime 3.5 — ver nota 1603 abajo).
+  2. Tras instalar el runtime 3.5, si el lector queda como `Biometric (WBF)`,
+     corre `instalar-driver-4500.bat` (ver nota del driver WBF abajo).
+
+Con la caja limpia, la instalación de los 3 componentes es directa.
+
+---
+
 ## ⚠️ IMPORTANTE — archivos pesados que NO están en GitHub
 
 Estos binarios **no se versionan en git** (son demasiado pesados). Hay que copiarlos
