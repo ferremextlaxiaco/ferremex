@@ -15,7 +15,8 @@ de la caja). Es la 3ª pieza local por caja, junto al **proxy Caddy** (`localhos
 | `FerremexBiometriaService.exe` | El servicio de huella (no se instala, se arranca) |
 | `appsettings.json` | Configuración (puerto, umbrales, nº de capturas) |
 | `runtime-digitalpersona/` | Instalador del DigitalPersona Runtime 3.5 (DLLs del lector) |
-| `instalar-runtime-digitalpersona.bat` | Instala el runtime (paso 1) |
+| `instalar-runtime-digitalpersona.bat` | Instala el runtime (paso 1) + libera el lector para el POS |
+| `deshabilitar-dphost.bat` | Libera el lector para el POS (por si hace falta correrlo aparte) |
 | `instalar-inicio-automatico.bat` | Instala el arranque automático del servicio (paso 3) |
 | `iniciar-servicio.bat` | Arranque manual con ventana (para probar/diagnosticar) |
 | `iniciar-servicio-oculto.vbs` | Arranque sin ventana (lo usa la tarea programada) |
@@ -34,6 +35,16 @@ Debe quedar completa (incluida la subcarpeta `runtime-digitalpersona\`).
 2. Espera 1-2 minutos. Si al final pide **reiniciar**, reinicia la caja.
 
 Esto deja en el sistema las DLLs (`dpfj.dll`, `dpfpdd.dll`) que el servicio necesita.
+
+> **Importante — el lector queda libre para el POS.** El runtime instala el
+> servicio de Windows **`DpHost`** ("HID Authentication Device Service"), que
+> arranca solo y **se apodera del lector** en acceso exclusivo (el lector solo
+> admite un programa a la vez). Como aquí **no** se usa el login por huella de
+> Windows, este `.bat` **deshabilita `DpHost` automáticamente** para que el lector
+> quede siempre disponible para el POS. Si por alguna razón hiciera falta hacerlo
+> a mano después, corre **`deshabilitar-dphost.bat`** como administrador.
+> *(Reversible: para reactivar el login por huella de Windows, en una consola de
+> admin: `sc config DpHost start= auto` y `net start DpHost`.)*
 
 ### Paso 2 — Instalar el driver del lector 4500
 1. **Conecta el lector** U.are.U 4500 por USB.
@@ -84,8 +95,9 @@ Si `"conectado":true` → **todo listo**. El POS ya puede registrar/verificar hu
 | Síntoma | Causa / solución |
 |---|---|
 | `/health` no responde | El servicio no está corriendo. Corre `iniciar-servicio.bat`, o reinicia la caja (arranca solo). |
-| `lector.conectado: false` | Lector desconectado, driver faltante (paso 2) o Runtime no instalado (paso 1). |
-| "Lector ocupado" al capturar | Otro programa tiene el lector (Windows Hello / otra app). Cierra esas apps. |
+| `lector.conectado: false` | Lector desconectado, driver faltante (paso 2), Runtime no instalado (paso 1), **o el servicio `DpHost` tomó el lector** → corre **`deshabilitar-dphost.bat`** como administrador y reinicia el servicio. |
+| "No se detecta el lector" en el POS (pero USB y driver OK) | El servicio `DpHost` de DigitalPersona se apoderó del lector. Corre **`deshabilitar-dphost.bat`** como administrador. Causa raíz conocida — ver Paso 1. |
+| "Lector ocupado" al capturar | Otro programa tiene el lector (Windows Hello / DpHost / otra app). Cierra esas apps o corre `deshabilitar-dphost.bat`. |
 | El registro falla siempre | Revisa que el dedo esté bien puesto y el lector limpio. Reintenta. |
 | "Access denied" al arrancar el servicio | Corre `iniciar-servicio.bat` una vez como administrador, o reserva la URL: `netsh http add urlacl url=http://127.0.0.1:52700/ user=Todos` |
 
