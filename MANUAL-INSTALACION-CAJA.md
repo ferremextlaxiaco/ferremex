@@ -172,6 +172,27 @@ Doble clic (admin) en `instalar-inicio-automatico.bat`. Crea la tarea
 En el navegador de la caja: `http://127.0.0.1:52700/health`
 Debe responder `"lector":{"conectado":true, ... "modelo":"U.are.U 4500"}`.
 
+### 🔑 Nota clave — runtime VIEJO que impide instalar el correcto (error 1603)
+Algunas cajas traen preinstalado un runtime ANTIGUO de DigitalPersona:
+**"DigitalPersona One Touch for Windows RTE 1.6.1"** (de 2010). Ese runtime **NO
+trae `dpfpdd.dll`/`dpfj.dll`** (las DLLs que el servicio necesita) y además
+**bloquea** la instalación del Runtime 3.5 correcto → `msiexec` falla con
+**error 1603**. Síntoma: el driver está OK (Windows ve el lector) pero el servicio
+loguea `No se puede cargar el archivo DLL 'dpfpdd.dll'` y `/health` da
+`conectado:false`.
+**Solución:** desinstalar primero el One Touch RTE 1.6.1 y luego instalar el 3.5.
+```powershell
+# 1) Desinstalar el runtime viejo
+$viejo = Get-ItemProperty HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*, HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -match "One Touch.*Windows RTE" }
+if ($viejo) { Start-Process msiexec.exe -ArgumentList "/x",$viejo.PSChildName,"/qn","/norestart" -Wait }
+# 2) Instalar el 3.5 correcto (ajusta la ruta de la caja)
+msiexec /i "C:\ferremex-cajaN\caja-biometria\runtime-digitalpersona\setup.msi" /qn /norestart /l*v "$env:TEMP\dp.log"
+# 3) Verificar que las DLLs quedaron
+Get-ChildItem C:\Windows\System32\dpfpdd*.dll, C:\Windows\System32\dpfj*.dll
+```
+Comprobar antes con: `Get-ItemProperty HKLM:\SOFTWARE\...\Uninstall\* | ? DisplayName -match "DigitalPersona"`
+— debe figurar **"DigitalPersona Biometric SDK Runtime 3.5"**, NO el "One Touch RTE 1.6.1".
+
 ### 🔑 Nota clave — el servicio `DpHost` bloquea el lector
 El Runtime instala un servicio de Windows llamado **`DpHost`** que arranca solo y
 **se apodera del lector** (el 4500 solo admite un programa a la vez) → el POS diría
