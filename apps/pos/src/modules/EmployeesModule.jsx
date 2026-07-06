@@ -196,8 +196,7 @@ function ChangePinModal({ employee, employees, onSave, onClose }) {
   function validate() {
     if (!/^\d{4,6}$/.test(pin)) return "El PIN debe tener entre 4 y 6 dígitos"
     if (pin !== confirm) return "Los PINs no coinciden"
-    const dup = employees.find(e => e.id !== employee.id && e.pin === pin)
-    if (dup) return `Este PIN ya está en uso por ${dup.nombre}`
+    // PIN duplicado PERMITIDO a propósito (el login valida usuario + PIN, no solo PIN).
     return ""
   }
 
@@ -855,8 +854,8 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
     const errs = {}
     if (!form.nombre.trim()) errs.nombre = "El nombre es obligatorio"
     if (!/^\d{4,6}$/.test(form.pin)) errs.pin = "El PIN debe tener entre 4 y 6 dígitos"
-    const dup = employees.find(e => e.id !== form.id && e.pin === form.pin)
-    if (dup) errs.pin = `Este PIN ya está en uso por ${dup.nombre}`
+    // PIN duplicado PERMITIDO a propósito: el login identifica al usuario por su
+    // selección de nombre + PIN, no solo por PIN. (Backend también lo permite.)
     if (form.pin !== original.pin && form.pin !== (form.pinConfirm ?? ""))
       errs.pinConfirm = "Los PINs no coinciden"
     return errs
@@ -864,7 +863,13 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
 
   function handleSave() {
     const errs = validate()
-    if (Object.keys(errs).length) { pushToast("Revisa los campos antes de guardar", "error"); return }
+    if (Object.keys(errs).length) {
+      // Mostrar el mensaje ESPECÍFICO del primer campo que falla (antes solo salía
+      // un genérico "Revisa los campos" y el cajero no sabía qué corregir).
+      const primerError = errs.nombre || errs.pin || errs.pinConfirm || "Revisa los campos antes de guardar"
+      pushToast(primerError, "error")
+      return
+    }
     onSave(form)
   }
 

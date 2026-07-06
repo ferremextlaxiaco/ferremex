@@ -115,10 +115,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       error = "Ya existe un usuario con ese nombre"
       return usuarios
     }
-    if (body.pin && usuarios.some((u) => u.pin === body.pin)) {
-      error = "Ese PIN ya está en uso por otro usuario"
-      return usuarios
-    }
+    // PIN duplicado PERMITIDO a propósito: el login identifica al usuario por su
+    // nombre/selección + PIN (login(usuario.id, pin)), no solo por PIN, así que
+    // dos empleados pueden compartir PIN sin ambigüedad en el acceso.
     nuevo = {
       id: crypto.randomBytes(4).toString("hex"),
       nombre: body.nombre.trim(),
@@ -167,10 +166,8 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
         (u) => u.id !== body.id && u.nombre.toLowerCase() === body.nombre.trim().toLowerCase()
       )
     ) { error = "Ya existe un usuario con ese nombre"; return usuarios }
-    // No permitir un PIN ya usado por otro
-    if (body.pin && usuarios.some((u) => u.id !== body.id && u.pin === body.pin)) {
-      error = "Ese PIN ya está en uso por otro usuario"; return usuarios
-    }
+    // PIN duplicado PERMITIDO a propósito (ver nota en POST): el login valida por
+    // usuario seleccionado + PIN, no solo por PIN.
     const copia = [...usuarios]
     copia[idx] = { ...copia[idx], ...body, nombre: (body.nombre ?? copia[idx].nombre).trim() }
     actualizado = copia[idx]
