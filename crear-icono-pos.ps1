@@ -2,17 +2,20 @@
 #  Ferremex - Convierte "Logo Ferremex recortado.jpeg" en un .ico multi-tamano
 #  con FONDO BLANCO TRANSPARENTE, para el icono del acceso directo del POS.
 #
-#  Pasos:
-#    1. Quita el fondo blanco (flood-fill desde los bordes -> transparente).
-#       Se hace por flood-fill (no "todo lo blanco") para NO borrar los
-#       blancos internos del dibujo (ojos, camisa clara, brillos).
-#    2. Recorta a la caja del contenido (bounding box) para que el logo
-#       llene el icono sin margenes enormes.
-#    3. Centra en un lienzo cuadrado transparente y exporta .ico multi-tamano.
+#  Modo (parametro -Modo):
+#    mascota  (default) -> recorta SOLO al ferretero (parte de arriba del logo).
+#                          Se ve grande y nitido a 16/32/48px. RECOMENDADO:
+#                          el logo completo es muy horizontal y a tamano de
+#                          escritorio el texto queda ilegible y difuminado.
+#    completo            -> el logo entero (mascota + FERREMEX).
 #
 #  Genera "ferremex-pos.ico" en la raiz del repo. No instala nada
 #  (usa System.Drawing, incluido en Windows).
 # ============================================================================
+param(
+  [ValidateSet("mascota","completo")]
+  [string]$Modo = "mascota"
+)
 
 Add-Type -AssemblyName System.Drawing
 
@@ -24,9 +27,21 @@ if (-not (Test-Path $origen)) {
   exit 1
 }
 
-Write-Host "1/4 Cargando logo..." -ForegroundColor Cyan
+Write-Host "1/4 Cargando logo (modo: $Modo)..." -ForegroundColor Cyan
 $src = New-Object System.Drawing.Bitmap($origen)
 $w = $src.Width; $h = $src.Height
+
+# --- Recorte previo por modo -------------------------------------------------
+# La mascota vive en la mitad superior; una banda 100% blanca la separa del
+# texto azul. Cortamos ahi para el modo "mascota". Fraccion 0.63 = justo
+# encima de "FERREMEX" (validado con el perfil vertical del logo).
+if ($Modo -eq "mascota") {
+  $recorteAlto = [int]($h * 0.63)
+  $srcRect = New-Object System.Drawing.Rectangle(0, 0, $w, $recorteAlto)
+  $tmp = $src.Clone($srcRect, $src.PixelFormat)
+  $src.Dispose(); $src = $tmp
+  $w = $src.Width; $h = $src.Height
+}
 
 # --- Copiar pixeles a un arreglo ARGB manipulable ---
 $rect = New-Object System.Drawing.Rectangle(0, 0, $w, $h)
@@ -40,13 +55,11 @@ $src.Dispose()
 
 # --- 2/4 Flood-fill desde los bordes: blanco -> transparente ---
 Write-Host "2/4 Quitando fondo blanco..." -ForegroundColor Cyan
-# Un pixel es "fondo" si es casi blanco (los 3 canales por encima del umbral).
-$umbral = 238   # 0-255; mas bajo = mas agresivo quitando blanco sucio del JPEG
+$umbral = 238
 function EsBlanco([int]$idx) {
   return ($bytes[$idx+2] -ge $umbral) -and ($bytes[$idx+1] -ge $umbral) -and ($bytes[$idx] -ge $umbral)
 }
 
-# BFS con una cola sobre un arreglo "visitado". Semillas = todo el borde.
 $visitado = New-Object bool[] ($w * $h)
 $cola = New-Object System.Collections.Generic.Queue[int]
 
@@ -55,10 +68,7 @@ function Encolar([int]$x, [int]$y) {
   $p = $y * $w + $x
   if ($visitado[$p]) { return }
   $idx = $y * $stride + $x * 4
-  if (EsBlanco $idx) {
-    $visitado[$p] = $true
-    $cola.Enqueue($p)
-  }
+  if (EsBlanco $idx) { $visitado[$p] = $true; $cola.Enqueue($p) }
 }
 
 for ($x = 0; $x -lt $w; $x++) { Encolar $x 0; Encolar $x ($h-1) }
@@ -68,28 +78,33 @@ while ($cola.Count -gt 0) {
   $p = $cola.Dequeue()
   $y = [math]::Floor($p / $w); $x = $p - ($y * $w)
   $idx = $y * $stride + $x * 4
-  $bytes[$idx+3] = 0    # canal alfa -> transparente
+  $bytes[$idx+3] = 0
   Encolar ($x-1) $y; Encolar ($x+1) $y; Encolar $x ($y-1); Encolar $x ($y+1)
 }
 
 # --- 3/4 Bounding box del contenido (pixeles NO transparentes) ---
+# Robusto ante ruido del JPEG: contamos pixeles opacos por columna y por fila,
+# y solo consideramos "con contenido" las que superan un minimo (0.5% del lado).
+# Asi los pixeles sueltos lejos de la mascota NO inflan el recorte ni lo desplazan.
 Write-Host "3/4 Recortando al contenido..." -ForegroundColor Cyan
-$minX = $w; $minY = $h; $maxX = -1; $maxY = -1
+$colCount = New-Object int[] $w
+$rowCount = New-Object int[] $h
 for ($y = 0; $y -lt $h; $y++) {
   $fila = $y * $stride
   for ($x = 0; $x -lt $w; $x++) {
-    if ($bytes[$fila + $x*4 + 3] -ne 0) {
-      if ($x -lt $minX) { $minX = $x }; if ($x -gt $maxX) { $maxX = $x }
-      if ($y -lt $minY) { $minY = $y }; if ($y -gt $maxY) { $maxY = $y }
-    }
+    if ($bytes[$fila + $x*4 + 3] -ne 0) { $colCount[$x]++; $rowCount[$y]++ }
   }
 }
-if ($maxX -lt 0) { Write-Host "[ERROR] Todo el logo quedo transparente; sube el umbral." -ForegroundColor Red; exit 1 }
+$minColContenido = [math]::Max(3, [int]($h * 0.005))
+$minRowContenido = [math]::Max(3, [int]($w * 0.005))
+$minX = $w; $maxX = -1; $minY = $h; $maxY = -1
+for ($x = 0; $x -lt $w; $x++) { if ($colCount[$x] -ge $minColContenido) { if ($x -lt $minX){$minX=$x}; if ($x -gt $maxX){$maxX=$x} } }
+for ($y = 0; $y -lt $h; $y++) { if ($rowCount[$y] -ge $minRowContenido) { if ($y -lt $minY){$minY=$y}; if ($y -gt $maxY){$maxY=$y} } }
+if ($maxX -lt 0) { Write-Host "[ERROR] Todo quedo transparente; sube el umbral." -ForegroundColor Red; exit 1 }
 
 $cropW = $maxX - $minX + 1
 $cropH = $maxY - $minY + 1
 
-# Bitmap transparente ya recortado
 $recortado = New-Object System.Drawing.Bitmap($cropW, $cropH, $fmt)
 $rect2 = New-Object System.Drawing.Rectangle(0, 0, $cropW, $cropH)
 $d2 = $recortado.LockBits($rect2, [System.Drawing.Imaging.ImageLockMode]::WriteOnly, $fmt)
@@ -103,7 +118,7 @@ for ($y = 0; $y -lt $cropH; $y++) {
 [System.Runtime.InteropServices.Marshal]::Copy($buf2, 0, $d2.Scan0, $buf2.Length)
 $recortado.UnlockBits($d2)
 
-# Lienzo cuadrado transparente con el logo centrado (5% de margen)
+# Lienzo cuadrado transparente con el logo centrado
 $lado = [math]::Max($cropW, $cropH)
 $margen = [int]($lado * 0.06)
 $ladoFinal = $lado + 2 * $margen
@@ -158,8 +173,8 @@ $bw.Dispose(); $ms.Dispose(); $cuadrado.Dispose()
 if (Test-Path $destino) {
   $kb = [math]::Round((Get-Item $destino).Length / 1KB, 1)
   Write-Host ""
-  Write-Host "[OK] Icono creado: $destino ($kb KB)" -ForegroundColor Green
-  Write-Host "     Contenido recortado a ${cropW}x${cropH}, fondo blanco transparente." -ForegroundColor Green
+  Write-Host "[OK] Icono creado: $destino ($kb KB) - modo $Modo" -ForegroundColor Green
+  Write-Host "     Contenido recortado a ${cropW}x${cropH}, fondo transparente." -ForegroundColor Green
 } else {
   Write-Host "[ERROR] No se pudo crear el icono." -ForegroundColor Red
   exit 1
