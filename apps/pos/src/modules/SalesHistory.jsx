@@ -37,9 +37,9 @@ function startOfDay(d) {
 function isoToday() { return slugDate(new Date()) }
 
 function downloadCSV(rows) {
-  const header = ["Folio", "Fecha", "Cajero", "Cliente", "Total", "Efectivo", "Transferencia", "Tarjeta", "Crédito", "Cambio", "Estado"]
+  const header = ["Folio", "Fecha", "Cajero", "Cliente", "Total", "Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Cambio", "Estado"]
   const lines = [header.join(","), ...rows.map(v =>
-    [v.folio, v.fecha, v.cajero, `"${(v.cliente_nombre || "Público en general").replace(/"/g, '""')}"`, v.total, v.pago_efectivo, v.pago_transferencia, v.pago_tarjeta ?? 0, v.pago_credito, v.cambio, v.estado ?? "vigente"].join(",")
+    [v.folio, v.fecha, v.cajero, `"${(v.cliente_nombre || "Público en general").replace(/"/g, '""')}"`, v.total, v.pago_efectivo, v.pago_transferencia, v.pago_tarjeta ?? 0, v.pago_credito, v.pago_puntos ?? 0, v.cambio, v.estado ?? "vigente"].join(",")
   )]
   const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" })
   const url = URL.createObjectURL(blob)
@@ -397,7 +397,7 @@ const PRESETS = [
   { label: "Mes", fn: () => ({ desde: isoToday().slice(0,7) + "-01", hasta: isoToday() }) },
 ]
 
-const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Mixto"]
+const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Mixto"]
 
 const FP_KEY = "pos_sales_filters"
 function loadFilters() {
@@ -684,6 +684,7 @@ function metodoVenta(v) {
     v.pago_transferencia > 0 && "Transferencia",
     (v.pago_tarjeta ?? 0) > 0 && "Tarjeta",
     v.pago_credito > 0 && "Crédito",
+    (v.pago_puntos ?? 0) > 0 && "Puntos",
   ].filter(Boolean)
   if (pagos.length === 0) return "—"
   if (pagos.length === 1) return pagos[0]
@@ -907,6 +908,12 @@ function SaleDrawer({ venta, onClose, onCancel }) {
             {venta.pago_transferencia > 0 && <div style={rowStyle}><span style={labelC}>Transferencia</span><span style={valueC}>{fmt(venta.pago_transferencia)}</span></div>}
             {(venta.pago_tarjeta ?? 0) > 0 && <div style={rowStyle}><span style={labelC}>Tarjeta</span><span style={valueC}>{fmt(venta.pago_tarjeta)}</span></div>}
             {venta.pago_credito > 0 && <div style={rowStyle}><span style={labelC}>Crédito</span><span style={valueC}>{fmt(venta.pago_credito)}</span></div>}
+            {(venta.pago_puntos ?? 0) > 0 && (
+              <div style={rowStyle}>
+                <span style={labelC}>Puntos{(venta.puntos_canjeados ?? 0) > 0 ? ` (${venta.puntos_canjeados} pts)` : ""}</span>
+                <span style={valueC}>{fmt(venta.pago_puntos)}</span>
+              </div>
+            )}
             {venta.cambio > 0 && <div style={rowStyle}><span style={labelC}>Cambio</span><span style={valueC}>{fmt(venta.cambio)}</span></div>}
             <div style={{ ...rowStyle, borderBottom: "none", paddingTop: 8 }}>
               <span style={{ ...labelC, fontWeight: 700, fontSize: 13, color: "var(--text)" }}>Total</span>

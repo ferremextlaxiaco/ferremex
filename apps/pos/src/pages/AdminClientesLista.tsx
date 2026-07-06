@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
+import { Fingerprint } from "lucide-react"
 import {
   type Cliente,
   loadClientes,
@@ -10,6 +11,9 @@ import {
   saveGrupos,
   siguienteNumCliente,
 } from "../lib/clientes"
+import { tieneHuellaAPI, eliminarHuellaAPI, listarHuellasAPI } from "../lib/client"
+import RegistroHuellaModal from "../components/RegistroHuellaModal"
+import ConfirmDialog from "../components/ConfirmDialog"
 
 const CLIENTE_VACIO: Omit<Cliente, "id"> = {
   num_cliente: "",
@@ -44,9 +48,33 @@ export function AdminClientesLista() {
   const [guardando, setGuardando] = useState(false)
   const [nuevoGrupo, setNuevoGrupo] = useState<string | null>(null)
   const [creditoHabilitado, setCreditoHabilitado] = useState(false)
+  // Biometría: si el cliente en edición ya tiene huella + modal de registro.
+  const [tieneHuella, setTieneHuella] = useState(false)
+  const [mostrarRegistroHuella, setMostrarRegistroHuella] = useState(false)
+  const [confirmQuitarHuella, setConfirmQuitarHuella] = useState(false)
 
   function tieneCredito(c: Cliente) {
     return (c.limite_credito ?? 0) > 0 || (c.dias_credito ?? 0) > 0
+  }
+
+  /** Consulta si el cliente en edición ya tiene huella registrada. */
+  async function refrescarHuella(customerId: string) {
+    try { setTieneHuella(await tieneHuellaAPI("cliente", customerId)) }
+    catch { setTieneHuella(false) }
+  }
+
+  /** Quita la huella registrada del cliente en edición (tras confirmar en el diálogo). */
+  async function quitarHuella() {
+    if (!editando?.id) return
+    try {
+      const huellas = await listarHuellasAPI("cliente", editando.id)
+      for (const h of huellas) await eliminarHuellaAPI(h.id)
+      setTieneHuella(false)
+    } catch (e) {
+      alert("No se pudo quitar la huella: " + (e instanceof Error ? e.message : ""))
+    } finally {
+      setConfirmQuitarHuella(false)
+    }
   }
 
   // Carga inicial (clientes + grupos) desde la BD, y abre el editor si la URL lo pide.
@@ -63,7 +91,7 @@ export function AdminClientesLista() {
         const nuevo = searchParams.get("nuevo")
         if (editarId) {
           const c = lista.find((c) => c.id === editarId)
-          if (c) { setEditando({ ...c }); setEsNuevo(false); setCreditoHabilitado(tieneCredito(c)) }
+          if (c) { setEditando({ ...c }); setEsNuevo(false); setCreditoHabilitado(tieneCredito(c)); refrescarHuella(c.id) }
         } else if (nuevo === "1") {
           const num = await siguienteNumCliente()
           if (!activo) return
@@ -104,6 +132,8 @@ export function AdminClientesLista() {
     setFormError(null)
     setNuevoGrupo(null)
     setCreditoHabilitado(tieneCredito(c))
+    setTieneHuella(false)
+    if (c.id) refrescarHuella(c.id)
   }
 
   function cerrar() {
@@ -290,6 +320,38 @@ export function AdminClientesLista() {
                 </div>
               </div>
             )}
+
+            {/* Huella dactilar — se registra en el servicio local y se guarda en BD.
+                Solo disponible al EDITAR (necesita el customer.id ya creado). */}
+            <div className="ac-field" style={{ marginTop: 14 }}>
+              <label className="ac-label">Huella dactilar</label>
+              {esNuevo ? (
+                <p className="text-sm text-gray-400">Guarda el cliente primero para poder registrar su huella.</p>
+              ) : (
+                <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, color: tieneHuella ? "#16a34a" : "#6b7280" }}>
+                    <Fingerprint size={18} />
+                    {tieneHuella ? "Huella registrada" : "Sin huella registrada"}
+                  </span>
+                  <button
+                    type="button"
+                    className="bg-orange-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-orange-700"
+                    onClick={() => setMostrarRegistroHuella(true)}
+                  >
+                    {tieneHuella ? "Volver a registrar" : "Registrar huella"}
+                  </button>
+                  {tieneHuella && (
+                    <button
+                      type="button"
+                      className="text-red-600 border border-red-200 px-3 py-2 rounded-lg text-sm hover:bg-red-50"
+                      onClick={() => setConfirmQuitarHuella(true)}
+                    >
+                      Quitar huella
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="ac-section">
@@ -360,6 +422,26 @@ export function AdminClientesLista() {
             </div>
           </div>
         </div>
+
+        {mostrarRegistroHuella && editando.id && (
+          <RegistroHuellaModal
+            sujetoTipo="cliente"
+            sujetoRef={editando.id}
+            nombre={editando.nombre || "cliente"}
+            onCerrar={() => setMostrarRegistroHuella(false)}
+            onRegistrada={() => { if (editando.id) refrescarHuella(editando.id) }}
+          />
+        )}
+
+        <ConfirmDialog
+          open={confirmQuitarHuella}
+          title="Quitar huella"
+          message={`¿Quitar la huella registrada de ${editando.nombre || "este cliente"}?`}
+          confirmLabel="Quitar"
+          danger
+          onConfirm={quitarHuella}
+          onClose={() => setConfirmQuitarHuella(false)}
+        />
       </div>
     )
   }

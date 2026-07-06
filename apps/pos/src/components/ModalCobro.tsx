@@ -6,10 +6,12 @@ import {
 } from "lucide-react"
 import {
   registrarVenta, marcarCotizacionConvertida, obtenerDetalleMonederoAPI,
-  listarReglasMonederoAPI, listarCatalogos,
+  listarReglasMonederoAPI, listarCatalogos, listarHuellasAPI, registrarVerificacionAPI,
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
 } from "../lib/client"
 import { abrirCajon } from "../lib/serial"
+import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
+import HuellaAnimacion from "./HuellaAnimacion"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
@@ -59,6 +61,17 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [catMon, setCatMon] = useState<CatalogosData | null>(null)
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
+  // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
+  //   idle → esperando que el cajero pulse "Verificar huella"
+  //   verificando → capturando+comparando en el servicio local
+  //   ok → huella coincidió (habilita confirmar)
+  //   error → no coincidió / falló (permite reintentar)
+  //   sin_huella → el cliente no tiene huella registrada (permite canje directo)
+  //   no_disponible → servicio/lector caído (degrada a confirmación manual)
+  type FaseHuella = "idle" | "verificando" | "ok" | "error" | "sin_huella" | "no_disponible"
+  const [faseHuella, setFaseHuella] = useState<FaseHuella>("idle")
+  const [msgHuella, setMsgHuella] = useState("")
+  const capturaHuellaRef = useRef<string | null>(null)
 
   useEffect(() => {
     const cli = state.clienteActivo
@@ -186,9 +199,80 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     }))
   }
 
+  // Cuando se abre el modal de canje con confirmar_huella activo, preparamos el
+  // sub-flujo de huella: si el cliente tiene huella, arrancamos en "idle" (pedir
+  // dedo); si no, en "sin_huella" (canje directo); si el servicio no está,
+  // "no_disponible" (degrada a manual). Ver decisión: canje NO se bloquea.
+  useEffect(() => {
+    if (!confirmCanje || !cfgMon?.confirmar_huella) return
+    let vivo = true
+    setFaseHuella("verificando") // provisional mientras consultamos
+    setMsgHuella("")
+    ;(async () => {
+      const cli = state.clienteActivo
+      if (!cli?.id) { if (vivo) setFaseHuella("sin_huella"); return }
+      // ¿Servicio + lector disponibles?
+      const h = await healthBiometria()
+      if (!vivo) return
+      if (!h?.ok || !h.lector?.conectado) {
+        setFaseHuella("no_disponible")
+        setMsgHuella("El lector de huella no está disponible en esta caja.")
+        return
+      }
+      // ¿El cliente tiene huella registrada?
+      try {
+        const huellas = await listarHuellasAPI("cliente", cli.id)
+        if (!vivo) return
+        setFaseHuella(huellas.length > 0 ? "idle" : "sin_huella")
+      } catch {
+        if (vivo) setFaseHuella("sin_huella")
+      }
+    })()
+    return () => { vivo = false }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmCanje, cfgMon?.confirmar_huella])
+
+  // Captura la huella del cliente y la compara 1:1 contra su plantilla en BD.
+  async function verificarHuellaCliente() {
+    const cli = state.clienteActivo
+    if (!cli?.id) { setFaseHuella("sin_huella"); return }
+    setFaseHuella("verificando")
+    setMsgHuella("")
+    try {
+      const huellas = await listarHuellasAPI("cliente", cli.id)
+      if (huellas.length === 0) { setFaseHuella("sin_huella"); return }
+      // Comparamos contra la primera plantilla activa (multi-dedo: se podría
+      // iterar, pero 1 basta para v1). El servicio captura del lector y compara.
+      const r = await verificar1a1(huellas[0].plantilla_b64)
+      capturaHuellaRef.current = r.captura_id
+      // Log de auditoría del intento.
+      registrarVerificacionAPI({
+        accion: "canje_puntos",
+        resultado: r.match ? "match" : "no_match",
+        sujeto_tipo: "cliente",
+        sujeto_ref: cli.id,
+        score: r.score,
+        umbral: r.umbral,
+        caja_id: state.cajero?.caja_id ?? null,
+        cajero_id: state.cajero?.id ?? null,
+      }).catch(() => {})
+      if (r.match) { setFaseHuella("ok") }
+      else { setFaseHuella("error"); setMsgHuella("La huella no coincide con el cliente.") }
+    } catch (e: any) {
+      const be = e as BiometriaError
+      setFaseHuella("error")
+      if (be?.codigo === "TIMEOUT_DEDO") setMsgHuella("No se detectó el dedo. Reintenta.")
+      else if (be?.codigo === "CALIDAD_INSUFICIENTE") setMsgHuella("Calidad baja. Coloca bien el dedo.")
+      else if (be?.codigo === "SERVICIO_CAIDO") { setFaseHuella("no_disponible"); setMsgHuella("El lector dejó de responder.") }
+      else setMsgHuella(be?.message || "No se pudo verificar la huella.")
+    }
+  }
+
   // Llamada real de registro de venta, una vez superada la confirmación de canje.
   async function ejecutarVenta() {
+    if (capturaHuellaRef.current) { cancelarBiometria(capturaHuellaRef.current); capturaHuellaRef.current = null }
     setConfirmCanje(false)
+    setFaseHuella("idle")
     await finalizarVenta()
   }
 
@@ -567,9 +651,58 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
 
             {cfgMon.confirmar_huella && (
               <div className="text-center my-4 flex flex-col items-center gap-2">
-                <div className="text-sm text-gray-500">Solicita la huella del cliente</div>
-                <Fingerprint size={48} className="text-orange-500" />
-                <div className="text-[11px] text-gray-400">(lector simulado — confirma manualmente)</div>
+                {/* idle: pedir el dedo */}
+                {faseHuella === "idle" && (
+                  <>
+                    <div className="text-sm text-gray-500">Verifica la huella del cliente</div>
+                    <HuellaAnimacion estado="escaneo" size={120} />
+                    <button
+                      onClick={verificarHuellaCliente}
+                      className="mt-1 bg-orange-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-orange-700 inline-flex items-center gap-2">
+                      <Fingerprint size={17} /> Verificar huella
+                    </button>
+                  </>
+                )}
+                {/* verificando */}
+                {faseHuella === "verificando" && (
+                  <>
+                    <HuellaAnimacion estado="escaneo" size={120} />
+                    <div className="text-sm text-orange-600 font-semibold">Coloca el dedo en el lector…</div>
+                  </>
+                )}
+                {/* ok */}
+                {faseHuella === "ok" && (
+                  <>
+                    <HuellaAnimacion estado="exito" size={120} />
+                    <div className="text-sm text-green-600 font-bold">Huella verificada ✓</div>
+                  </>
+                )}
+                {/* error → reintentar */}
+                {faseHuella === "error" && (
+                  <>
+                    <HuellaAnimacion estado="error" size={120} />
+                    <div className="text-sm text-red-600">{msgHuella}</div>
+                    <button
+                      onClick={verificarHuellaCliente}
+                      className="mt-1 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-orange-700">
+                      Reintentar
+                    </button>
+                  </>
+                )}
+                {/* sin huella → canje directo, con nota del futuro código de barras */}
+                {faseHuella === "sin_huella" && (
+                  <div className="text-center bg-amber-50 border border-amber-200 rounded-lg p-3">
+                    <div className="text-sm text-amber-700 font-medium">Este cliente no tiene huella registrada.</div>
+                    <div className="text-[11px] text-amber-600 mt-1">Puedes continuar el canje. (Próximamente: verificación por código de barras / tarjeta.)</div>
+                  </div>
+                )}
+                {/* servicio/lector caído → degradar a manual */}
+                {faseHuella === "no_disponible" && (
+                  <div className="text-center bg-gray-50 border border-gray-200 rounded-lg p-3">
+                    <div className="text-sm text-gray-600 font-medium">{msgHuella}</div>
+                    <div className="text-[11px] text-gray-400 mt-1">Puedes confirmar el canje manualmente.</div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -602,8 +735,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 onClick={ejecutarVenta}
                 disabled={
                   procesando ||
+                  // Gate de código de barras (# de cliente).
                   (cfgMon.confirmar_codigo &&
-                    (!state.clienteActivo || codigoConfirm.trim() !== state.clienteActivo.num_cliente))
+                    (!state.clienteActivo || codigoConfirm.trim() !== state.clienteActivo.num_cliente)) ||
+                  // Gate de huella: si se exige y el cliente TIENE huella, debe haber
+                  // coincidido. Si no tiene huella o el lector no está, el canje procede.
+                  (cfgMon.confirmar_huella &&
+                    (faseHuella === "idle" || faseHuella === "verificando" || faseHuella === "error"))
                 }
                 className="flex-[2] inline-flex items-center justify-center gap-2 bg-green-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
                 {procesando ? "Procesando…" : <><Check size={17} /> Confirmar canje</>}

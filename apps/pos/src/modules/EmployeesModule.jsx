@@ -1,14 +1,17 @@
 import { useState, useEffect, useRef } from "react"
 import {
   UserPlus, Search, ArrowLeftRight, MoreVertical, UserCog,
-  Eye, EyeOff, PlusCircle, AlertTriangle, Clock, Trash2, Plus,
+  Eye, EyeOff, PlusCircle, AlertTriangle, Clock, Trash2, Plus, Fingerprint,
 } from "lucide-react"
 import {
   obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario,
   listarCajasAPI, crearCajaAPI, actualizarCajaAPI, eliminarCajaAPI,
   obtenerConfigTurnos, guardarConfigTurnos,
+  tieneHuellaAPI, listarHuellasAPI, eliminarHuellaAPI,
 } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
+import RegistroHuellaModal from "../components/RegistroHuellaModal"
+import ConfirmDialog from "../components/ConfirmDialog"
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -737,6 +740,88 @@ function TabPermisos({ form, setForm }) {
           </label>
         ))}
       </div>
+
+      <HuellaEmpleado empleadoId={form.id} nombre={form.nombre} esNuevo={!form.id} />
+    </div>
+  )
+}
+
+// ── Sección de huella dactilar del empleado ─────────────────────────────────────
+// Solo REGISTRA la huella (se guarda en BD). El uso para autorizar acciones se
+// implementará después; por ahora dejamos las huellas de empleados listas.
+function HuellaEmpleado({ empleadoId, nombre, esNuevo }) {
+  const [tiene, setTiene] = useState(false)
+  const [modal, setModal] = useState(false)
+  const [confirmQuitar, setConfirmQuitar] = useState(false)
+
+  async function refrescar() {
+    if (!empleadoId) { setTiene(false); return }
+    try { setTiene(await tieneHuellaAPI("empleado", String(empleadoId))) }
+    catch { setTiene(false) }
+  }
+
+  useEffect(() => { refrescar() }, [empleadoId])
+
+  async function quitar() {
+    if (!empleadoId) return
+    try {
+      const huellas = await listarHuellasAPI("empleado", String(empleadoId))
+      for (const h of huellas) await eliminarHuellaAPI(h.id)
+      setTiene(false)
+    } catch (e) {
+      alert("No se pudo quitar la huella: " + (e?.message ?? ""))
+    } finally {
+      setConfirmQuitar(false)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid #e5e7eb" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+        <Fingerprint size={16} color="#6b7280" />
+        <span style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Huella dactilar</span>
+      </div>
+      {esNuevo ? (
+        <p style={{ fontSize: 13, color: "#9ca3af", margin: 0 }}>
+          Guarda el empleado primero para poder registrar su huella.
+        </p>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, color: tiene ? "#16a34a" : "#6b7280" }}>
+            {tiene ? "Huella registrada" : "Sin huella registrada"}
+          </span>
+          <button type="button" onClick={() => setModal(true)}
+            style={{ background: "#ea580c", color: "#fff", border: "none", padding: "8px 14px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer" }}>
+            {tiene ? "Volver a registrar" : "Registrar huella"}
+          </button>
+          {tiene && (
+            <button type="button" onClick={() => setConfirmQuitar(true)}
+              style={{ background: "#fff", color: "#dc2626", border: "1px solid #fecaca", padding: "8px 14px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>
+              Quitar
+            </button>
+          )}
+        </div>
+      )}
+
+      {modal && empleadoId && (
+        <RegistroHuellaModal
+          sujetoTipo="empleado"
+          sujetoRef={String(empleadoId)}
+          nombre={nombre || "empleado"}
+          onCerrar={() => setModal(false)}
+          onRegistrada={refrescar}
+        />
+      )}
+
+      <ConfirmDialog
+        open={confirmQuitar}
+        title="Quitar huella"
+        message={`¿Quitar la huella registrada de ${nombre || "este empleado"}?`}
+        confirmLabel="Quitar"
+        danger
+        onConfirm={quitar}
+        onClose={() => setConfirmQuitar(false)}
+      />
     </div>
   )
 }
