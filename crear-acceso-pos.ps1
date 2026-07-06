@@ -44,7 +44,17 @@ if (-not $posUrl) {
   Write-Host "POS detectado en: $posUrl" -ForegroundColor Green
 }
 
-# --- 3. Crear el acceso directo en el Escritorio ---
+# --- 3. Elegir el icono (logo Ferremex si esta, si no el de Chrome) ---
+$icono = Join-Path $PSScriptRoot "ferremex-pos.ico"
+if (Test-Path $icono) {
+  $iconLocation = "$icono,0"
+  Write-Host "Icono: logo Ferremex"
+} else {
+  $iconLocation = "$chrome,0"
+  Write-Host "Icono: Chrome (no se encontro ferremex-pos.ico junto a este script)" -ForegroundColor Yellow
+}
+
+# --- 4. Crear el acceso directo en el Escritorio ---
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnk = Join-Path $desktop "Ferremex POS.lnk"
 
@@ -53,7 +63,7 @@ $s = $ws.CreateShortcut($lnk)
 $s.TargetPath = $chrome
 $s.Arguments = "--app=$posUrl"
 $s.WorkingDirectory = Split-Path $chrome
-$s.IconLocation = "$chrome,0"
+$s.IconLocation = $iconLocation
 $s.Description = "Ferremex Punto de Venta"
 $s.Save()
 
