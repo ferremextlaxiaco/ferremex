@@ -27,6 +27,7 @@
     "importar:claves-sat": "medusa exec ./src/scripts/importar-claves-sat.ts",
     "generar:catalogo-sat": "bun run ./src/scripts/generar-catalogo-sat.ts",
     "asignar:precios": "medusa exec ./src/scripts/asignar-precios.ts",
+    "migrar:proveedor-id": "medusa exec ./src/scripts/migrar-proveedor-id.ts",
     "start": "medusa start",
     "dev": "medusa develop",
     "test:integration:http": "TEST_TYPE=integration:http NODE_OPTIONS=--experimental-vm-modules jest --silent=false --runInBand --forceExit",

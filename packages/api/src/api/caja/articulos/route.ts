@@ -111,6 +111,7 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     precio4: metaNum(meta, "precio4"),
     claveSat: metaStr(meta, "claveSat"),
     proveedor: metaStr(meta, "proveedor"),
+    proveedor_id: metaStr(meta, "proveedor_id"),
     inventarioMin: metaNum(meta, "inventarioMin", "invMin"),
     inventarioMax: metaNum(meta, "inventarioMax", "invMax"),
     localizacion: metaStr(meta, "localizacion"),
@@ -142,7 +143,11 @@ function palabrasQuery(q: string): string[] {
 function validarArticulo(body: any): string | null {
   const clave = typeof body?.clave === "string" ? body.clave.trim() : ""
   if (!clave) return "La clave (SKU) es obligatoria"
-  if (/[\/\\]|\.\./.test(clave)) return "La clave no puede contener '/', '\\' ni '..'"
+  // '/' y '\' se permiten: son parte de medidas fraccionadas en códigos reales
+  // (ej. "TTG3/161", "torcoche5/16x2"). El SKU nunca se usa como ruta de archivo
+  // en disco (el thumbnail tiene su propio nombre generado), así que no hay
+  // riesgo de path traversal aquí. Solo bloqueamos '..' como defensa en profundidad.
+  if (clave.includes("..")) return "La clave no puede contener '..'"
   if (typeof body?.descripcion !== "string" || !body.descripcion.trim()) {
     return "La descripción es obligatoria"
   }
@@ -233,6 +238,65 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
     result.sort((a: any, b: any) => a.descripcion.localeCompare(b.descripcion, "es"))
     res.json(result)
+    return
+  }
+
+  // ── Filtro "SIN CLASIFICAR" ──────────────────────────────────────────────────
+  // Lista productos a los que les FALTA un campo (departamento / proveedor), para
+  // poder alcanzarlos y clasificarlos. Sin esto, un producto sin depto/proveedor
+  // sería invisible en los asistentes que filtran por taxonomía. Limitado a
+  // MAX_SIN para no traer decenas de miles de golpe (avisa si se recortó).
+  const sinCampo = String(req.query["sin"] ?? "").trim() // "departamento" | "proveedor"
+  if (!q && !faltantes && sinCampo) {
+    const MAX_SIN = 500
+    const todos = await productModule.listProducts(
+      { status: ProductStatus.PUBLISHED },
+      { select: ["id", "title", "metadata"], take: 99999 }
+    ) as any[]
+
+    const vacio = (v: unknown) => !(typeof v === "string" && v.trim())
+    const faltan = todos.filter((p) => {
+      const meta = (p.metadata ?? {}) as Record<string, unknown>
+      if (sinCampo === "departamento") return vacio(meta.departamento)
+      if (sinCampo === "proveedor")    return vacio(meta.proveedor_id) && vacio(meta.proveedor)
+      return false
+    })
+
+    const recortado = faltan.length > MAX_SIN
+    const ids = faltan.slice(0, MAX_SIN).map((p) => p.id)
+    if (!ids.length) { res.json([]); return }
+
+    const withRel = await productModule.listProducts(
+      { id: ids },
+      { select: ["id", "title", "thumbnail", "weight", "metadata"],
+        relations: ["variants", "categories", "images"], take: ids.length + 10 }
+    ) as any[]
+
+    const sVarIds = withRel.flatMap((p) => (p.variants as any[])?.map((v: any) => v.id) ?? [])
+    const { data: sVarsPrecios } = await query.graph({
+      entity: "product_variant",
+      filters: { id: sVarIds },
+      fields: ["id", "price_set.prices.amount", "price_set.prices.currency_code"],
+      pagination: { take: sVarIds.length + 10 },
+    })
+    const sPrecioMap = new Map<string, number>()
+    for (const v of sVarsPrecios) {
+      const mxn = ((v as any).price_set?.prices ?? []).find((p: any) => p.currency_code === "mxn")?.amount
+      if (mxn !== undefined) sPrecioMap.set(v.id, amountAPesos(mxn))
+    }
+    const sSkus = withRel.flatMap((p) => (p.variants as any[])?.map((v: any) => v.sku).filter(Boolean) ?? []) as string[]
+    const sStock = await existenciasPorSku(inventoryModule, sSkus)
+
+    const sResult = withRel.map((p) => {
+      const variant = (p.variants as any[])?.[0]
+      const precio1 = variant ? (sPrecioMap.get(variant.id) ?? 0) : 0
+      const existencia = variant?.sku ? (sStock.get(variant.sku) ?? 0) : 0
+      return toArticuloPOS(p, variant, precio1, existencia)
+    })
+    sResult.sort((a: any, b: any) => a.descripcion.localeCompare(b.descripcion, "es"))
+    // Header informativo si se recortó (el front lo puede leer para avisar).
+    if (recortado) res.setHeader("X-Total-Sin-Clasificar", String(faltan.length))
+    res.json(sResult)
     return
   }
 
@@ -544,6 +608,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         precio4: body.precio4 ?? 0,
         claveSat: body.claveSat ?? "",
         proveedor: body.proveedor ?? "",
+        proveedor_id: body.proveedor_id ?? "",
         inventarioMin: body.inventarioMin ?? 0,
         inventarioMax: body.inventarioMax ?? 0,
         localizacion: body.localizacion ?? "",
@@ -653,6 +718,7 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       precio4: body.precio4 ?? 0,
       claveSat: body.claveSat ?? "",
       proveedor: body.proveedor ?? "",
+      proveedor_id: body.proveedor_id ?? "",
       inventarioMin: body.inventarioMin ?? 0,
       inventarioMax: body.inventarioMax ?? 0,
       localizacion: body.localizacion ?? "",

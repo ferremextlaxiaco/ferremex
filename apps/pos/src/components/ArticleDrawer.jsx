@@ -89,7 +89,10 @@ function UnidadSatSelect({ value, onChange }) {
 }
 
 const EMPTY_FORM = {
-  clave: "", claveAlterna: "", descripcion: "", marca: "", proveedor: "",
+  clave: "", claveAlterna: "", descripcion: "", marca: "",
+  // Proveedor: guardamos AMBOS — el id del catálogo (ferremex_proveedores) para
+  // vínculos firmes (pedidos automáticos) y el nombre para mostrar sin consultar.
+  proveedor: "", proveedor_id: "",
   categoria: "", departamento: "",
   unidadCompra: "H87", unidadVenta: "H87", factor: 1,
   aplicarIva: true,
@@ -308,17 +311,27 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
           <Field label="Proveedor">
             <select
               className="ar-input"
-              value={form.proveedor}
-              onChange={(e) => f("proveedor", e.target.value)}
+              /* El value es el ID del catálogo. Para artículos viejos que solo
+                 tienen nombre (sin proveedor_id), caemos a un valor legacy para
+                 no perder el dato mientras no se re-elija del catálogo. */
+              value={form.proveedor_id || (form.proveedor ? "__legacy__" : "")}
+              onChange={(e) => {
+                const id = e.target.value
+                if (id === "__legacy__") return // no cambia nada (opción informativa)
+                const prov = proveedores.find((p) => String(p.id) === id)
+                // Guardamos id + nombre a la vez (dual-write).
+                setForm((prev) => ({ ...prev, proveedor_id: id, proveedor: prov?.nombre ?? "" }))
+                setErrors((prev) => ({ ...prev, proveedor: undefined }))
+              }}
             >
               <option value="">— Selecciona —</option>
               {proveedores.map((p) => (
-                <option key={p.id} value={p.nombre}>{p.nombre}</option>
+                <option key={p.id} value={p.id}>{p.nombre}</option>
               ))}
-              {/* Conserva el proveedor actual aunque ya no esté en el catálogo
-                  (artículos viejos con proveedor en texto libre), para no borrarlo. */}
-              {form.proveedor && !proveedores.some((p) => p.nombre === form.proveedor) && (
-                <option value={form.proveedor}>{form.proveedor} (actual)</option>
+              {/* Artículo viejo con proveedor en texto libre y sin id: se muestra
+                  como "(sin vincular)" hasta que se elija uno del catálogo. */}
+              {!form.proveedor_id && form.proveedor && (
+                <option value="__legacy__">{form.proveedor} (sin vincular)</option>
               )}
             </select>
           </Field>

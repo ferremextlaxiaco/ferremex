@@ -256,6 +256,9 @@ export interface ArticuloPOS {
   precio4: number
   claveSat: string
   proveedor?: string
+  /** ID del proveedor en el catálogo (ferremex_proveedores). Vacío = sin vincular
+   *  (artículo viejo con proveedor solo en texto, o sin proveedor asignado). */
+  proveedor_id?: string
   inventarioMin: number
   inventarioMax: number
   localizacion: string
@@ -287,6 +290,21 @@ export async function listarArticulosDeCatalogo(
   if (departamento) params.set("departamento", departamento)
   if (categoria)    params.set("categoria", categoria)
   return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
+}
+
+/** Lista artículos que NO tienen asignado un campo (para poder clasificarlos).
+ *  `campo` = "departamento" | "proveedor". Limitado server-side a 500. */
+export async function listarArticulosSinClasificar(
+  campo: "departamento" | "proveedor"
+): Promise<ArticuloPOS[]> {
+  return apiFetch<ArticuloPOS[]>(`/caja/articulos?sin=${encodeURIComponent(campo)}`)
+}
+
+/** Busca artículos por texto (nombre / SKU / código de barras). Encuentra el
+ *  producto AUNQUE no tenga departamento/proveedor asignado. */
+export async function buscarArticulosTexto(q: string): Promise<ArticuloPOS[]> {
+  if (!q.trim()) return []
+  return apiFetch<ArticuloPOS[]>(`/caja/articulos?q=${encodeURIComponent(q.trim())}`)
 }
 
 export async function subirImagenArticulo(dataUrl: string): Promise<string> {
@@ -967,6 +985,7 @@ export type CatalogosOp =
   | { op: "move_cat"; cat_nombre: string; dept_nombre_actual: string; dept_nombre_nuevo: string }
   | { op: "assign_marca"; marca: string; product_ids: string[] }
   | { op: "reasignar"; product_ids: string[]; departamento?: string; marca?: string }
+  | { op: "assign_proveedor"; product_ids: string[]; proveedor_id: string; proveedor?: string }
 
 export async function actualizarCatalogo(
   payload: CatalogosOp
