@@ -55,6 +55,13 @@ namespace Ferremex.Biometria
         {
             return "{\"ok\":false,\"error\":{\"codigo\":\"" + Esc(codigo) + "\",\"mensaje\":\"" + Esc(mensaje) + "\"}}";
         }
+
+        /// <summary>Devuelve un string JSON entre comillas y escapado (para arrays de strings sueltos).</summary>
+        public static string QuoteString(string s)
+        {
+            if (s == null) return "null";
+            return "\"" + Esc(s) + "\"";
+        }
     }
 
     /// <summary>Parser JSON minimalista para los request bodies (objetos planos + arrays de objetos planos).</summary>

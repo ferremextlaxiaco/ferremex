@@ -19,6 +19,7 @@ echo Compilando FerremexBiometriaService.exe (x64)...
   "%~dp0src\Program.cs" ^
   "%~dp0src\Server.cs" ^
   "%~dp0src\Dpfj.cs" ^
+  "%~dp0src\RawPrinter.cs" ^
   "%~dp0src\Json.cs" ^
   "%~dp0src\Config.cs" ^
   "%~dp0src\Log.cs"

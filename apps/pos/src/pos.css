@@ -8383,3 +8383,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .scm-item--todos { border-bottom: 1px solid var(--border); border-radius: 8px 8px 0 0; margin-bottom: 2px; }
 .scm-item--todos .scm-item-nombre { color: var(--orange); }
 .scm-vacio { text-align: center; color: var(--text-muted); font-size: 13px; padding: 20px 12px; }
+
+/* Animación de giro (spinner) — usada en AdminPerifericos (botón conectar). */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 0.8s linear infinite; }

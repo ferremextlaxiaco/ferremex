@@ -75,6 +75,9 @@ namespace Ferremex.Biometria
                     case "/verificar-1a1": Verificar1a1(req, res); break;
                     case "/identificar-1aN": Identificar1aN(req, res); break;
                     case "/cancelar": Cancelar(req, res); break;
+                    case "/impresoras": Impresoras(res); break;
+                    case "/imprimir": Imprimir(req, res); break;
+                    case "/abrir-cajon": AbrirCajon(req, res); break;
                     default: Send(res, 404, JsonOut.Error("NO_ENCONTRADO", "Ruta desconocida: " + path)); break;
                 }
             }
@@ -112,6 +115,19 @@ namespace Ferremex.Biometria
             try { nombre = Dpfj.GetReaderName(); conectado = nombre != null; }
             catch (Exception ex) { Log.Error("health/GetReaderName: " + ex.Message); }
 
+            // Impresoras disponibles (para que el POS detecte la térmica).
+            var impresoras = new List<string>();
+            try { impresoras = RawPrinter.ListarImpresoras(); }
+            catch (Exception ex) { Log.Error("health/ListarImpresoras: " + ex.Message); }
+
+            var sbImpr = new StringBuilder("[");
+            for (int i = 0; i < impresoras.Count; i++)
+            {
+                if (i > 0) sbImpr.Append(",");
+                sbImpr.Append(JsonOut.QuoteString(impresoras[i]));
+            }
+            sbImpr.Append("]");
+
             var j = new JsonOut()
                 .Bool("ok", true)
                 .Str("servicio", "FerremexBiometriaService")
@@ -122,6 +138,7 @@ namespace Ferremex.Biometria
                     .Str("nombre", nombre)
                     .Str("modelo", conectado ? "U.are.U 4500" : null)
                     .End())
+                .Raw("impresoras", sbImpr.ToString())
                 .End();
             Send(res, 200, j);
         }
@@ -311,6 +328,76 @@ namespace Ferremex.Biometria
             if (!string.IsNullOrEmpty(capturaId))
                 lock (_cancelLock) { _cancelados.Add(capturaId); }
             Send(res, 200, "{\"ok\":true}");
+        }
+
+        // -------------------------------------------------------------------
+        // GET /impresoras — lista las impresoras de Windows
+        // -------------------------------------------------------------------
+        void Impresoras(HttpListenerResponse res)
+        {
+            var lista = RawPrinter.ListarImpresoras();
+            var sb = new StringBuilder("{\"ok\":true,\"impresoras\":[");
+            for (int i = 0; i < lista.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                sb.Append(JsonOut.QuoteString(lista[i]));
+            }
+            sb.Append("]}");
+            Send(res, 200, sb.ToString());
+        }
+
+        // -------------------------------------------------------------------
+        // POST /imprimir — escribe bytes ESC/POS RAW a la impresora (por nombre)
+        // Body: { impresora: "Sicar", datos_b64: "<bytes ESC/POS en base64>" }
+        // -------------------------------------------------------------------
+        void Imprimir(HttpListenerRequest req, HttpListenerResponse res)
+        {
+            var body = ReadJson(req);
+            string impresora = JsonIn.GetStr(body, "impresora");
+            string datosB64 = JsonIn.GetStr(body, "datos_b64");
+
+            if (string.IsNullOrEmpty(impresora)) { Send(res, 400, JsonOut.Error("SIN_IMPRESORA", "Falta el nombre de la impresora")); return; }
+            if (string.IsNullOrEmpty(datosB64)) { Send(res, 400, JsonOut.Error("SIN_DATOS", "Falta datos_b64")); return; }
+
+            byte[] datos;
+            try { datos = Convert.FromBase64String(datosB64); }
+            catch { Send(res, 400, JsonOut.Error("BASE64_INVALIDO", "datos_b64 no es base64 válido")); return; }
+
+            try
+            {
+                RawPrinter.EnviarBytes(impresora, datos);
+                Send(res, 200, new JsonOut().Bool("ok", true).Num("bytes", datos.Length).End());
+            }
+            catch (Exception ex)
+            {
+                Log.Error("imprimir: " + ex.Message);
+                Send(res, 422, JsonOut.Error("IMPRESION_FALLIDA", ex.Message));
+            }
+        }
+
+        // -------------------------------------------------------------------
+        // POST /abrir-cajon — envía el pulso ESC/POS de cajón por la impresora
+        // Body: { impresora: "Sicar" }
+        // El cajón cuelga del RJ11 de la impresora; se abre con ESC p 0 25 25.
+        // -------------------------------------------------------------------
+        void AbrirCajon(HttpListenerRequest req, HttpListenerResponse res)
+        {
+            var body = ReadJson(req);
+            string impresora = JsonIn.GetStr(body, "impresora");
+            if (string.IsNullOrEmpty(impresora)) { Send(res, 400, JsonOut.Error("SIN_IMPRESORA", "Falta el nombre de la impresora")); return; }
+
+            // ESC p 0 25 25 → [0x1B, 0x70, 0x00, 0x19, 0x19]
+            byte[] pulso = new byte[] { 0x1B, 0x70, 0x00, 0x19, 0x19 };
+            try
+            {
+                RawPrinter.EnviarBytes(impresora, pulso);
+                Send(res, 200, new JsonOut().Bool("ok", true).End());
+            }
+            catch (Exception ex)
+            {
+                Log.Error("abrir-cajon: " + ex.Message);
+                Send(res, 422, JsonOut.Error("CAJON_FALLIDO", ex.Message));
+            }
         }
 
         // -------------------------------------------------------------------

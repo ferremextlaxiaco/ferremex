@@ -215,19 +215,12 @@ async function reconectarSilencioso(): Promise<boolean> {
 }
 
 /**
- * Envía el ticket directamente a la impresora térmica via ESC/POS.
- * No abre ningún diálogo del navegador.
- * Lanza un Error si la impresora no está conectada.
+ * Arma los bytes ESC/POS de un ticket (sin enviarlos a ningún lado).
+ * Separado de imprimirTicketESCPOS para que el mismo ticket pueda enviarse por
+ * DOS transportes: Web Serial (impresora con puerto COM) o el servicio local
+ * (impresora USB por la cola de Windows — ver lib/impresora-local.ts).
  */
-export async function imprimirTicketESCPOS(data: TicketPrintData): Promise<void> {
-  if (!serialDisponible()) {
-    throw new Error("Este navegador no soporta Web Serial. Usa Chrome.")
-  }
-  if (!puertoActivo) {
-    const ok = await reconectarSilencioso()
-    if (!ok) throw new Error("Impresora no conectada. Usa el botón 'Conectar impresora' primero.")
-  }
-
+export async function construirBytesTicket(data: TicketPrintData): Promise<number[]> {
   const bytes: number[] = []
 
   // Helpers locales
@@ -352,7 +345,26 @@ export async function imprimirTicketESCPOS(data: TicketPrintData): Promise<void>
   nl(); nl(); nl()
   cmd(GS, 0x56, 0x41, 0x00) // GS V 65 0 — corte parcial
 
-  // ── Enviar a la impresora ──────────────────────────────────────
+  return bytes
+}
+
+/**
+ * Envía el ticket directamente a la impresora térmica via Web Serial (ESC/POS).
+ * No abre ningún diálogo del navegador. Para impresoras con puerto COM.
+ * (Impresoras USB sin COM se imprimen por el servicio local — impresora-local.ts.)
+ * Lanza un Error si la impresora no está conectada.
+ */
+export async function imprimirTicketESCPOS(data: TicketPrintData): Promise<void> {
+  if (!serialDisponible()) {
+    throw new Error("Este navegador no soporta Web Serial. Usa Chrome.")
+  }
+  if (!puertoActivo) {
+    const ok = await reconectarSilencioso()
+    if (!ok) throw new Error("Impresora no conectada. Usa el botón 'Conectar impresora' primero.")
+  }
+
+  const bytes = await construirBytesTicket(data)
+
   const writer = puertoActivo!.writable?.getWriter()
   if (!writer) throw new Error("No se puede escribir en la impresora (puerto no escribible)")
   try {

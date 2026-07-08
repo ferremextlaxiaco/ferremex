@@ -1,46 +1,49 @@
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import {
+  Printer, Fingerprint, ScanLine, Monitor, Wallet,
+  CheckCircle2, XCircle, RefreshCw, Save, RotateCcw, ExternalLink,
+} from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { usePOS } from "../lib/pos-store"
+import { useToasts } from "../hooks/useToasts"
+import { construirBytesTicket, type TicketPrintData } from "../lib/serial"
+import { healthBiometria, type HealthBiometria } from "../lib/biometria"
+import {
+  listarImpresorasLocales, impresoraElegida, guardarImpresoraElegida,
+  imprimirBytesLocal, abrirCajonLocal,
+} from "../lib/impresora-local"
+import {
+  leerPerifPrefs, guardarPerifPrefs, type PerifPrefs,
+  diagnosticarSistema, type DiagnosticoSistema,
+  evaluarEscaneo, bipEscaner, type ResultadoEscaneo,
+} from "../lib/perifericos"
 
-/* ── Periph types ───────────────────────────────────────────────── */
-interface PeriphPrinter {
-  connected: boolean; tipo: string; puerto: string
-  copias: number; imprimirLogo: boolean; corteAuto: boolean
-}
-interface PeriphFingerprint {
-  connected: boolean; modelo: string; sensibilidad: number
-  usos: { descuentos: boolean; apertura: boolean; gerencial: boolean; puntos: boolean }
-  intentosMax: number
-}
-interface PeriphBarcode {
-  connected: boolean; tipoConexion: string; puertoId: string
-  symbologias: { ean13: boolean; code128: boolean; qr: boolean; datamatrix: boolean; pdf417: boolean }
-  sonido: boolean; prefijo: string; scanInput: string; lastScan: string
-}
-interface PeriphState { printer: PeriphPrinter; fingerprint: PeriphFingerprint; barcode: PeriphBarcode }
+/* ── UI helpers ─────────────────────────────────────────────────── */
 
-const defaultPeriph: PeriphState = {
-  printer: { connected: false, tipo: "Térmica 80mm", puerto: "COM3", copias: 1, imprimirLogo: true, corteAuto: true },
-  fingerprint: {
-    connected: false, modelo: "ZKTeco ZK4500", sensibilidad: 3,
-    usos: { descuentos: true, apertura: true, gerencial: false, puntos: false }, intentosMax: 3,
-  },
-  barcode: {
-    connected: false, tipoConexion: "USB HID", puertoId: "USB-HID-01",
-    symbologias: { ean13: true, code128: true, qr: true, datamatrix: false, pdf417: false },
-    sonido: true, prefijo: "", scanInput: "", lastScan: "",
-  },
+function EstadoBadge({ ok, textoOn, textoOff }: { ok: boolean; textoOn: string; textoOff: string }) {
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 12,
+      background: ok ? "#dcfce7" : "#f3f4f6",
+      color: ok ? "#16a34a" : "#6b7280",
+      border: `1px solid ${ok ? "#bbf7d0" : "#e5e7eb"}`,
+    }}>
+      <span style={{ fontSize: 8 }}>●</span> {ok ? textoOn : textoOff}
+    </span>
+  )
 }
 
-/* ── Helper sub-components ──────────────────────────────────────── */
 function PSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
   return (
     <div role="switch" aria-checked={checked} onClick={() => onChange(!checked)} style={{
-      width: 36, height: 20, borderRadius: 10, cursor: "pointer", flexShrink: 0,
-      background: checked ? "var(--orange, #f96302)" : "var(--at-border, #d1d5db)",
+      width: 40, height: 22, borderRadius: 11, cursor: "pointer", flexShrink: 0,
+      background: checked ? "#f96302" : "#d1d5db",
       position: "relative", transition: "background 0.2s",
     }}>
       <div style={{
-        position: "absolute", top: 2, left: checked ? 18 : 2,
-        width: 16, height: 16, borderRadius: "50%", background: "#fff",
+        position: "absolute", top: 2, left: checked ? 20 : 2,
+        width: 18, height: 18, borderRadius: "50%", background: "#fff",
         transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
       }} />
     </div>
@@ -49,238 +52,357 @@ function PSwitch({ checked, onChange }: { checked: boolean; onChange: (v: boolea
 
 function SwitchRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 0" }}>
-      <span style={{ fontSize: 13 }}>{label}</span>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", minHeight: 44 }}>
+      <span style={{ fontSize: 14 }}>{label}</span>
       <PSwitch checked={checked} onChange={onChange} />
     </div>
   )
 }
 
-function PeriphField({ label, children }: { label: string; children: React.ReactNode }) {
+function DiagItem({ ok, label, detalle }: { ok: boolean; label: string; detalle?: string }) {
   return (
-    <div className="tg-field">
-      <label className="tg-label">{label}</label>
-      {children}
+    <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "3px 0" }}>
+      {ok ? <CheckCircle2 size={16} color="#16a34a" /> : <XCircle size={16} color="#dc2626" />}
+      <span style={{ color: "#374151" }}>{label}</span>
+      {detalle && <span style={{ color: "#9ca3af" }}>· {detalle}</span>}
     </div>
   )
 }
 
-function PeriphSection({ icon, title, connected, onToggle, statusOn, statusOff, children }: {
-  icon: string; title: string; connected: boolean
-  onToggle: (v: boolean) => void; statusOn: string; statusOff: string
-  children: React.ReactNode
-}) {
-  return (
-    <div className="tg-section">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-        <div className="tg-section-title" style={{ margin: 0 }}>{icon} {title}</div>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{
-            fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
-            background: connected ? "#dcfce7" : "#f3f4f6",
-            color: connected ? "#16a34a" : "#6b7280",
-            border: `1px solid ${connected ? "#bbf7d0" : "#e5e7eb"}`,
-          }}>
-            {connected ? statusOn : statusOff}
-          </span>
-          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ fontSize: 10, color: "var(--at-text-soft)" }}>Simular conexión</span>
-            <PSwitch checked={connected} onChange={onToggle} />
-          </div>
-        </div>
-      </div>
-      {children}
-    </div>
-  )
+const secCard: React.CSSProperties = {
+  background: "#fff", border: "1px solid #e5e7eb", borderRadius: 10,
+  padding: 16, marginBottom: 14,
+}
+const secHeader: React.CSSProperties = {
+  display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12,
+}
+const secTitle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8, fontSize: 15, fontWeight: 600, color: "#111827",
+}
+const btn: React.CSSProperties = {
+  display: "inline-flex", alignItems: "center", gap: 6,
+  padding: "10px 14px", borderRadius: 8, fontSize: 14, fontWeight: 500,
+  cursor: "pointer", border: "1px solid #d1d5db", background: "#fff", color: "#374151",
+  minHeight: 44,
+}
+const btnPrimary: React.CSSProperties = {
+  ...btn, background: "#f96302", color: "#fff", border: "none",
 }
 
-/* ── Main panel ─────────────────────────────────────────────────── */
+/* ── Panel principal ────────────────────────────────────────────── */
+
 function PerifericosPanel() {
-  const [periph, setPeriph] = useState<PeriphState>(defaultPeriph)
-  const [toasts, setToasts] = useState<Array<{ id: number; msg: string }>>([])
-  const [fpScanning, setFpScanning] = useState(false)
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const { state } = usePOS()
+  const navigate = useNavigate()
+  const { toasts, push } = useToasts()
+  const cajaId = state.cajero?.caja_id ?? null
 
-  function addToast(msg: string) {
-    const id = Date.now()
-    setToasts((prev) => [...prev, { id, msg }])
-    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000)
+  // Diagnóstico del sistema (una vez al montar; navegador no cambia en sesión)
+  const [diag] = useState<DiagnosticoSistema>(() => diagnosticarSistema())
+
+  // Preferencias por caja
+  const [prefs, setPrefs] = useState<PerifPrefs>(() => leerPerifPrefs(cajaId))
+  const [prefsGuardadas, setPrefsGuardadas] = useState<PerifPrefs>(prefs)
+  const dirty = JSON.stringify(prefs) !== JSON.stringify(prefsGuardadas)
+
+  // Estado impresora / cajón (vía servicio local — la térmica USB no tiene COM)
+  const [impresorasDisponibles, setImpresorasDisponibles] = useState<string[] | null>(null)
+  const [impresoraSel, setImpresoraSel] = useState<string>(impresoraElegida() ?? "")
+  const [chequeandoImpresoras, setChequeandoImpresoras] = useState(true)
+  const [probandoImpresion, setProbandoImpresion] = useState(false)
+
+  // Estado lector de huella (real, vía servicio local :52700)
+  const [huella, setHuella] = useState<HealthBiometria | null>(null)
+  const [chequeandoHuella, setChequeandoHuella] = useState(true)
+
+  // Escáner (captura HID real)
+  const [ultimoEscaneo, setUltimoEscaneo] = useState<ResultadoEscaneo | null>(null)
+  const escanerRef = useRef<HTMLInputElement>(null)
+  const tiemposRef = useRef<number[]>([])
+
+  const [showReset, setShowReset] = useState(false)
+
+  // Chequear el lector de huella + impresoras del servicio local al montar
+  useEffect(() => {
+    let vivo = true
+    ;(async () => {
+      const h = await healthBiometria()
+      if (vivo) { setHuella(h); setChequeandoHuella(false) }
+      const impr = await listarImpresorasLocales()
+      if (vivo) { setImpresorasDisponibles(impr); setChequeandoImpresoras(false) }
+    })()
+    return () => { vivo = false }
+  }, [])
+
+  function actualizarPref<K extends keyof PerifPrefs>(k: K, v: PerifPrefs[K]) {
+    setPrefs((p) => ({ ...p, [k]: v }))
   }
 
-  const setPrinter = (patch: Partial<PeriphPrinter>) =>
-    setPeriph((prev) => ({ ...prev, printer: { ...prev.printer, ...patch } }))
-  const setFp = (patch: Partial<PeriphFingerprint>) =>
-    setPeriph((prev) => ({ ...prev, fingerprint: { ...prev.fingerprint, ...patch } }))
-  const setBc = (patch: Partial<PeriphBarcode>) =>
-    setPeriph((prev) => ({ ...prev, barcode: { ...prev.barcode, ...patch } }))
-
-  function handlePrinterTest() { addToast("✓ Prueba enviada a impresora") }
-
-  function handleFpTest() {
-    setFpScanning(true)
-    setTimeout(() => { setFpScanning(false); addToast("✓ Huella capturada correctamente") }, 2000)
+  // ── Impresora / cajón (vía servicio local) ─────────────────────
+  function seleccionarImpresora(nombre: string) {
+    setImpresoraSel(nombre)
+    guardarImpresoraElegida(nombre || null)
   }
 
-  function handleScan() {
-    const code = periph.barcode.scanInput.trim()
-    if (code) setBc({ lastScan: code, scanInput: "" })
+  async function handlePruebaImpresion() {
+    if (!impresoraSel) { push("Elige primero tu impresora térmica", "error"); return }
+    setProbandoImpresion(true)
+    try {
+      const ahora = new Date().toLocaleString("es-MX")
+      const ticketPrueba: TicketPrintData = {
+        company: {
+          logo: null, logoSize: 200,
+          name: "FERREMEX — PRUEBA", rfc: "", address: "Tlaxiaco, Oaxaca",
+          phone: "", email: "",
+        },
+        titulo: "TICKET DE PRUEBA",
+        folio: "PRUEBA-" + Date.now().toString().slice(-6),
+        fecha: ahora,
+        cajero: state.cajero?.nombre ?? "—",
+        cliente: null,
+        lines: [{
+          description: "Prueba de impresora", qty: 1, unitPrice: 0, total: 0,
+          savings: 0, discount: 0, pkgItems: [],
+        }],
+        subtotal: 0, globalDiscAmt: 0, globalDiscLabel: "", iva: 0,
+        pointsDisc: 0, pointsRedeemed: 0, cnAmt: 0, cnFolio: "", total: 0,
+        payment: { method: "efectivo", label: "PRUEBA", received: 0, change: 0 },
+        footer: ["Si lees esto, la impresora funciona.", "Caja: " + (state.cajero?.caja_nombre ?? "—")],
+      }
+      const bytes = await construirBytesTicket(ticketPrueba)
+      await imprimirBytesLocal(bytes, impresoraSel)
+      push("Ticket de prueba enviado", "success")
+    } catch (err) {
+      push(err instanceof Error ? err.message : "Error al imprimir", "error")
+    } finally {
+      setProbandoImpresion(false)
+    }
   }
 
+  async function handleAbrirCajon() {
+    if (!impresoraSel) { push("Elige primero tu impresora térmica", "error"); return }
+    try {
+      await abrirCajonLocal(impresoraSel)
+      push("Comando de apertura enviado al cajón", "success")
+    } catch (err) {
+      push(err instanceof Error ? err.message : "No se pudo abrir el cajón", "error")
+    }
+  }
+
+  // ── Huella ─────────────────────────────────────────────────────
+  async function rechequearHuella() {
+    setChequeandoHuella(true)
+    const h = await healthBiometria()
+    setHuella(h)
+    setChequeandoHuella(false)
+    if (h?.lector?.conectado) push("Lector de huella conectado", "success")
+    else if (h?.ok) push("Servicio activo, pero sin lector conectado", "info")
+    else push("El servicio de huella no responde", "error")
+  }
+
+  // ── Escáner ────────────────────────────────────────────────────
+  function onEscanerKeyDown() {
+    tiemposRef.current.push(performance.now())
+  }
+  function onEscanerKeyUp(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter") {
+      const codigo = (e.target as HTMLInputElement).value.trim()
+      if (!codigo) { tiemposRef.current = []; return }
+      const resultado = evaluarEscaneo(tiemposRef.current, codigo)
+      setUltimoEscaneo(resultado)
+      if (prefs.sonidoEscaner && resultado.esEscaner) bipEscaner()
+      tiemposRef.current = []
+      ;(e.target as HTMLInputElement).value = ""
+    }
+  }
+
+  // ── Guardar / restaurar ────────────────────────────────────────
+  function handleGuardar() {
+    guardarPerifPrefs(cajaId, prefs)
+    setPrefsGuardadas(prefs)
+    push("Preferencias guardadas para esta caja", "success")
+  }
   function handleReset() {
-    setPeriph(defaultPeriph)
-    setShowResetConfirm(false)
-    addToast("✓ Valores restaurados")
+    const def = leerPerifPrefs("___defaults___") // clave inexistente → defaults
+    setPrefs(def)
+    setShowReset(false)
+    push("Valores restaurados (recuerda guardar)", "info")
   }
 
-  const p = periph.printer
-  const fp = periph.fingerprint
-  const bc = periph.barcode
+  const huellaOk = !!huella?.lector?.conectado
 
   return (
-    <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+    <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", background: "#f9fafb" }}>
       {/* Toasts */}
-      <div style={{ position: "fixed", top: 16, right: 16, display: "flex", flexDirection: "column", gap: 8, zIndex: 9999, pointerEvents: "none" }}>
+      <div style={{ position: "fixed", bottom: 16, right: 16, display: "flex", flexDirection: "column", gap: 8, zIndex: 9999, pointerEvents: "none" }}>
         {toasts.map((t) => (
           <div key={t.id} style={{
-            background: "#16a34a", color: "#fff", padding: "8px 14px", borderRadius: 6,
-            fontSize: 13, fontWeight: 600, boxShadow: "0 2px 8px rgba(0,0,0,0.2)",
+            background: t.type === "error" ? "#dc2626" : t.type === "info" ? "#2563eb" : "#16a34a",
+            color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: 14, fontWeight: 500,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
           }}>{t.msg}</div>
         ))}
       </div>
 
-      {/* ── Impresora ── */}
-      <PeriphSection icon="🖨️" title="Impresora de Tickets"
-        connected={p.connected} statusOn="Conectada" statusOff="Sin conexión"
-        onToggle={(v) => setPrinter({ connected: v })}>
-        <PeriphField label="Tipo">
-          <select className="tg-input" value={p.tipo} onChange={(e) => setPrinter({ tipo: e.target.value })}>
-            {["Térmica 58mm", "Térmica 80mm", "Laser A4"].map((o) => <option key={o}>{o}</option>)}
-          </select>
-        </PeriphField>
-        <PeriphField label="Nombre del puerto">
-          <input className="tg-input" value={p.puerto} onChange={(e) => setPrinter({ puerto: e.target.value })} />
-        </PeriphField>
-        <PeriphField label="Copias por ticket">
-          <input className="tg-input" type="number" min={1} max={5} value={p.copias}
-            onChange={(e) => setPrinter({ copias: Math.min(5, Math.max(1, parseInt(e.target.value) || 1)) })} />
-        </PeriphField>
-        <SwitchRow label="Imprimir logo" checked={p.imprimirLogo} onChange={(v) => setPrinter({ imprimirLogo: v })} />
-        <SwitchRow label="Corte automático" checked={p.corteAuto} onChange={(v) => setPrinter({ corteAuto: v })} />
-        <button className="tg-btn" style={{ marginTop: 10 }} onClick={handlePrinterTest}>
-          🖨️ Prueba de impresión
-        </button>
-      </PeriphSection>
-
-      {/* ── Huellas ── */}
-      <PeriphSection icon="👆" title="Lector de Huellas Digitales"
-        connected={fp.connected} statusOn="Listo" statusOff="No detectado"
-        onToggle={(v) => setFp({ connected: v })}>
-        <PeriphField label="Modelo">
-          <select className="tg-input" value={fp.modelo} onChange={(e) => setFp({ modelo: e.target.value })}>
-            {["ZKTeco ZK4500", "DigitalPersona 4500", "Futronic FS80"].map((o) => <option key={o}>{o}</option>)}
-          </select>
-        </PeriphField>
-        <PeriphField label={`Sensibilidad: ${fp.sensibilidad}`}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontSize: 11, color: "var(--at-text-soft)" }}>Baja</span>
-            <input type="range" min={1} max={5} value={fp.sensibilidad} style={{ flex: 1 }}
-              onChange={(e) => setFp({ sensibilidad: parseInt(e.target.value) })} />
-            <span style={{ fontSize: 11, color: "var(--at-text-soft)" }}>Alta</span>
+      <div style={{ padding: 16, maxWidth: 720, width: "100%", margin: "0 auto" }}>
+        {/* ── Diagnóstico del sistema ── */}
+        <div style={secCard}>
+          <div style={secHeader}>
+            <div style={secTitle}><Monitor size={18} /> Diagnóstico del sistema</div>
+            <EstadoBadge ok={diag.esChromium && diag.contextoSeguro} textoOn="Compatible" textoOff="Revisar" />
           </div>
-        </PeriphField>
-        <div className="tg-field">
-          <label className="tg-label">Usar para</label>
-          {([["descuentos", "Autorizar descuentos"], ["apertura", "Apertura de caja"], ["gerencial", "Acceso gerencial"], ["puntos", "Confirmar uso de puntos (Monedero)"]] as [keyof typeof fp.usos, string][]).map(([key, label]) => (
-            <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 13, cursor: "pointer" }}>
-              <input type="checkbox" checked={fp.usos[key]}
-                onChange={(e) => setFp({ usos: { ...fp.usos, [key]: e.target.checked } })} />
-              {label}
-            </label>
-          ))}
+          <DiagItem ok={diag.esChromium} label={`Navegador: ${diag.navegador}`}
+            detalle={diag.esChromium ? undefined : "usa Chrome/Edge"} />
+          <DiagItem ok={diag.contextoSeguro} label="Contexto seguro"
+            detalle={diag.contextoSeguro ? diag.url : "abre por localhost, no por IP"} />
+          <DiagItem ok={impresorasDisponibles !== null} label="Servicio de impresión / cajón"
+            detalle={impresorasDisponibles !== null ? "127.0.0.1:52700" : "revisa el servicio local de la caja"} />
+          <DiagItem ok={huellaOk} label="Servicio de huella"
+            detalle={huellaOk ? "lector conectado" : "opcional — solo si esta caja usa huella"} />
         </div>
-        <PeriphField label="Intentos máximos">
-          <input className="tg-input" type="number" min={1} max={5} value={fp.intentosMax}
-            onChange={(e) => setFp({ intentosMax: Math.min(5, Math.max(1, parseInt(e.target.value) || 1)) })} />
-        </PeriphField>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginTop: 10 }}>
-          {fpScanning && (
-            <div style={{ fontSize: 44, lineHeight: 1, filter: "drop-shadow(0 0 8px #f96302) drop-shadow(0 0 18px #f96302)" }}>
-              👆
+
+        {/* ── Impresora + cajón (vía servicio local) ── */}
+        <div style={secCard}>
+          <div style={secHeader}>
+            <div style={secTitle}><Printer size={18} /> Impresora de tickets + cajón</div>
+            <EstadoBadge ok={!!impresoraSel && impresorasDisponibles !== null}
+              textoOn="Configurada" textoOff={chequeandoImpresoras ? "Buscando…" : "Sin configurar"} />
+          </div>
+
+          {chequeandoImpresoras ? (
+            <div style={{ fontSize: 13, color: "#6b7280", padding: "8px 0" }}>Buscando impresoras…</div>
+          ) : impresorasDisponibles === null ? (
+            <div style={{ fontSize: 13, color: "#6b7280", padding: "4px 0", lineHeight: 1.6 }}>
+              El servicio de impresión no responde. La impresora térmica se maneja por el
+              servicio local de la caja (el mismo del lector de huella). Revisa que esté
+              instalado y corriendo.
+            </div>
+          ) : (
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ display: "block", fontSize: 13, fontWeight: 600, color: "#374151", marginBottom: 6 }}>
+                  Impresora de esta caja
+                </label>
+                <select value={impresoraSel} onChange={(e) => seleccionarImpresora(e.target.value)}
+                  style={{ width: "100%", padding: "10px 12px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, background: "#fff" }}>
+                  <option value="">— Elige tu impresora térmica —</option>
+                  {impresorasDisponibles.map((imp) => <option key={imp} value={imp}>{imp}</option>)}
+                </select>
+                <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 6 }}>
+                  Elige tu impresora de tickets (ej. "Sicar"). Evita las de PDF/OneNote.
+                </div>
+              </div>
+
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0", minHeight: 44 }}>
+                <span style={{ fontSize: 14 }}>Copias por ticket</span>
+                <input type="number" min={1} max={5} value={prefs.copias}
+                  onChange={(e) => actualizarPref("copias", Math.min(5, Math.max(1, parseInt(e.target.value) || 1)))}
+                  style={{ width: 70, padding: "8px 10px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 14, textAlign: "center" }} />
+              </div>
+              <SwitchRow label="Imprimir logo en el ticket" checked={prefs.imprimirLogo} onChange={(v) => actualizarPref("imprimirLogo", v)} />
+              <SwitchRow label="Imprimir ticket automáticamente al cobrar" checked={prefs.autoImprimir} onChange={(v) => actualizarPref("autoImprimir", v)} />
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+                <button style={impresoraSel ? btnPrimary : { ...btn, opacity: 0.5 }} onClick={handlePruebaImpresion} disabled={probandoImpresion || !impresoraSel}>
+                  <Printer size={16} /> {probandoImpresion ? "Imprimiendo…" : "Prueba de impresión"}
+                </button>
+                <button style={btn} onClick={handleAbrirCajon} disabled={!impresoraSel}>
+                  <Wallet size={16} /> Abrir cajón (prueba)
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* ── Lector de huella ── */}
+        <div style={secCard}>
+          <div style={secHeader}>
+            <div style={secTitle}><Fingerprint size={18} /> Lector de huella</div>
+            <EstadoBadge ok={huellaOk} textoOn="Listo" textoOff={chequeandoHuella ? "Verificando…" : "No detectado"} />
+          </div>
+
+          {chequeandoHuella ? (
+            <div style={{ fontSize: 13, color: "#6b7280", padding: "8px 0" }}>Verificando el servicio de huella…</div>
+          ) : huellaOk ? (
+            <div style={{ fontSize: 13, color: "#374151", padding: "4px 0" }}>
+              <DiagItem ok label={`Modelo: ${huella?.lector?.modelo ?? "U.are.U 4500"}`} />
+              <DiagItem ok label="Servicio local activo" detalle="127.0.0.1:52700" />
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "#6b7280", padding: "4px 0", lineHeight: 1.6 }}>
+              {huella?.ok
+                ? "El servicio está activo pero no detecta el lector. Revisa que el U.are.U 4500 esté conectado por USB."
+                : "El servicio de huella no responde. Es opcional: solo lo necesitan las cajas que usan huella. Si esta caja debería tenerlo, revisa que el servicio esté instalado y corriendo."}
             </div>
           )}
-          <button className="tg-btn" onClick={handleFpTest} disabled={fpScanning}>
-            {fpScanning ? "⏳ Escaneando…" : "👆 Capturar huella de prueba"}
-          </button>
-        </div>
-      </PeriphSection>
 
-      {/* ── Código de barras ── */}
-      <PeriphSection icon="📷" title="Lector de Código de Barras"
-        connected={bc.connected} statusOn="Activo" statusOff="Desconectado"
-        onToggle={(v) => setBc({ connected: v })}>
-        <PeriphField label="Tipo de conexión">
-          <select className="tg-input" value={bc.tipoConexion} onChange={(e) => setBc({ tipoConexion: e.target.value })}>
-            {["USB HID", "Serial COM", "Bluetooth"].map((o) => <option key={o}>{o}</option>)}
-          </select>
-        </PeriphField>
-        <PeriphField label="Puerto / ID">
-          <input className="tg-input" value={bc.puertoId} onChange={(e) => setBc({ puertoId: e.target.value })} />
-        </PeriphField>
-        <div className="tg-field">
-          <label className="tg-label">Symbologías</label>
-          {([["ean13", "EAN-13"], ["code128", "Code 128"], ["qr", "QR Code"], ["datamatrix", "DataMatrix"], ["pdf417", "PDF417"]] as [keyof typeof bc.symbologias, string][]).map(([key, label]) => (
-            <label key={key} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 13, cursor: "pointer" }}>
-              <input type="checkbox" checked={bc.symbologias[key]}
-                onChange={(e) => setBc({ symbologias: { ...bc.symbologias, [key]: e.target.checked } })} />
-              {label}
-            </label>
-          ))}
-        </div>
-        <SwitchRow label="Sonido al escanear" checked={bc.sonido} onChange={(v) => setBc({ sonido: v })} />
-        <div style={{ fontSize: 11, color: "var(--at-text-soft)", padding: "4px 0 8px" }}>
-          🪙 Este lector también identifica la tarjeta del Monedero (# de cliente) al canjear puntos.
-          Activa la exigencia en <strong>Monedero → Configuración</strong>.
-        </div>
-        <PeriphField label="Prefijo de búsqueda">
-          <input className="tg-input" placeholder="Opcional — ej: P-" value={bc.prefijo}
-            onChange={(e) => setBc({ prefijo: e.target.value })} />
-        </PeriphField>
-        <div style={{ marginTop: 10, background: "var(--at-bg, #f5f5f7)", borderRadius: 6, padding: 10, border: "1px solid var(--at-border, #e5e7eb)" }}>
-          <div className="tg-label" style={{ marginBottom: 6 }}>Simular escaneo (escribe o pega código)</div>
-          <div style={{ display: "flex", gap: 6 }}>
-            <input className="tg-input" placeholder="Ej: 7501030301321" value={bc.scanInput}
-              onChange={(e) => setBc({ scanInput: e.target.value })}
-              onKeyDown={(e) => e.key === "Enter" && handleScan()} />
-            <button className="tg-btn" onClick={handleScan}>📷 Escanear</button>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            <button style={btn} onClick={rechequearHuella} disabled={chequeandoHuella}>
+              <RefreshCw size={16} /> Volver a verificar
+            </button>
+            <button style={btn} onClick={() => navigate("/admin/monedero")}>
+              <ExternalLink size={16} /> Configurar confirmación por huella (Monedero)
+            </button>
           </div>
-          {bc.lastScan && (
-            <div style={{ marginTop: 8 }}>
-              <div className="tg-label" style={{ marginBottom: 4 }}>Último código leído:</div>
-              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <input className="tg-input" readOnly value={bc.lastScan} style={{ flex: 1, background: "var(--at-bg-card, #fff)" }} />
-                <button className="tg-btn" style={{ padding: "6px 10px", fontSize: 14 }} title="Copiar"
-                  onClick={() => { try { navigator.clipboard.writeText(bc.lastScan) } catch { /* noop */ } }}>
-                  📋
-                </button>
+        </div>
+
+        {/* ── Escáner de código de barras ── */}
+        <div style={secCard}>
+          <div style={secHeader}>
+            <div style={secTitle}><ScanLine size={18} /> Lector de código de barras</div>
+            <EstadoBadge ok={!!ultimoEscaneo?.esEscaner} textoOn="Detectado" textoOff="Sin probar" />
+          </div>
+          <div style={{ fontSize: 13, color: "#6b7280", marginBottom: 8 }}>
+            El escáner funciona como un teclado (no necesita configuración). Para probarlo,
+            haz clic en el recuadro y <strong>escanea un código</strong>.
+          </div>
+          <input ref={escanerRef}
+            placeholder="Haz clic aquí y escanea un código…"
+            onKeyDown={onEscanerKeyDown} onKeyUp={onEscanerKeyUp}
+            style={{ width: "100%", padding: "12px 14px", border: "1px solid #d1d5db", borderRadius: 8, fontSize: 15, fontFamily: "monospace" }} />
+
+          {ultimoEscaneo && (
+            <div style={{ marginTop: 12, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, padding: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                {ultimoEscaneo.esEscaner
+                  ? <><CheckCircle2 size={16} color="#16a34a" /><span style={{ fontSize: 13, fontWeight: 600, color: "#16a34a" }}>Escáner detectado</span></>
+                  : <><XCircle size={16} color="#d97706" /><span style={{ fontSize: 13, fontWeight: 600, color: "#d97706" }}>Parece tecleo manual (no escáner)</span></>}
+              </div>
+              <div style={{ fontSize: 13, color: "#374151" }}>
+                Código: <strong style={{ fontFamily: "monospace" }}>{ultimoEscaneo.codigo}</strong>
+              </div>
+              <div style={{ fontSize: 12, color: "#9ca3af", marginTop: 2 }}>
+                {ultimoEscaneo.totalCaracteres} caracteres · {ultimoEscaneo.msPromedioPorTecla}ms por tecla
               </div>
             </div>
           )}
-        </div>
-      </PeriphSection>
 
-      {/* Footer */}
-      <div style={{ padding: "12px 16px", borderTop: "1px solid var(--at-border, #e5e7eb)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", flexShrink: 0, marginTop: "auto" }}>
-        <button className="tg-btn tg-btn-primary" onClick={() => addToast("✓ Configuración guardada")}>
-          💾 Guardar configuración
+          <div style={{ marginTop: 12 }}>
+            <SwitchRow label="Sonido (bip) al escanear" checked={prefs.sonidoEscaner} onChange={(v) => actualizarPref("sonidoEscaner", v)} />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Footer fijo ── */}
+      <div style={{
+        position: "sticky", bottom: 0, background: "#fff", borderTop: "1px solid #e5e7eb",
+        padding: "12px 16px", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap",
+      }}>
+        <button style={btnPrimary} onClick={handleGuardar} disabled={!dirty}>
+          <Save size={16} /> Guardar preferencias
         </button>
-        {showResetConfirm ? (
+        {dirty && <span style={{ fontSize: 13, color: "#d97706" }}>Cambios sin guardar</span>}
+        <div style={{ flex: 1 }} />
+        {showReset ? (
           <>
-            <span style={{ fontSize: 13, color: "var(--at-text-soft)" }}>¿Restaurar valores predeterminados?</span>
-            <button className="tg-btn" style={{ background: "#dc2626", color: "#fff", border: "none" }} onClick={handleReset}>Sí</button>
-            <button className="tg-btn" onClick={() => setShowResetConfirm(false)}>Cancelar</button>
+            <span style={{ fontSize: 13, color: "#6b7280" }}>¿Restaurar valores por defecto?</span>
+            <button style={{ ...btn, color: "#dc2626", borderColor: "#fecaca" }} onClick={handleReset}>Sí</button>
+            <button style={btn} onClick={() => setShowReset(false)}>Cancelar</button>
           </>
         ) : (
-          <button className="tg-btn" onClick={() => setShowResetConfirm(true)}>↺ Restaurar valores predeterminados</button>
+          <button style={btn} onClick={() => setShowReset(true)}>
+            <RotateCcw size={16} /> Restaurar
+          </button>
         )}
       </div>
     </div>
