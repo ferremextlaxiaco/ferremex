@@ -36,7 +36,7 @@ try {
   //    build`): el `tsc -b` falla por dos copias duplicadas de vite en node_modules
   //    (deuda preexistente). Vite transpila con esbuild sin necesitar tsc; el
   //    typecheck se corre aparte con `tsc --noEmit` en desarrollo.
-  run('npx vite build', POS)
+  run('bun x vite build', POS)
 
   // 2. El index real debe estar también en dist/ (raíz) porque el vendor-ui de
   //    Mercur detecta el modo estático por <appDir>/index.html y usa ese mismo

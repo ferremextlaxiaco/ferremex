@@ -1,6 +1,9 @@
-import { useEffect, useMemo } from "react"
-import type { VentaResponse } from "../lib/client"
+import { useEffect, useMemo, useState } from "react"
+import type { VentaResponse, TicketConfig } from "../lib/client"
 import type { Cliente } from "../lib/clientes"
+import { usePOS } from "../lib/pos-store"
+import { construirBytesTicket, type TicketPrintData } from "../lib/serial"
+import { imprimirBytesLocal, impresoraElegida } from "../lib/impresora-local"
 import { FacturarBoton } from "./FacturarBoton"
 
 interface TicketProps {
@@ -12,7 +15,88 @@ interface TicketProps {
   onImpreso: () => void
 }
 
+/**
+ * Mapea una VentaResponse + config del ticket a los bytes ESC/POS que espera la
+ * térmica. Respeta el encabezado/pie configurado en el panel de Formatos.
+ *
+ * Nota de IVA: los precios de la venta YA incluyen IVA (es lo que se cobró y lo
+ * que ve el cliente en pantalla). Para que el ticket impreso coincida exactamente
+ * con la vista previa —sin desglosar un IVA que confundiría—, pasamos subtotal =
+ * total e iva = 0. Si en el futuro se quiere desglosar, se calcula aquí.
+ */
+function ventaATicketPrintData(
+  venta: VentaResponse,
+  cfg: TicketConfig | null,
+  esCotizacion: boolean
+): TicketPrintData {
+  const enc = cfg?.encabezado
+  const tipo = esCotizacion ? cfg?.tipos?.cotizacion : cfg?.tipos?.venta
+
+  // Método de pago dominante (para la etiqueta y el bloque recibido/cambio).
+  const metodo: TicketPrintData["payment"]["method"] =
+    venta.pago_efectivo > 0 ? "efectivo"
+    : (venta.pago_tarjeta ?? 0) > 0 ? "tarjeta"
+    : (venta.pago_transferencia ?? 0) > 0 ? "transferencia"
+    : (venta.pago_credito ?? 0) > 0 ? "credito"
+    : "efectivo"
+  const labelPago =
+    metodo === "efectivo" ? "EFECTIVO"
+    : metodo === "tarjeta" ? "TARJETA"
+    : metodo === "transferencia" ? "TRANSFERENCIA"
+    : "CRÉDITO"
+
+  // Pie: para cotización usa un texto fijo; para venta, el configurado.
+  const pie = esCotizacion
+    ? ["Cotización — no es comprobante de pago", "Precios sujetos a cambio sin previo aviso"]
+    : (cfg?.pie && cfg.pie.length > 0 ? cfg.pie : ["¡Gracias por su compra!", "Conserve su ticket"])
+
+  return {
+    company: {
+      logo: enc?.logo ?? null,
+      logoSize: 120,
+      name: enc?.nombre || "FERREMEX",
+      rfc: enc?.rfc || "",
+      address: enc?.direccion || "",
+      phone: enc?.telefono || "",
+      email: enc?.email || "",
+    },
+    titulo: tipo?.titulo || (esCotizacion ? "COTIZACIÓN" : "COMPROBANTE DE VENTA"),
+    folio: venta.folio,
+    fecha: new Date(venta.fecha).toLocaleString("es-MX"),
+    cajero: venta.cajero,
+    cliente: venta.cliente_nombre ? { name: venta.cliente_nombre, rfc: "" } : null,
+    lines: venta.items.map((it) => ({
+      description: it.descripcion,
+      qty: it.cantidad,
+      unitPrice: it.precio_unitario,
+      total: it.subtotal,
+      savings: 0,
+      discount: 0,
+      pkgItems: [],
+    })),
+    // Precios de venta ya con IVA → no desglosamos (ver nota arriba).
+    subtotal: venta.total,
+    globalDiscAmt: 0,
+    globalDiscLabel: "",
+    iva: 0,
+    pointsDisc: esCotizacion ? 0 : (venta.pago_puntos ?? 0),
+    pointsRedeemed: esCotizacion ? 0 : (venta.puntos_canjeados ?? 0),
+    cnAmt: 0,
+    cnFolio: "",
+    total: venta.total,
+    payment: {
+      method: metodo,
+      label: labelPago,
+      received: venta.pago_efectivo,
+      change: venta.cambio,
+    },
+    footer: pie,
+  }
+}
+
 export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: TicketProps) {
+  const { state } = usePOS()
+  const [imprimiendo, setImprimiendo] = useState(false)
   // Cliente para facturar: la VENTA es la fuente de verdad (el clienteActivo del
   // estado se resetea al terminar la venta, así que no sirve aquí). Si la venta
   // trae cliente_id, construimos un cliente mínimo (el FacturarBoton hidrata el
@@ -35,10 +119,35 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
     return () => window.removeEventListener("keydown", fn)
   }, [onImpreso])
 
-  function handleImprimir() {
+  // Fallback: impresión por el navegador (diálogo de Chrome). Se usa solo si NO
+  // hay servicio local con impresora térmica (p. ej. una terminal sin la Sicar).
+  function imprimirPorNavegador() {
     window.print()
-    // Cerrar la vista previa después de imprimir
     window.addEventListener("afterprint", onImpreso, { once: true })
+  }
+
+  async function handleImprimir() {
+    if (imprimiendo) return
+    setImprimiendo(true)
+    try {
+      // Vía preferida: mandar el ticket ESC/POS directo a la térmica por el
+      // servicio local (sin diálogo del navegador). Requiere impresora elegida
+      // en Periféricos y el servicio corriendo en la caja.
+      if (impresoraElegida()) {
+        const printData = ventaATicketPrintData(venta, state.ticketConfig, esCotizacion)
+        const bytes = await construirBytesTicket(printData)
+        await imprimirBytesLocal(bytes)
+        onImpreso()
+        return
+      }
+    } catch (err) {
+      // El servicio no respondió o la impresora falló: caemos al diálogo del
+      // navegador para no dejar al cajero sin poder imprimir.
+      console.warn("Impresión térmica local falló, usando diálogo del navegador:", err)
+    } finally {
+      setImprimiendo(false)
+    }
+    imprimirPorNavegador()
   }
 
   return (
@@ -171,8 +280,8 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
           {!esCotizacion && (
             <FacturarBoton folio={venta.folio} cliente={clienteFactura} facturaInicial={venta.factura ?? null} variant="full" />
           )}
-          <button className="btn-confirmar" onClick={handleImprimir}>
-            🖨 Imprimir {esCotizacion ? "cotización" : "ticket"}
+          <button className="btn-confirmar" onClick={handleImprimir} disabled={imprimiendo}>
+            🖨 {imprimiendo ? "Imprimiendo…" : `Imprimir ${esCotizacion ? "cotización" : "ticket"}`}
           </button>
         </div>
       </div>
