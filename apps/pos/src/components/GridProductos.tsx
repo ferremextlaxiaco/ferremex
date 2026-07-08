@@ -1,4 +1,5 @@
 import type { ProductoPOS } from "../lib/client"
+import { usePOS } from "../lib/pos-store"
 
 interface GridProductosProps {
   productos: ProductoPOS[]
@@ -17,6 +18,8 @@ function stockLabel(existencia: number) {
 }
 
 export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, skusEnPaquete }: GridProductosProps) {
+  const { state } = usePOS()
+  const cotizando = state.modoCotizacion
   if (productos.length === 0) return null
 
   return (
@@ -24,14 +27,15 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
       {productos.map((p) => {
         const stock = stockLabel(p.existencia)
         const qty = cartMap?.get(p.sku) ?? 0
-        const showControls = onAgregar && p.existencia > 0
+        // En cotización se permite seleccionar/agregar aunque no haya existencia.
+        const showControls = onAgregar && (cotizando || p.existencia > 0)
 
         return (
           <button
             key={p.sku}
             className="tarjeta-producto"
             onClick={() => onSeleccionar(p)}
-            disabled={p.existencia <= 0}
+            disabled={p.existencia <= 0 && !cotizando}
           >
             <div className="tarjeta-imagen">
               {p.thumbnail ? (
@@ -73,7 +77,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                       <button
                         className="qty-btn"
                         onClick={() => onAgregar(p)}
-                        disabled={qty >= p.existencia}
+                        disabled={!cotizando && qty >= p.existencia}
                         title="Agregar uno más"
                       >
                         +

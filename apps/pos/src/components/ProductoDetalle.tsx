@@ -13,10 +13,27 @@ interface ProductoDetalleProps {
 export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
   const { dispatch, state, promos } = usePOS()
   const [cantidad, setCantidad] = useState(1)
+  // Texto crudo del input de cantidad. Se mantiene aparte de `cantidad` para
+  // permitir estados intermedios al teclear (campo vacío, "0") sin romper el
+  // número real. Se valida y sincroniza (clamp 1..existencia) al salir del campo.
+  const [cantidadTexto, setCantidadTexto] = useState("1")
   const [agregado, setAgregado] = useState(false)
   const [promoDetalle, setPromoDetalle] = useState<Promocion | null>(null)
 
+  // Fija la cantidad respetando límites y refleja el valor final tanto en el
+  // número real como en el texto del input. En cotización el tope es libre
+  // (presupuesto); en venta se limita a la existencia disponible.
+  function fijarCantidad(n: number) {
+    const tope = state.modoCotizacion ? Infinity : producto.existencia
+    const limpio = Math.max(1, Math.min(tope, Math.floor(n)))
+    setCantidad(limpio)
+    setCantidadTexto(String(limpio))
+  }
+
   const sinStock = producto.existencia <= 0
+  // Bloqueo real de agregar por falta de stock: solo en venta. En cotización un
+  // producto agotado sí se puede presupuestar.
+  const bloqueadoPorStock = sinStock && !state.modoCotizacion
   // Promociones vigentes en las que participa este artículo (segmento del cliente
   // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
   const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
@@ -120,22 +137,47 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
               : `✓ ${producto.existencia} en almacén`}
           </div>
 
-          {!sinStock && (
+          {!bloqueadoPorStock && (
             <div className="detalle-cantidad">
               <span className="detalle-cantidad-label">Cantidad</span>
               <div className="detalle-cantidad-controles">
                 <button
                   className="btn-qty"
-                  onClick={() => setCantidad((c) => Math.max(1, c - 1))}
+                  onClick={() => fijarCantidad(cantidad - 1)}
                   disabled={cantidad <= 1}
                 >
                   −
                 </button>
-                <span className="detalle-cantidad-num">{cantidad}</span>
+                <input
+                  className="detalle-cantidad-num detalle-cantidad-input"
+                  type="text"
+                  inputMode="numeric"
+                  value={cantidadTexto}
+                  onChange={(e) => {
+                    // Solo dígitos; permite vacío mientras se teclea. El número
+                    // real se actualiza al vuelo si el texto es un entero válido.
+                    const v = e.target.value.replace(/[^0-9]/g, "")
+                    setCantidadTexto(v)
+                    const n = parseInt(v, 10)
+                    if (!Number.isNaN(n) && n >= 1) {
+                      // Cotización: sin tope de existencia (presupuesto).
+                      setCantidad(state.modoCotizacion ? n : Math.min(producto.existencia, n))
+                    }
+                  }}
+                  onFocus={(e) => e.target.select()}
+                  onBlur={() => fijarCantidad(parseInt(cantidadTexto, 10) || 1)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      fijarCantidad(parseInt(cantidadTexto, 10) || 1)
+                      e.currentTarget.blur()
+                    }
+                  }}
+                  aria-label="Cantidad"
+                />
                 <button
                   className="btn-qty"
-                  onClick={() => setCantidad((c) => Math.min(producto.existencia, c + 1))}
-                  disabled={cantidad >= producto.existencia}
+                  onClick={() => fijarCantidad(cantidad + 1)}
+                  disabled={!state.modoCotizacion && cantidad >= producto.existencia}
                 >
                   +
                 </button>
@@ -146,9 +188,13 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           <button
             className={`btn-agregar-detalle ${agregado ? "btn-agregado" : ""}`}
             onClick={handleAgregar}
-            disabled={sinStock || agregado}
+            disabled={bloqueadoPorStock || agregado}
           >
-            {agregado ? "✓ Agregado al carrito" : `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} al carrito`}
+            {agregado
+              ? "✓ Agregado al carrito"
+              : bloqueadoPorStock
+              ? "Sin existencia"
+              : `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} ${state.modoCotizacion ? "a la cotización" : "al carrito"}`}
           </button>
         </div>
       </div>

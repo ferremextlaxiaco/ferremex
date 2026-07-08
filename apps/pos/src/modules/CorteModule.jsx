@@ -134,12 +134,21 @@ export default function CorteModule() {
   useEffect(() => {
     let on = true
     ;(async () => {
-      try { const c = await listarCajasAPI(); if (on) setCajas(c) }
-      catch { /* sin catálogo, se arquea la caja del cajero o "sin caja" */ }
+      try {
+        const c = await listarCajasAPI()
+        if (!on) return
+        setCajas(c)
+        // Quien puede elegir caja debe tener SIEMPRE una caja real seleccionada
+        // (ya no existe la opción "sin caja"). Si el estado actual no apunta a una
+        // caja del catálogo (admin sin caja asignada, o caja borrada), cae a la 1ª.
+        if (puedeElegirCaja && c.length > 0) {
+          setCajaSel((prev) => (c.some((x) => String(x.id) === String(prev)) ? prev : c[0].id))
+        }
+      } catch { /* sin catálogo, se arquea la caja del cajero */ }
     })()
     cargarPendientes()
     return () => { on = false }
-  }, [cargarPendientes])
+  }, [cargarPendientes, puedeElegirCaja])
 
   // Franja+día del corte en modo turnos. Se deriva del turno_id del cajero
   // (`YYYY-MM-DD-<franjaId>`); en modo día el turno_id es `YYYY-MM-DD` (sin franja).
@@ -192,9 +201,9 @@ export default function CorteModule() {
     if (modoConteo === "total" && totalDirecto.trim() === "") {
       push("Captura el efectivo contado", "error"); return false
     }
-    if (fondoNum > efectivoContado) {
-      push("El fondo a dejar no puede exceder el efectivo contado", "error"); return false
-    }
+    // Nota: dejar un fondo MAYOR al efectivo contado es válido — significa que se
+    // inyecta dinero extra a la caja (del banco/dueño) para arrancar el siguiente
+    // turno con más fondo. No se bloquea; solo se advierte junto al campo.
     if (requiereMotivo && !motivo.trim()) {
       push(`Hay un descuadre de ${formatMXN(Math.abs(diferencia))}. Escribe el motivo.`, "error")
       return false
@@ -280,7 +289,6 @@ export default function CorteModule() {
                 {cajas.map((c) => (
                   <option key={c.id} value={c.id}>{c.nombre}</option>
                 ))}
-                <option value="">Sin caja (históricas)</option>
               </select>
             </span>
           ) : (
@@ -446,6 +454,18 @@ export default function CorteModule() {
                     placeholder="0.00"
                     className="w-full border border-gray-300 rounded-lg pl-8 pr-4 py-2.5 text-sm font-mono focus:outline-none focus:border-orange-500" />
                 </div>
+                {/* Aviso (no bloqueo) cuando el fondo supera lo contado: se está
+                    inyectando dinero a la caja. */}
+                {fondoNum > efectivoContado && (
+                  <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-2">
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <span>
+                      Estás inyectando <strong>{formatMXN(fondoNum - efectivoContado)}</strong> a la caja
+                      (el fondo supera el efectivo contado de {formatMXN(efectivoContado)}). Asegúrate de
+                      agregar ese efectivo físicamente al cajón.
+                    </span>
+                  </p>
+                )}
               </div>
 
               {/* Motivo (obligatorio si descuadre fuerte) */}

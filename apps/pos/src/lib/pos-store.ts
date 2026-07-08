@@ -180,7 +180,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
     case "ADD_ITEM": {
       const existe = state.items.find((i) => i.sku === action.item.sku)
       if (existe) {
-        if (existe.cantidad >= existe.existencia) return state
+        // En cotización no se topa al inventario: es un presupuesto, no una venta.
+        if (!state.modoCotizacion && existe.cantidad >= existe.existencia) return state
         return {
           ...state,
           items: state.items.map((i) =>
@@ -195,7 +196,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return {
         ...state,
         items: state.items.map((i) =>
-          i.sku === action.sku && i.cantidad < i.existencia
+          // En cotización se permite exceder la existencia (presupuesto).
+          i.sku === action.sku && (state.modoCotizacion || i.cantidad < i.existencia)
             ? { ...i, cantidad: i.cantidad + 1 }
             : i
         ),
@@ -210,7 +212,11 @@ function posReducer(state: PosState, action: PosAction): PosState {
       }
 
     case "SET_CANTIDAD": {
-      const clamped = Math.max(1, Math.min(action.cantidad, state.items.find(i => i.sku === action.sku)?.existencia ?? action.cantidad))
+      // En cotización el tope es la cantidad pedida (no la existencia); en venta,
+      // se limita a lo disponible en inventario.
+      const existencia = state.items.find(i => i.sku === action.sku)?.existencia ?? action.cantidad
+      const tope = state.modoCotizacion ? action.cantidad : existencia
+      const clamped = Math.max(1, Math.min(action.cantidad, tope))
       return {
         ...state,
         items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),

@@ -953,6 +953,27 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--text);
 }
 
+/* Input editable de cantidad (reemplaza al span numérico) — se ve idéntico al
+   número pero deja teclear la cantidad directo. Sin borde propio ni spinners. */
+.detalle-cantidad-input {
+  width: 56px;
+  padding: 8px 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  border-radius: 0;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.detalle-cantidad-input::-webkit-outer-spin-button,
+.detalle-cantidad-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.detalle-cantidad-input:focus {
+  background: var(--bg-hover);
+}
+
 .btn-agregar-detalle {
   padding: 15px 24px;
   font-size: 17px;
@@ -1238,6 +1259,52 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-left-color: #ea580c !important;
   background: rgba(234,88,12,0.05) !important;
 }
+
+/* Línea del carrito cuya cantidad supera el stock (al pasar de cotización a
+   venta). Se marca en rojo y bloquea el cobro. */
+.carrito-item--sin-stock {
+  border-left-color: #dc2626 !important;
+  background: rgba(220,38,38,0.06) !important;
+}
+.badge-sin-stock-carrito {
+  font-size: 10px;
+  font-weight: 700;
+  background: #dc2626;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+
+/* Aviso de exceso de stock en el pie del carrito + acción para ajustar todo. */
+.carrito-aviso-stock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  line-height: 1.35;
+}
+.carrito-aviso-stock-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: #dc2626;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.carrito-aviso-stock-btn:hover { background: #b91c1c; }
 
 .badge-promo {
   font-size: 10px;

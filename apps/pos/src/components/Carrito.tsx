@@ -21,6 +21,13 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
   const { items, modoCotizacion } = state
   const ctxPromo = contextoDeCliente(state.clienteActivo)
 
+  // Líneas cuya cantidad supera la existencia (típico al convertir una cotización
+  // —donde se permite exceder stock— a venta). En cotización no aplica; en venta
+  // se marcan en rojo y bloquean el cobro hasta corregirlas.
+  const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia
+  const skusSinStock = modoCotizacion ? [] : items.filter(excedeStock)
+  const hayExcesoStock = skusSinStock.length > 0
+
   // draft values while the user is typing (sku → string)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
@@ -60,7 +67,8 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       e.currentTarget.blur()
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      if (item.cantidad < item.existencia) {
+      // En cotización se puede exceder la existencia (presupuesto).
+      if (modoCotizacion || item.cantidad < item.existencia) {
         dispatch({ type: "INCREMENT", sku })
         setDrafts((prev) => ({ ...prev, [sku]: String(item.cantidad + 1) }))
       }
@@ -203,10 +211,12 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const faltanMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
               ? item.mayoreoMin - item.cantidad : 0
 
+            const sinStock = !modoCotizacion && item.cantidad > item.existencia
+
             return (
               <div
                 key={item.sku}
-                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}`}
+                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}${sinStock ? " carrito-item--sin-stock" : ""}`}
                 onClick={() => inputRefs.current[item.sku]?.focus()}
               >
                 <div className="carrito-item-desc">
@@ -238,6 +248,11 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     {faltanMayoreo > 0 && (
                       <span className="badge-mayoreo-hint">+{faltanMayoreo} para ${item.precio2!.toFixed(2)}</span>
                     )}
+                    {sinStock && (
+                      <span className="badge-sin-stock-carrito" title="Corrige la cantidad para poder cobrar">
+                        ⚠ Solo {item.existencia} en stock (tienes {item.cantidad})
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="carrito-item-controles">
@@ -252,20 +267,20 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     className="carrito-item-cantidad-input"
                     type="number"
                     min={1}
-                    max={item.existencia}
+                    max={modoCotizacion ? undefined : item.existencia}
                     value={displayValue}
                     onClick={(e) => e.stopPropagation()}
                     onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
                     onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
                     onBlur={() => commitDraft(item.sku)}
                     onKeyDown={(e) => handleKeyDown(e, item.sku)}
-                    title={`Máximo ${item.existencia} disponibles`}
+                    title={modoCotizacion ? "Cotización: sin límite de existencia" : `Máximo ${item.existencia} disponibles`}
                   />
                   <button
                     className="btn-cantidad"
                     onClick={(e) => { e.stopPropagation(); dispatch({ type: "INCREMENT", sku: item.sku }) }}
-                    disabled={item.cantidad >= item.existencia}
-                    title={item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
+                    disabled={!modoCotizacion && item.cantidad >= item.existencia}
+                    title={!modoCotizacion && item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
                   >
                     +
                   </button>
@@ -292,6 +307,30 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       )}
 
       <div className="carrito-footer">
+        {/* Aviso de exceso de stock (típico al convertir cotización → venta).
+            Bloquea el cobro; ofrece ajustar todas las líneas al stock de un clic. */}
+        {hayExcesoStock && (
+          <div className="carrito-aviso-stock">
+            <span>
+              ⚠ {skusSinStock.length} artículo{skusSinStock.length !== 1 ? "s" : ""} super
+              {skusSinStock.length !== 1 ? "an" : "a"} el stock disponible. Corrige las cantidades para cobrar.
+            </span>
+            <button
+              type="button"
+              className="carrito-aviso-stock-btn"
+              onClick={() => {
+                for (const it of skusSinStock) {
+                  // Sin existencia (agotado): la línea no puede venderse → se quita.
+                  // Con stock parcial: se ajusta a lo disponible.
+                  if (it.existencia <= 0) dispatch({ type: "REMOVE", sku: it.sku })
+                  else dispatch({ type: "SET_CANTIDAD", sku: it.sku, cantidad: it.existencia })
+                }
+              }}
+            >
+              Ajustar al stock
+            </button>
+          </div>
+        )}
         {/* Desglose fiscal POR ÍTEM: solo los artículos con IVA (precio ya
             incluye el 16%) aportan impuesto; los exentos/neto van completos a la
             base. Es lo que el CFDI desglosará. */}
@@ -361,7 +400,12 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
               <FileText size={16} /> Imprimir cotización
             </button>
           ) : (
-            <button className="btn-cobrar" onClick={onCobrar} disabled={items.length === 0}>
+            <button
+              className="btn-cobrar"
+              onClick={onCobrar}
+              disabled={items.length === 0 || hayExcesoStock}
+              title={hayExcesoStock ? "Hay artículos que superan el stock disponible. Corrige las cantidades marcadas en rojo." : undefined}
+            >
               COBRAR →
             </button>
           )}
