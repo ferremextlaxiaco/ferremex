@@ -121,25 +121,44 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       ),
     ]
     if (partialProductIds.length > 0) {
-      const prods = await productModule.listProducts(
-        { id: partialProductIds },
-        { select: ["id", "thumbnail", "metadata"], relations: ["variants"], take: partialProductIds.length + 10 }
-      ) as any[]
-      for (const p of prods) {
-        const meta = (p.metadata ?? {}) as any
-        const thumb = thumbnailPath(p.thumbnail)
-        for (const v of (p.variants ?? []) as any[]) {
-          if (v.sku?.toLowerCase().includes(qLower)) {
-            variantesBase.push({
-              id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb,
-              impuesto: !!meta.impuesto, marca: meta.marca ?? "",
-              departamento: meta.departamento ?? "", categoria: meta.categoria ?? "",
-              especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
-              mayoreoActivo: !!meta.mayoreoActivo, mayoreoMin: Number(meta.mayoreoMin) || 0,
-              precio2: Number(meta.precio2) || 0,
-              precio3: Number(meta.precio3) || 0,
-              precio4: Number(meta.precio4) || 0,
-            })
+      // Si hay filtro de categoría activo, restringimos a los productos de esa
+      // categoría (mismo patrón de dos pasos que el bloque de búsqueda por nombre)
+      // para que el SKU parcial no se salga del filtro que el usuario ya eligió.
+      let idsCandidatos = partialProductIds
+      if (categoryId) {
+        const cats = await productModule.listProductCategories(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          { id: [categoryId] } as any,
+          { select: ["id"], relations: ["products"], take: 1 }
+        )
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const idsDeCategoria = new Set(((cats[0] as any)?.products ?? []).map((p: any) => p.id as string))
+        idsCandidatos = partialProductIds.filter((id) => idsDeCategoria.has(id))
+      }
+
+      if (idsCandidatos.length > 0) {
+        const prods = await productModule.listProducts(
+          { id: idsCandidatos },
+          { select: ["id", "thumbnail", "metadata", "variants.id", "variants.sku", "variants.title"], relations: ["variants"], take: idsCandidatos.length + 10 }
+        ) as any[]
+        for (const p of prods) {
+          const meta = (p.metadata ?? {}) as any
+          // Filtro departamento (mismo criterio que el bloque de búsqueda por nombre)
+          if (departamento && meta.departamento !== departamento) continue
+          const thumb = thumbnailPath(p.thumbnail)
+          for (const v of (p.variants ?? []) as any[]) {
+            if (v.sku?.toLowerCase().includes(qLower)) {
+              variantesBase.push({
+                id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb,
+                impuesto: !!meta.impuesto, marca: meta.marca ?? "",
+                departamento: meta.departamento ?? "", categoria: meta.categoria ?? "",
+                especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
+                mayoreoActivo: !!meta.mayoreoActivo, mayoreoMin: Number(meta.mayoreoMin) || 0,
+                precio2: Number(meta.precio2) || 0,
+                precio3: Number(meta.precio3) || 0,
+                precio4: Number(meta.precio4) || 0,
+              })
+            }
           }
         }
       }
@@ -198,38 +217,37 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       return true
     })
 
-    if (productosFiltrados.length === 0) {
-      res.json([])
-      return
-    }
-
-    // Mapa productId → impuesto (para aplicar IVA al precio base)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const impuestoPorProductoId = new Map(productosFiltrados.map((p) => [p.id, !!(p.metadata as any)?.impuesto]))
-
-    // Paso 3: cargar solo los productos que coincidieron, ahora con thumbnail + variants
-    const idsMatch = productosFiltrados.map((p) => p.id)
-    const productos = await productModule.listProducts(
-      { id: idsMatch },
-      { select: ["id", "thumbnail", "metadata"], relations: ["variants"], take: idsMatch.length + 10 }
-    )
-
-    for (const p of productos) {
-      const thumb = thumbnailPath(p.thumbnail)
-      const impuesto = impuestoPorProductoId.get(p.id) ?? false
+    // Si la búsqueda por nombre no encontró nada, no cortamos aquí: el bloque de
+    // SKU parcial (arriba) puede haber aportado variantes a variantesBase.
+    if (productosFiltrados.length > 0) {
+      // Mapa productId → impuesto (para aplicar IVA al precio base)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const meta = (p.metadata ?? {}) as any
-      const marca = meta.marca ?? ""
-      const departamento = meta.departamento ?? ""
-      const categoria = meta.categoria ?? ""
-      const especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
-      const vMayoreoActivo = !!meta.mayoreoActivo
-      const vMayoreoMin = Number(meta.mayoreoMin) || 0
-      const vPrecio2 = Number(meta.precio2) || 0
-      const vPrecio3 = Number(meta.precio3) || 0
-      const vPrecio4 = Number(meta.precio4) || 0
-      for (const v of p.variants ?? []) {
-        variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
+      const impuestoPorProductoId = new Map(productosFiltrados.map((p) => [p.id, !!(p.metadata as any)?.impuesto]))
+
+      // Paso 3: cargar solo los productos que coincidieron, ahora con thumbnail + variants
+      const idsMatch = productosFiltrados.map((p) => p.id)
+      const productos = await productModule.listProducts(
+        { id: idsMatch },
+        { select: ["id", "thumbnail", "metadata"], relations: ["variants"], take: idsMatch.length + 10 }
+      )
+
+      for (const p of productos) {
+        const thumb = thumbnailPath(p.thumbnail)
+        const impuesto = impuestoPorProductoId.get(p.id) ?? false
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const meta = (p.metadata ?? {}) as any
+        const marca = meta.marca ?? ""
+        const departamento = meta.departamento ?? ""
+        const categoria = meta.categoria ?? ""
+        const especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
+        const vMayoreoActivo = !!meta.mayoreoActivo
+        const vMayoreoMin = Number(meta.mayoreoMin) || 0
+        const vPrecio2 = Number(meta.precio2) || 0
+        const vPrecio3 = Number(meta.precio3) || 0
+        const vPrecio4 = Number(meta.precio4) || 0
+        for (const v of p.variants ?? []) {
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
+        }
       }
     }
   }
