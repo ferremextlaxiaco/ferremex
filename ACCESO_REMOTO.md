@@ -19,14 +19,17 @@ Con Tailscale activo en ambos dispositivos:
 
 | Pantalla | URL |
 |---|---|
-| POS (cajas) | https://100.102.72.105:7002/pos/ |
+| POS (cajas) | http://100.102.72.105:9000/pos/ |
 | Admin login | http://100.102.72.105:9000/login |
 | Panel de órdenes | http://100.102.72.105:9000/orders |
 | Ajuste de inventario | Admin → Ajuste de Inventario |
 
-> **El POS usa HTTPS** (certificado local de mkcert). El Admin/API (puerto 9000) sigue en HTTP.
-> Si un dispositivo muestra "Tu conexión no es privada" en el POS, hay que confiar la CA
-> raíz de mkcert en ese dispositivo (ver `MEMORIA_INSTALACIÓN.md` → "Instalar CA de mkcert").
+> **Producción (Etapa 2):** el POS se sirve ESTÁTICO desde `apps/pos/dist` vía el propio
+> API en el puerto 9000 — ya NO hay dev server Vite en 7002 (`ferremex-pos` está deshabilitado
+> en `ecosystem.config.js`). Por eso el POS ahora es **HTTP** (no HTTPS/mkcert) y comparte
+> puerto con el Admin/API. Para publicar una versión nueva del POS: `node actualizar-pos.js`.
+> El puerto 7002 con HTTPS solo aplica si se vuelve a modo desarrollo (ver nota en
+> `ecosystem.config.js`).
 
 ---
 
