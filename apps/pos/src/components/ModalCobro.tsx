@@ -135,7 +135,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const maxCanjePesos = Math.min(saldoPesos, topePesos)
   // Tope de canje expresado en PUNTOS (lo que el cajero/cliente razona): el menor
   // entre el saldo, lo que cabe en el tope del ticket, y lo que cubre el total.
-  const maxCanjePuntos = valorCanje > 0 ? Math.floor(maxCanjePesos / valorCanje) : 0
+  // Con 2 decimales (centésimas de punto) para permitir ajustes finos de cambio
+  // (ej. 0.5 pts si 1 pt = $1, para cubrir $0.50 exactos sin dar cambio en efectivo).
+  const maxCanjePuntos = valorCanje > 0 ? Math.floor((maxCanjePesos / valorCanje) * 100) / 100 : 0
   // El cliente tiene puntos pero no llega al mínimo configurado (informativo).
   const bajoMinimo = !!cfgMon && saldoPuntos > 0 && saldoPuntos < cfgMon.min_puntos_canje
   // Puede usar puntos si: inscrito, saldo ≥ mínimo, y hay algo canjeable.
@@ -149,22 +151,42 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     : 0
   // Si la config exige confirmar el canje (huella/código), se gatea con un modal.
   const requiereConfirmCanje = !!cfgMon && pPuntos > 0 && (cfgMon.confirmar_huella || cfgMon.confirmar_codigo)
-  const puntosUsados = (cfgMon && pPuntos > 0) ? Math.ceil(pPuntos / cfgMon.valor_punto) : 0
+  // Puntos que representa el monto canjeado en pesos (2 decimales). Es el valor
+  // que el cajero teclea/ve; el backend redondea hacia arriba al DESCONTAR del
+  // saldo real del cliente (nunca a favor del cliente), ver /caja/ventas.
+  const puntosUsados = (cfgMon && pPuntos > 0) ? Math.round((pPuntos / cfgMon.valor_punto) * 100) / 100 : 0
 
   // ── Banner de canje de puntos ────────────────────────────────────────────
   // El control de canje se despliega cuando el cajero pulsa "Usar puntos". El
   // cliente razona en PUNTOS; internamente el pago se guarda en pesos (pagos.puntos).
   const [canjeAbierto, setCanjeAbierto] = useState(false)
+  // Texto libre del input de puntos, desacoplado de `puntosUsados` (derivado).
+  // Sin esto, un input controlado por un valor siempre recalculado "pelea" con
+  // el usuario al escribir decimales: al teclear "1." el parseFloat da 1, el
+  // valor derivado vuelve a "1" y el punto que acababa de escribir se pierde,
+  // dejando imposible completar "1.75". Con texto local, el DOM refleja
+  // exactamente lo tecleado; solo se re-sincroniza con el valor aplicado
+  // cuando este cambia por una acción externa (abrir canje, "Usar todos", etc).
+  const [puntosTexto, setPuntosTexto] = useState("")
 
   // Aplica N puntos: los convierte a pesos y los fija como pago con puntos.
   // Acota al máximo canjeable para no exceder saldo / tope / total. Si EXACTAMENTE
   // un método en pesos estaba cubriendo el ticket él solo, lo reajusta al nuevo
   // monto a pagar (Total − puntos) para que no quede cobrando de más ni de menos.
-  function aplicarPuntos(puntos: number) {
+  function aplicarPuntos(puntos: number, opts?: { sincronizarTexto?: boolean }) {
     if (!cfgMon) return
-    const p = Math.max(0, Math.min(Math.floor(puntos), maxCanjePuntos))
+    // 2 decimales (centésimas de punto): permite usar fracciones como 0.5 pts
+    // para ajustar el cambio exacto, no solo puntos enteros.
+    const puntosRedondeados = Math.round(puntos * 100) / 100
+    const p = Math.max(0, Math.min(puntosRedondeados, maxCanjePuntos))
     const pesos = Math.round(p * cfgMon.valor_punto * 100) / 100
     const nuevoPuntos = pesos > 0 ? pesos.toFixed(2) : ""
+    // Solo re-sincroniza el texto visible del input cuando la llamada viene de
+    // una acción externa (botones "Usar todos"/"Quitar"), NO cuando el usuario
+    // está escribiendo: ahí el input ya refleja su propio texto libre.
+    if (opts?.sincronizarTexto) {
+      setPuntosTexto(p > 0 ? String(p) : "")
+    }
     setPagos((prev) => {
       const enPesos = (["efectivo", "transferencia", "tarjeta", "credito"] as Metodo[])
         .filter((m) => (parseFloat(prev[m]) || 0) > 0)
@@ -175,6 +197,16 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
       }
       return { ...prev, puntos: nuevoPuntos }
     })
+  }
+
+  // Handler del input de puntos: el texto se muestra tal cual se teclea (sin
+  // reformatear en cada tecla). Solo aplica el canje cuando el texto ya parsea
+  // a un número (p. ej. mientras se escribe "1." aún no aplica, y no se pierde
+  // el punto decimal recién tecleado).
+  function handlePuntosTextoChange(texto: string) {
+    setPuntosTexto(texto)
+    const n = parseFloat(texto)
+    aplicarPuntos(Number.isFinite(n) ? n : 0)
   }
 
   function completar(id: Metodo) {
@@ -418,7 +450,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               </div>
               <div className="flex items-center justify-between text-sm text-amber-700">
                 <span className="inline-flex items-center gap-1">
-                  <Coins size={14} /> Puntos aplicados ({puntosUsados.toLocaleString("es-MX")} pts)
+                  <Coins size={14} /> Puntos aplicados ({puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts)
                 </span>
                 <span className="font-semibold">−{fmt(pPuntos)}</span>
               </div>
@@ -453,13 +485,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 </div>
                 {pPuntos > 0 ? (
                   <button
-                    onClick={() => { aplicarPuntos(0); setCanjeAbierto(false) }}
+                    onClick={() => { aplicarPuntos(0, { sincronizarTexto: true }); setCanjeAbierto(false) }}
                     className="inline-flex items-center gap-1.5 bg-white border border-amber-300 text-amber-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-amber-100">
                     <RotateCcw size={14} /> Quitar
                   </button>
                 ) : (
                   <button
-                    onClick={() => { setCanjeAbierto(true); aplicarPuntos(maxCanjePuntos) }}
+                    onClick={() => { setCanjeAbierto(true); aplicarPuntos(maxCanjePuntos, { sincronizarTexto: true }) }}
                     className="inline-flex items-center gap-1.5 bg-amber-500 text-white px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-amber-600">
                     <Coins size={15} /> Usar puntos
                   </button>
@@ -472,30 +504,39 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs text-amber-700">Puntos a usar</span>
                     <span className="text-sm font-bold text-amber-900">
-                      {puntosUsados.toLocaleString("es-MX")} pts = {fmt(pPuntos)}
+                      {puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts = {fmt(pPuntos)}
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <input
-                      type="number"
-                      min={0}
-                      max={maxCanjePuntos}
-                      inputMode="numeric"
+                      type="text"
+                      inputMode="decimal"
                       className="w-24 text-right text-sm font-bold text-gray-900 bg-white border border-amber-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500"
-                      value={puntosUsados || ""}
-                      onChange={(e) => aplicarPuntos(parseInt(e.target.value, 10) || 0)}
+                      value={puntosTexto}
+                      onChange={(e) => {
+                        // Solo dígitos y un separador decimal (. o ,); deja pasar
+                        // estados intermedios como "1." o "" sin forzar el número.
+                        const limpio = e.target.value.replace(/[^0-9.,]/g, "").replace(",", ".")
+                        if ((limpio.match(/\./g) || []).length > 1) return
+                        handlePuntosTextoChange(limpio)
+                      }}
+                      onBlur={() => {
+                        // Al salir del campo, re-sincroniza el texto con el valor
+                        // realmente aplicado (formateado, dentro del tope).
+                        setPuntosTexto(puntosUsados > 0 ? String(puntosUsados) : "")
+                      }}
                       placeholder="0"
                     />
                     <span className="text-xs text-gray-500">pts</span>
                     <button
-                      onClick={() => aplicarPuntos(maxCanjePuntos)}
+                      onClick={() => aplicarPuntos(maxCanjePuntos, { sincronizarTexto: true })}
                       className="ml-auto text-xs font-medium text-amber-700 border border-amber-300 rounded-lg px-3 py-1.5 hover:bg-amber-100">
-                      Usar todos ({maxCanjePuntos.toLocaleString("es-MX")})
+                      Usar todos ({maxCanjePuntos.toLocaleString("es-MX", { maximumFractionDigits: 2 })})
                     </button>
                   </div>
                   {maxCanjePuntos < saldoPuntos && (
                     <p className="text-[11px] text-amber-600 mt-2 leading-tight">
-                      Máx {maxCanjePuntos.toLocaleString("es-MX")} pts en este ticket (tope {cfgMon.max_canje_pct}% del total).
+                      Máx {maxCanjePuntos.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts en este ticket (tope {cfgMon.max_canje_pct}% del total).
                     </p>
                   )}
                 </div>
@@ -649,7 +690,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               <h2 className="text-lg font-bold text-gray-900">Confirmar uso de puntos</h2>
             </div>
             <p className="text-sm text-gray-600 mb-4">
-              El cliente canjeará <strong>{puntosUsados.toLocaleString("es-MX")} puntos</strong> ({fmt(pPuntos)}).
+              El cliente canjeará <strong>{puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} puntos</strong> ({fmt(pPuntos)}).
             </p>
 
             {cfgMon.confirmar_huella && (
