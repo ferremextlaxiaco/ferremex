@@ -9,7 +9,7 @@ import {
   listarReglasMonederoAPI, listarCatalogos, listarHuellasAPI, registrarVerificacionAPI,
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
 } from "../lib/client"
-import { abrirCajon } from "../lib/serial"
+import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
 import HuellaAnimacion from "./HuellaAnimacion"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
@@ -356,7 +356,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         } catch { /* la venta es lo importante; el enlace es best-effort */ }
       }
       if (pEfectivo > 0) {
-        try { await abrirCajon() } catch { /* sin cajón, continuar */ }
+        // Abre el cajón por el servicio local (la térmica USB no tiene puerto COM,
+        // así que el pulso ESC/POS sale por la cola de Windows). Best-effort: si
+        // no hay servicio/impresora, la venta continúa igual.
+        try { await abrirCajonLocal() } catch { /* sin cajón, continuar */ }
       }
       dispatch({ type: "CLEAR" })
       onVentaCompletada(venta)
