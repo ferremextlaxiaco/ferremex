@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from "react"
-import { Plus, ArrowLeftRight } from "lucide-react"
+import { Plus, ArrowLeftRight, Factory } from "lucide-react"
 import CatalogosColumnas from "./CatalogosColumnas"
 import CatalogosReasignacion from "./CatalogosReasignacion"
+import CatalogosAsignarProveedor from "./CatalogosAsignarProveedor"
 import { listarCatalogos, actualizarCatalogo } from "../lib/client"
+import { loadProveedores } from "../lib/proveedores"
 import { COLORES_ACENTO } from "../lib/catalogos-colores"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -104,9 +106,11 @@ export default function CatalogosModule() {
   const [selCat, setSelCat] = useState(null)
   const [selMar, setSelMar] = useState(null)
 
-  const [viewMode,     setViewMode]     = useState("columns") // "columns" | "reasignacion"
+  const [viewMode,     setViewMode]     = useState("columns") // "columns" | "reasignacion" | "proveedor"
   const [globalSearch, setGlobalSearch] = useState("")
   const [inlineAdd,    setInlineAdd]    = useState(null)      // null | "dep" | "cat" | "mar"
+  // Catálogo de proveedores (para la asignación masiva de proveedor).
+  const [proveedores,  setProveedores]  = useState([])
 
   const [toast,        setToast]        = useState(null)
   const [confirmModal, setConfirmModal] = useState(null)
@@ -134,6 +138,11 @@ export default function CatalogosModule() {
         if (!cancelled) setCargando(false)
       })
     return () => { cancelled = true }
+  }, [])
+
+  // Proveedores para la asignación masiva (catálogo ferremex_proveedores).
+  useEffect(() => {
+    loadProveedores().then(setProveedores).catch(() => {})
   }, [])
 
   function showToast(msg, tipo = "ok") {
@@ -434,6 +443,23 @@ export default function CatalogosModule() {
     setViewMode("columns")
   }
 
+  // ── Asignación masiva de proveedor (persiste en BD) ──────────────────────────
+
+  function handleAsignarProveedor({ productIds, proveedorId, proveedorNombre }) {
+    showToast(`Asignando proveedor a ${productIds.length} artículo${productIds.length !== 1 ? "s" : ""}…`)
+    actualizarCatalogo({
+      op: "assign_proveedor",
+      product_ids: productIds,
+      proveedor_id: proveedorId,
+      proveedor: proveedorNombre,
+    })
+      .then(r => {
+        showToast(`Proveedor "${proveedorNombre}" asignado a ${r.actualizados} artículo${r.actualizados !== 1 ? "s" : ""}`)
+      })
+      .catch(e => showToast(e.message ?? "Error al asignar proveedor", "error"))
+    setViewMode("columns")
+  }
+
   // ── Render ───────────────────────────────────────────────────────────────────
 
   if (cargando) {
@@ -503,6 +529,9 @@ export default function CatalogosModule() {
               <button className="ar-btn-action" onClick={() => setViewMode("reasignacion")}>
                 <ArrowLeftRight size={14} /> Reasignación masiva
               </button>
+              <button className="ar-btn-action" onClick={() => setViewMode("proveedor")}>
+                <Factory size={14} /> Asignar proveedor
+              </button>
             </>
           ) : (
             <button className="ar-btn-action" onClick={() => setViewMode("columns")}>
@@ -539,12 +568,21 @@ export default function CatalogosModule() {
             onDeleteMar={handleDeleteMar}
             onOpenReasign={() => setViewMode("reasignacion")}
           />
-        ) : (
+        ) : viewMode === "reasignacion" ? (
           <CatalogosReasignacion
             depts={depts}
             cats={cats}
             marcas={marcas}
             onComplete={handleReasign}
+            onCancel={() => setViewMode("columns")}
+          />
+        ) : (
+          <CatalogosAsignarProveedor
+            depts={depts}
+            cats={cats}
+            marcas={marcas}
+            proveedores={proveedores}
+            onComplete={handleAsignarProveedor}
             onCancel={() => setViewMode("columns")}
           />
         )}

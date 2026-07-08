@@ -280,5 +280,25 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
+  // ── assign_proveedor ──────────────────────────────────────────────────────
+  // Bulk-assign a supplier (id + name) to a list of products. Escribe AMBOS:
+  // metadata.proveedor_id (vínculo firme al catálogo ferremex_proveedores) y
+  // metadata.proveedor (nombre, para mostrar sin consultar). Molde de "reasignar".
+  if (op === "assign_proveedor") {
+    const { product_ids, proveedor, proveedor_id } = body
+    if (!Array.isArray(product_ids) || !product_ids.length) {
+      res.status(400).json({ error: "product_ids requeridos" }); return
+    }
+    if (!proveedor_id) {
+      res.status(400).json({ error: "proveedor_id es requerido" }); return
+    }
+    const products = await productModule.listProducts({ id: product_ids }, { select: ["id", "metadata"], take: product_ids.length + 10 })
+    const actualizados = await batchUpdateProducts(productModule, products as any[], (p) => ({
+      metadata: { ...(p.metadata ?? {}), proveedor_id, proveedor: proveedor ?? "" },
+    }))
+    res.json({ ok: true, actualizados })
+    return
+  }
+
   res.status(400).json({ error: `Operación desconocida: ${op}` })
 }
