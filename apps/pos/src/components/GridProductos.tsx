@@ -7,6 +7,8 @@ interface GridProductosProps {
   cartMap?: Map<string, number>
   onAgregar?: (p: ProductoPOS) => void
   onQuitar?: (sku: string) => void
+  /** Agrega un producto SIN stock al carrito marcado como venta por encargo. */
+  onEncargar?: (p: ProductoPOS) => void
   /** SKUs que son componentes de algún paquete (para mostrar el badge 📦). */
   skusEnPaquete?: Set<string>
 }
@@ -17,7 +19,7 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, skusEnPaquete }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete }: GridProductosProps) {
   const { state } = usePOS()
   const cotizando = state.modoCotizacion
   if (productos.length === 0) return null
@@ -29,13 +31,18 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
         const qty = cartMap?.get(p.sku) ?? 0
         // En cotización se permite seleccionar/agregar aunque no haya existencia.
         const showControls = onAgregar && (cotizando || p.existencia > 0)
+        // Sin stock (fuera de cotización): en vez de bloquear, se puede agregar
+        // por ENCARGO (venta sobre pedido). La tarjeta queda clickeable para ver
+        // el detalle, y el control "+" se reemplaza por "📦 Encargar".
+        const agotado = p.existencia <= 0 && !cotizando
+        const puedeEncargar = agotado && !!onEncargar
 
         return (
           <button
             key={p.sku}
             className="tarjeta-producto"
             onClick={() => onSeleccionar(p)}
-            disabled={p.existencia <= 0 && !cotizando}
+            disabled={agotado && !onEncargar}
           >
             <div className="tarjeta-imagen">
               {p.thumbnail ? (
@@ -55,6 +62,16 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
               <p className="tarjeta-sku">{p.sku}</p>
               <div className="tarjeta-footer">
                 <p className="tarjeta-precio">${p.precio.toFixed(2)}</p>
+                {/* Sin stock → botón de encargo (venta sobre pedido). */}
+                {puedeEncargar && qty === 0 && (
+                  <button
+                    className="btn-encargar-rapido"
+                    onClick={(e) => { e.stopPropagation(); onEncargar!(p) }}
+                    title="Agregar por encargo (venta sobre pedido)"
+                  >
+                    📦 Encargar
+                  </button>
+                )}
                 {showControls && (
                   qty === 0 ? (
                     <button

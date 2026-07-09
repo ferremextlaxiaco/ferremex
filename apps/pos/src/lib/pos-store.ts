@@ -192,13 +192,18 @@ function posReducer(state: PosState, action: PosAction): PosState {
 
     case "ADD_ITEM": {
       const existe = state.items.find((i) => i.sku === action.item.sku)
+      // Un item marcado como encargo (o una línea ya de encargo) no se topa al
+      // inventario: se vende sobre pedido (puede quedar en negativo al cobrar).
+      const esEncargo = !!action.item.esEncargo || !!existe?.esEncargo
       if (existe) {
-        // En cotización no se topa al inventario: es un presupuesto, no una venta.
-        if (!state.modoCotizacion && existe.cantidad >= existe.existencia) return state
+        // En cotización o encargo no se topa al inventario. En venta normal sí.
+        if (!state.modoCotizacion && !esEncargo && existe.cantidad >= existe.existencia) return state
         return {
           ...state,
           items: state.items.map((i) =>
-            i.sku === action.item.sku ? { ...i, cantidad: i.cantidad + 1 } : i
+            i.sku === action.item.sku
+              ? { ...i, cantidad: i.cantidad + 1, ...(action.item.esEncargo ? { esEncargo: true } : {}) }
+              : i
           ),
         }
       }

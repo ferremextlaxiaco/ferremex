@@ -23,23 +23,26 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
   // Fija la cantidad respetando límites y refleja el valor final tanto en el
   // número real como en el texto del input. En cotización el tope es libre
   // (presupuesto); en venta se limita a la existencia disponible.
+  const sinStock = producto.existencia <= 0
+
   function fijarCantidad(n: number) {
-    const tope = state.modoCotizacion ? Infinity : producto.existencia
+    // Sin tope cuando es cotización (presupuesto) o el producto está agotado (se
+    // agregará por encargo, sobre pedido). En venta normal se limita a existencia.
+    const tope = state.modoCotizacion || sinStock ? Infinity : producto.existencia
     const limpio = Math.max(1, Math.min(tope, Math.floor(n)))
     setCantidad(limpio)
     setCantidadTexto(String(limpio))
   }
 
-  const sinStock = producto.existencia <= 0
   // Bloqueo real de agregar por falta de stock: solo en venta. En cotización un
-  // producto agotado sí se puede presupuestar.
+  // producto agotado sí se puede presupuestar; agotado se puede pedir por encargo.
   const bloqueadoPorStock = sinStock && !state.modoCotizacion
   // Promociones vigentes en las que participa este artículo (segmento del cliente
   // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
   const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
   const skusEnCarrito = new Set(state.items.map((i) => i.sku))
 
-  function handleAgregar() {
+  function handleAgregar(comoEncargo = false) {
     for (let i = 0; i < cantidad; i++) {
       dispatch({
         type: "ADD_ITEM",
@@ -62,6 +65,8 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           // Proveedor → para el pedido automático si se vende por encargo.
           proveedor: producto.proveedor,
           proveedor_id: producto.proveedor_id,
+          // Venta por encargo: la línea se vende sin stock (sobre pedido).
+          ...(comoEncargo ? { esEncargo: true } : {}),
         },
       })
     }
@@ -163,8 +168,8 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
                     setCantidadTexto(v)
                     const n = parseInt(v, 10)
                     if (!Number.isNaN(n) && n >= 1) {
-                      // Cotización: sin tope de existencia (presupuesto).
-                      setCantidad(state.modoCotizacion ? n : Math.min(producto.existencia, n))
+                      // Cotización o agotado (encargo): sin tope de existencia.
+                      setCantidad(state.modoCotizacion || sinStock ? n : Math.min(producto.existencia, n))
                     }
                   }}
                   onFocus={(e) => e.target.select()}
@@ -180,7 +185,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
                 <button
                   className="btn-qty"
                   onClick={() => fijarCantidad(cantidad + 1)}
-                  disabled={!state.modoCotizacion && cantidad >= producto.existencia}
+                  disabled={!state.modoCotizacion && !sinStock && cantidad >= producto.existencia}
                 >
                   +
                 </button>
@@ -188,17 +193,30 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
             </div>
           )}
 
-          <button
-            className={`btn-agregar-detalle ${agregado ? "btn-agregado" : ""}`}
-            onClick={handleAgregar}
-            disabled={bloqueadoPorStock || agregado}
-          >
-            {agregado
-              ? "✓ Agregado al carrito"
-              : bloqueadoPorStock
-              ? "Sin existencia"
-              : `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} ${state.modoCotizacion ? "a la cotización" : "al carrito"}`}
-          </button>
+          {/* Producto agotado (venta): en vez de bloquear, se ofrece agregarlo por
+              ENCARGO (venta sobre pedido). Alimenta el pedido al proveedor y crea
+              la ficha de encargo al cobrar. */}
+          {bloqueadoPorStock ? (
+            <button
+              className={`btn-agregar-detalle btn-agregar-encargo ${agregado ? "btn-agregado" : ""}`}
+              onClick={() => handleAgregar(true)}
+              disabled={agregado}
+            >
+              {agregado
+                ? "✓ Agregado por encargo"
+                : `📦 Agregar por encargo ${cantidad > 1 ? `(${cantidad})` : ""}`}
+            </button>
+          ) : (
+            <button
+              className={`btn-agregar-detalle ${agregado ? "btn-agregado" : ""}`}
+              onClick={() => handleAgregar(false)}
+              disabled={agregado}
+            >
+              {agregado
+                ? "✓ Agregado al carrito"
+                : `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} ${state.modoCotizacion ? "a la cotización" : "al carrito"}`}
+            </button>
+          )}
         </div>
       </div>
 

@@ -197,6 +197,7 @@ export function Buscador() {
             cartMap={cartMap}
             skusEnPaquete={skusEnPaquete}
             onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id } })}
+            onEncargar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, esEncargo: true } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
           />
         </>
