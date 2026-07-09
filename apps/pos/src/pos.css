@@ -2099,6 +2099,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 8px 0;
 }
 
+.filtro-marcas-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 0 0 6px;
+}
+
 .filtro-breadcrumb {
   display: flex;
   align-items: center;

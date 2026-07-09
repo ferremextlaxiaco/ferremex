@@ -25,7 +25,8 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
   const [datos, setDatos] = useState<CatalogosData | null>(null)
   const [deptActivo, setDeptActivo] = useState<CatalogosDept | null>(null)
   const [catActiva, setCatActiva] = useState<CatalogosCat | null>(null)
-  const [marcaActiva, setMarcaActiva] = useState<CatalogosMarca | null>(null)
+  // Marcas seleccionadas (múltiples). Guardamos NOMBRES para casar con el filtro.
+  const [marcasActivas, setMarcasActivas] = useState<string[]>([])
 
   useEffect(() => {
     listarCatalogos().then(setDatos).catch(() => {})
@@ -34,7 +35,7 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
   function resetCascada() {
     setDeptActivo(null)
     setCatActiva(null)
-    setMarcaActiva(null)
+    setMarcasActivas([])
   }
 
   function handleNombreClick() {
@@ -43,39 +44,46 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
     onChange({})
   }
 
+  // Base del filtro (categoría o departamento) según la selección actual.
+  function baseFiltro(): FiltrosBusqueda {
+    return catActiva?.medusaId
+      ? { category_id: catActiva.medusaId }
+      : { departamento: deptActivo?.nombre }
+  }
+
   function seleccionarDept(dept: CatalogosDept) {
     setDeptActivo(dept)
     setCatActiva(null)
-    setMarcaActiva(null)
+    setMarcasActivas([])
     onChange({ departamento: dept.nombre })
   }
 
   function seleccionarCat(cat: CatalogosCat) {
     setCatActiva(cat)
-    setMarcaActiva(null)
+    setMarcasActivas([])
     const f: FiltrosBusqueda = cat.medusaId
       ? { category_id: cat.medusaId }
       : { departamento: deptActivo?.nombre }
     onChange(f)
   }
 
-  function seleccionarMarca(mar: CatalogosMarca) {
-    setMarcaActiva(mar)
-    const base: FiltrosBusqueda = catActiva?.medusaId
-      ? { category_id: catActiva.medusaId }
-      : { departamento: deptActivo?.nombre }
-    onChange({ ...base, marca: mar.nombre })
+  // Marca = toggle: agrega o quita del conjunto de marcas activas. Sin ninguna
+  // seleccionada, se muestran todas las de la categoría.
+  function toggleMarca(mar: CatalogosMarca) {
+    const activa = marcasActivas.includes(mar.nombre)
+    const nuevas = activa
+      ? marcasActivas.filter((m) => m !== mar.nombre)
+      : [...marcasActivas, mar.nombre]
+    setMarcasActivas(nuevas)
+    onChange({ ...baseFiltro(), ...(nuevas.length > 0 ? { marcas: nuevas } : {}) })
   }
 
   function irAtras() {
-    if (marcaActiva) {
-      setMarcaActiva(null)
-      const f: FiltrosBusqueda = catActiva?.medusaId
-        ? { category_id: catActiva.medusaId }
-        : { departamento: deptActivo?.nombre }
-      onChange(f)
-    } else if (catActiva) {
+    // Las marcas ya no son un nivel de cascada (son chips dentro de la categoría);
+    // "atrás" sube de categoría → departamento → raíz.
+    if (catActiva) {
       setCatActiva(null)
+      setMarcasActivas([])
       onChange({ departamento: deptActivo!.nombre })
     } else if (deptActivo) {
       resetCascada()
@@ -85,22 +93,14 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
 
   function irADept() {
     setCatActiva(null)
-    setMarcaActiva(null)
+    setMarcasActivas([])
     onChange({ departamento: deptActivo!.nombre })
-  }
-
-  function irACat() {
-    setMarcaActiva(null)
-    const f: FiltrosBusqueda = catActiva?.medusaId
-      ? { category_id: catActiva.medusaId }
-      : { departamento: deptActivo?.nombre }
-    onChange(f)
   }
 
   const catsParaDept = datos?.cats.filter(c => c.depId === deptActivo?.id) ?? []
   const marcasParaCat = datos?.marcas.filter(m => m.catId === catActiva?.id) ?? []
 
-  const explorarActivo = !!(filtros.departamento || filtros.category_id || filtros.marca)
+  const explorarActivo = !!(filtros.departamento || filtros.category_id || filtros.marca || (filtros.marcas && filtros.marcas.length))
   const hayFiltroActivo = explorarActivo || filtroStock !== "todos"
 
   return (
@@ -151,18 +151,15 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
               {catActiva && (
                 <>
                   <span className="filtro-bc-sep">›</span>
-                  <button
-                    className={`filtro-bc-item ${!marcaActiva ? "filtro-bc-activo" : ""}`}
-                    onClick={irACat}
-                  >
-                    {catActiva.nombre}
-                  </button>
+                  <span className="filtro-bc-item filtro-bc-activo">{catActiva.nombre}</span>
                 </>
               )}
-              {marcaActiva && (
+              {marcasActivas.length > 0 && (
                 <>
                   <span className="filtro-bc-sep">›</span>
-                  <span className="filtro-bc-item filtro-bc-activo">{marcaActiva.nombre}</span>
+                  <span className="filtro-bc-item filtro-bc-activo">
+                    {marcasActivas.length === 1 ? marcasActivas[0] : `${marcasActivas.length} marcas`}
+                  </span>
                 </>
               )}
             </div>
@@ -200,21 +197,32 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
             </div>
           )}
 
-          {/* Level 2: marcas de la categoría */}
+          {/* Level 2: marcas de la categoría — selección MÚLTIPLE (toggle).
+              Sin ninguna activa = se muestran todas las de la categoría. */}
           {datos && catActiva && (
-            <div className="filtro-chips">
-              {marcasParaCat.length > 0
-                ? marcasParaCat.map(mar => (
-                    <button
-                      key={mar.id}
-                      className={`filtro-chip ${marcaActiva?.id === mar.id ? "filtro-chip-activo" : ""}`}
-                      onClick={() => seleccionarMarca(mar)}
-                    >
-                      {mar.nombre}
-                    </button>
-                  ))
-                : <span className="filtro-cargando">Sin marcas en esta categoría</span>}
-            </div>
+            <>
+              {marcasParaCat.length > 0 && (
+                <p className="filtro-marcas-hint">
+                  Elige una o varias marcas (sin selección se muestran todas)
+                </p>
+              )}
+              <div className="filtro-chips">
+                {marcasParaCat.length > 0
+                  ? marcasParaCat.map(mar => {
+                      const activa = marcasActivas.includes(mar.nombre)
+                      return (
+                        <button
+                          key={mar.id}
+                          className={`filtro-chip ${activa ? "filtro-chip-activo" : ""}`}
+                          onClick={() => toggleMarca(mar)}
+                        >
+                          {activa && <Check size={13} />}{mar.nombre}
+                        </button>
+                      )
+                    })
+                  : <span className="filtro-cargando">Sin marcas en esta categoría</span>}
+              </div>
+            </>
           )}
         </>
       )}

@@ -31,7 +31,11 @@ export interface FiltrosBusqueda {
   q?: string
   category_id?: string
   departamento?: string
+  /** Marca única (legacy). Se conserva por retrocompatibilidad. */
   marca?: string
+  /** Marcas seleccionadas (selección múltiple en el filtro de Venta). Si trae
+   *  ≥1, el resultado se acota a esas marcas; vacío/ausente = todas las marcas. */
+  marcas?: string[]
 }
 
 export interface CategoriasPOS {

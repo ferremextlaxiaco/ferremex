@@ -128,7 +128,13 @@ export function Buscador() {
   const resultadosFiltrados = resultados.filter((r) => {
     if (filtroStock === "con-stock" && r.existencia <= 0) return false
     if (filtroStock === "sin-stock" && r.existencia > 0) return false
-    if (filtros.marca && r.marca !== filtros.marca) return false
+    // Marcas seleccionadas (múltiples): el producto debe ser de alguna de ellas.
+    if (filtros.marcas && filtros.marcas.length > 0) {
+      if (!filtros.marcas.includes(r.marca ?? "")) return false
+    } else if (filtros.marca && r.marca !== filtros.marca) {
+      // Compat: filtro de marca única (legacy).
+      return false
+    }
     return true
   })
 
