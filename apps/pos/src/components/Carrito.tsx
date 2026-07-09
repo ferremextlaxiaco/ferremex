@@ -69,8 +69,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       e.currentTarget.blur()
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      // En cotización se puede exceder la existencia (presupuesto).
-      if (modoCotizacion || item.cantidad < item.existencia) {
+      // En cotización, modo encargo global o una línea de encargo se puede exceder
+      // la existencia (presupuesto / venta sobre pedido).
+      if (modoCotizacion || modoEncargo || item.esEncargo || item.cantidad < item.existencia) {
         dispatch({ type: "INCREMENT", sku })
         setDrafts((prev) => ({ ...prev, [sku]: String(item.cantidad + 1) }))
       }
@@ -225,6 +226,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const esEncargo = !modoCotizacion && (modoEncargo || !!item.esEncargo)
             // "Sin stock" (rojo, bloquea) solo si excede Y NO está marcado encargo.
             const sinStock = !modoCotizacion && !modoEncargo && item.cantidad > item.existencia && !esEncargo
+            // La cantidad no se topa al inventario en cotización, modo encargo global,
+            // ni en una línea de encargo individual (todas son sobre pedido).
+            const sinTopeCantidad = modoCotizacion || modoEncargo || esEncargo
 
             return (
               <div
@@ -290,20 +294,20 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     className="carrito-item-cantidad-input"
                     type="number"
                     min={1}
-                    max={modoCotizacion ? undefined : item.existencia}
+                    max={sinTopeCantidad ? undefined : item.existencia}
                     value={displayValue}
                     onClick={(e) => e.stopPropagation()}
                     onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
                     onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
                     onBlur={() => commitDraft(item.sku)}
                     onKeyDown={(e) => handleKeyDown(e, item.sku)}
-                    title={modoCotizacion ? "Cotización: sin límite de existencia" : `Máximo ${item.existencia} disponibles`}
+                    title={sinTopeCantidad ? "Sin límite de existencia" : `Máximo ${item.existencia} disponibles`}
                   />
                   <button
                     className="btn-cantidad"
                     onClick={(e) => { e.stopPropagation(); dispatch({ type: "INCREMENT", sku: item.sku }) }}
-                    disabled={!modoCotizacion && item.cantidad >= item.existencia}
-                    title={!modoCotizacion && item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
+                    disabled={!sinTopeCantidad && item.cantidad >= item.existencia}
+                    title={!sinTopeCantidad && item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
                   >
                     +
                   </button>
