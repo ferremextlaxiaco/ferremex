@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature, Tag, Wallet, Receipt, PackageCheck,
+  Coins, FileSignature, Tag, Wallet, Receipt,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -28,7 +28,7 @@ export function Admin() {
     ? "formatos"
     : path.includes("/admin/perifericos")
     ? "perifericos"
-    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito")
+    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito") || path.includes("/admin/encargos")
     ? "clientes"
     : path.includes("/admin/monedero")
     ? "monedero"
@@ -46,8 +46,6 @@ export function Admin() {
     ? "compras"
     : path.includes("/admin/pedidos")
     ? "pedidos"
-    : path.includes("/admin/encargos")
-    ? "encargos"
     : path.includes("/admin/catalogos")
     ? "catalogos"
     : path.includes("/admin/empleados")
@@ -203,13 +201,6 @@ export function Admin() {
           >
             <span className="admin-side-icon"><ClipboardList size={18} /></span>
             Pedidos
-          </button>
-          <button
-            className={`admin-side-item${tab === "encargos" ? " active" : ""}`}
-            onClick={() => navigate("/admin/encargos")}
-          >
-            <span className="admin-side-icon"><PackageCheck size={18} /></span>
-            Encargos
           </button>
           <button
             className={`admin-side-item${tab === "catalogos" ? " active" : ""}`}
