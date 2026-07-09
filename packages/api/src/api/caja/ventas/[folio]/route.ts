@@ -83,8 +83,12 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
         return { error: "La venta ya está cancelada", status: 400 } as const
       }
 
-      // Reintegrar inventario de los items que tengan sku.
-      const itemsConSku = (ventas[idx].items ?? []).filter((i) => i.sku)
+      // Reintegrar inventario de los items que tengan sku. Se EXCLUYEN las líneas
+      // de encargo global (no_descontar): nunca descontaron stock, así que
+      // reintegrarlas inflaría el inventario.
+      const itemsConSku = (ventas[idx].items ?? []).filter(
+        (i) => i.sku && !(i as { no_descontar?: boolean }).no_descontar
+      )
       if (itemsConSku.length) {
         const skus = itemsConSku.map((i) => i.sku as string)
         const inventoryItems = await inventoryModule.listInventoryItems(

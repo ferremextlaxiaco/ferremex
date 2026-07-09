@@ -8463,6 +8463,31 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 .btn-toggle-cotizacion:disabled { opacity: 0.4; pointer-events: none; }
 
+/* ---- Carrito en modo encargo global (todo sobre pedido, sin tocar stock) ---- */
+.carrito--encargo-global .carrito-header { color: #9a3412; }
+.carrito-banner-encargo {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 14px 8px; padding: 8px 11px;
+  background: var(--orange-dim); color: #9a3412;
+  border-radius: 9px; font-size: 12.5px; font-weight: 600;
+}
+.carrito-banner-encargo svg { color: var(--orange); flex-shrink: 0; }
+
+.btn-toggle-encargo {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: 42px; margin-bottom: 8px;
+  background: var(--bg-panel); color: var(--text-soft);
+  border: 1px dashed var(--border); border-radius: 10px;
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.btn-toggle-encargo:hover { background: var(--bg-hover); border-color: var(--orange); color: var(--orange); }
+.btn-toggle-encargo svg { flex-shrink: 0; }
+.btn-toggle-encargo.activo {
+  background: var(--orange-dim); color: #9a3412; border-style: solid; border-color: rgba(249,99,2,0.3);
+}
+.btn-toggle-encargo:disabled { opacity: 0.4; pointer-events: none; }
+
 /* El botón principal en modo cotización (Imprimir cotización) */
 .btn-cobrar.btn-cotizar {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;

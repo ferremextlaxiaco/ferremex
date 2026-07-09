@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { List, FileText, ShoppingCart, Bookmark } from "lucide-react"
+import { List, FileText, ShoppingCart, Bookmark, PackageCheck } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
@@ -18,15 +18,16 @@ interface CarritoProps {
 
 export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: CarritoProps) {
   const { state, dispatch, total, promosCarrito, ahorroPromos, promos } = usePOS()
-  const { items, modoCotizacion } = state
+  const { items, modoCotizacion, modoEncargo } = state
   const ctxPromo = contextoDeCliente(state.clienteActivo)
 
   // Líneas cuya cantidad supera la existencia (típico al convertir una cotización
-  // —donde se permite exceder stock— a venta). En cotización no aplica; en venta
-  // se marcan en rojo y bloquean el cobro hasta corregirlas O marcarlas como
-  // ENCARGO (venta sobre pedido). Una línea de encargo NO cuenta como exceso.
+  // —donde se permite exceder stock— a venta). En cotización NO aplica; en modo
+  // encargo global TAMPOCO (todo es sobre pedido, sin tope de stock). En venta
+  // normal se marcan en rojo y bloquean el cobro hasta corregirlas O marcarlas
+  // como ENCARGO. Una línea de encargo NO cuenta como exceso.
   const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia && !i.esEncargo
-  const skusSinStock = modoCotizacion ? [] : items.filter(excedeStock)
+  const skusSinStock = (modoCotizacion || modoEncargo) ? [] : items.filter(excedeStock)
   const hayExcesoStock = skusSinStock.length > 0
 
   // draft values while the user is typing (sku → string)
@@ -94,9 +95,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
   }
 
   return (
-    <div className={`carrito${modoCotizacion ? " carrito--cotizacion" : ""}`}>
+    <div className={`carrito${modoCotizacion ? " carrito--cotizacion" : ""}${modoEncargo ? " carrito--encargo-global" : ""}`}>
       <div className="carrito-header">
-        <span>{modoCotizacion ? "Cotización" : "Carrito"} ({items.length} productos)</span>
+        <span>{modoCotizacion ? "Cotización" : modoEncargo ? "Encargo" : "Carrito"} ({items.length} productos)</span>
         {/* Poner en espera: junto al resumen. Solo en modo venta con items. */}
         {onPonerEnEspera && !modoCotizacion && (
           <button
@@ -114,6 +115,13 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       {modoCotizacion && (
         <div className="carrito-banner-cotizacion">
           <FileText size={14} /> Modo cotización — no descuenta inventario
+        </div>
+      )}
+
+      {/* Banner de modo encargo global: todo se pide al proveedor, sin tocar stock. */}
+      {modoEncargo && (
+        <div className="carrito-banner-encargo">
+          <PackageCheck size={14} /> Modo encargo — todo sobre pedido, no descuenta inventario
         </div>
       )}
 
@@ -212,9 +220,11 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const faltanMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
               ? item.mayoreoMin - item.cantidad : 0
 
-            const esEncargo = !modoCotizacion && !!item.esEncargo
+            // En modo encargo global TODAS las líneas son encargo; en venta normal,
+            // solo las marcadas individualmente.
+            const esEncargo = !modoCotizacion && (modoEncargo || !!item.esEncargo)
             // "Sin stock" (rojo, bloquea) solo si excede Y NO está marcado encargo.
-            const sinStock = !modoCotizacion && item.cantidad > item.existencia && !esEncargo
+            const sinStock = !modoCotizacion && !modoEncargo && item.cantidad > item.existencia && !esEncargo
 
             return (
               <div
@@ -404,6 +414,20 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             {modoCotizacion
               ? <><ShoppingCart size={15} /> Convertir a venta</>
               : <><FileText size={15} /> Convertir a cotización</>}
+          </button>
+        )}
+        {/* Toggle modo encargo global: todo sobre pedido, sin descontar inventario.
+            Oculto en cotización (son excluyentes). */}
+        {!modoCotizacion && (
+          <button
+            className={`btn-toggle-encargo${modoEncargo ? " activo" : ""}`}
+            onClick={() => dispatch({ type: "SET_MODO_ENCARGO", activo: !modoEncargo })}
+            disabled={items.length === 0}
+            title="Todo el carrito se pide al proveedor; no descuenta inventario aunque haya stock"
+          >
+            {modoEncargo
+              ? <><ShoppingCart size={15} /> Volver a venta normal</>
+              : <><PackageCheck size={15} /> Convertir a encargo</>}
           </button>
         )}
         <div className="carrito-acciones">

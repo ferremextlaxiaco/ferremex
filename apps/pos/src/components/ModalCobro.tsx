@@ -63,10 +63,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
   // ── Venta por encargo ─────────────────────────────────────────────────────
-  // Si el carrito tiene líneas por encargo, la FICHA se abre al entrar al cobro
-  // (define el anticipo). Al confirmarla, el modal exige cobrar solo
-  // parte-con-stock + anticipo (no el total), y adjunta la ficha a la venta.
-  const hayEncargo = state.items.some((i) => i.esEncargo)
+  // Si el carrito tiene líneas por encargo (o está en modo encargo global), la
+  // FICHA se abre al entrar al cobro (define el anticipo). Al confirmarla, el
+  // modal exige cobrar solo parte-con-stock + anticipo, y adjunta la ficha.
+  const modoEncargoGlobal = state.modoEncargo
+  const hayEncargo = modoEncargoGlobal || state.items.some((i) => i.esEncargo)
   // Datos de la ficha ya confirmada (con anticipo). En estado —no ref— para que
   // el total a cobrar se recalcule al definir el anticipo.
   const [datosFicha, setDatosFicha] = useState<DatosFichaEncargo | null>(null)
@@ -122,8 +123,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   // En una venta por encargo, el cliente solo paga hoy la parte-con-stock más el
   // anticipo capturado en la ficha; la resta del encargo queda pendiente. Hasta
   // que la ficha se confirme (anticipo definido), se muestra el total completo.
+  // En modo encargo global, TODAS las líneas son encargo; si no, solo las marcadas.
   const totalEncargoCarrito = state.items
-    .filter((i) => i.esEncargo)
+    .filter((i) => modoEncargoGlobal || i.esEncargo)
     .reduce((s, i) => s + precioUnitEfectivo(i) * i.cantidad, 0)
   const restaEncargo = datosFicha
     ? Math.max(0, Math.round((totalEncargoCarrito - datosFicha.anticipo) * 100) / 100)
@@ -401,9 +403,18 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           precio_unitario: precioUnitEfectivo(i),
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
-          // Venta por encargo: el backend salta stock, descuenta en negativo y
-          // alimenta el pedido del proveedor con estos datos.
-          ...(i.esEncargo ? { encargo: true, proveedor_id: i.proveedor_id ?? "", proveedor: i.proveedor ?? "" } : {}),
+          // Venta por encargo. Dos sabores:
+          //  - encargo por línea (falta stock): descuenta en negativo.
+          //  - modo encargo global (reposición): no_descontar → NO toca inventario.
+          // Ambos alimentan el pedido del proveedor.
+          ...((modoEncargoGlobal || i.esEncargo)
+            ? {
+                encargo: true,
+                proveedor_id: i.proveedor_id ?? "",
+                proveedor: i.proveedor ?? "",
+                ...(modoEncargoGlobal ? { no_descontar: true } : {}),
+              }
+            : {}),
         })),
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,

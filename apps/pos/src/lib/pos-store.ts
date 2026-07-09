@@ -109,6 +109,11 @@ interface PosState {
   // marcarla "convertida" al venderse.
   modoCotizacion: boolean
   cotizacionCargadaFolio: string | null
+  // Modo encargo GLOBAL: todo el carrito se cobra como venta sobre pedido y NO
+  // descuenta inventario (pedido de reposición al proveedor, aunque haya stock).
+  // Excluyente con modoCotizacion. Al cobrar, marca cada línea como encargo con
+  // no_descontar=true. Se resetea al terminar la venta (CLEAR).
+  modoEncargo: boolean
   // Vendedor de la venta actual (quién la hace). `null` = el cajero logueado.
   // Se cambia en el panel de venta cuando otra persona atiende en esta caja; es
   // solo atribución (reportes/comisiones), NO afecta el corte (que agrupa por
@@ -161,6 +166,9 @@ type PosAction =
   // Alterna el modo cotización (toggle "Convertir a cotización" ↔ "Convertir a
   // venta"). Al desactivarlo se olvida la cotización cargada (vuelve a venta limpia).
   | { type: "SET_MODO_COTIZACION"; activo: boolean }
+  // Alterna el modo encargo GLOBAL: todo el carrito se vende sobre pedido sin
+  // descontar inventario. Excluyente con cotización.
+  | { type: "SET_MODO_ENCARGO"; activo: boolean }
   // Carga una cotización guardada al carrito: restaura items + cliente, entra en
   // modo cotización y recuerda su folio para enlazarla si se convierte en venta.
   | { type: "CARGAR_COTIZACION"; items: CartItem[]; cliente: Cliente | null; folio: string }
@@ -194,7 +202,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
       const existe = state.items.find((i) => i.sku === action.item.sku)
       // Un item marcado como encargo (o una línea ya de encargo) no se topa al
       // inventario: se vende sobre pedido (puede quedar en negativo al cobrar).
-      const esEncargo = !!action.item.esEncargo || !!existe?.esEncargo
+      // El modo encargo global libera el tope para TODO el carrito.
+      const esEncargo = state.modoEncargo || !!action.item.esEncargo || !!existe?.esEncargo
       if (existe) {
         // En cotización o encargo no se topa al inventario. En venta normal sí.
         if (!state.modoCotizacion && !esEncargo && existe.cantidad >= existe.existencia) return state
@@ -214,8 +223,8 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return {
         ...state,
         items: state.items.map((i) =>
-          // En cotización se permite exceder la existencia (presupuesto).
-          i.sku === action.sku && (state.modoCotizacion || i.cantidad < i.existencia)
+          // En cotización o modo encargo se permite exceder la existencia.
+          i.sku === action.sku && (state.modoCotizacion || state.modoEncargo || i.cantidad < i.existencia)
             ? { ...i, cantidad: i.cantidad + 1 }
             : i
         ),
@@ -234,7 +243,7 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // la existencia); en venta normal, se limita a lo disponible en inventario.
       const linea = state.items.find(i => i.sku === action.sku)
       const existencia = linea?.existencia ?? action.cantidad
-      const sinTope = state.modoCotizacion || !!linea?.esEncargo
+      const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo
       const tope = sinTope ? action.cantidad : existencia
       const clamped = Math.max(1, Math.min(action.cantidad, tope))
       return {
@@ -306,18 +315,30 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // Reset TOTAL: al completar una venta o poner el carrito en espera se
       // reinicia el cliente activo, el vendedor manual y se sale del modo
       // cotización (la transacción terminó / se guardó aparte).
-      return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, cotizacionCargadaFolio: null }
+      return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, modoEncargo: false, cotizacionCargadaFolio: null }
 
     case "RESTORE_CART":
       // Reemplaza el carrito y el cliente con un pedido en espera retomado.
       return { ...state, items: action.items, clienteActivo: action.cliente }
 
     case "SET_MODO_COTIZACION":
-      // Al apagar el modo cotización se olvida la cotización cargada.
+      // Al apagar el modo cotización se olvida la cotización cargada. Cotización y
+      // encargo son excluyentes: activar cotización apaga el modo encargo.
       return {
         ...state,
         modoCotizacion: action.activo,
+        modoEncargo: action.activo ? false : state.modoEncargo,
         cotizacionCargadaFolio: action.activo ? state.cotizacionCargadaFolio : null,
+      }
+
+    case "SET_MODO_ENCARGO":
+      // Modo encargo global (todo sobre pedido, sin descontar inventario).
+      // Excluyente con cotización: activarlo apaga el modo cotización.
+      return {
+        ...state,
+        modoEncargo: action.activo,
+        modoCotizacion: action.activo ? false : state.modoCotizacion,
+        cotizacionCargadaFolio: action.activo ? null : state.cotizacionCargadaFolio,
       }
 
     case "CARGAR_COTIZACION":
@@ -326,6 +347,7 @@ function posReducer(state: PosState, action: PosAction): PosState {
         items: action.items,
         clienteActivo: action.cliente,
         modoCotizacion: true,
+        modoEncargo: false,
         cotizacionCargadaFolio: action.folio,
       }
 
@@ -391,6 +413,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     clienteActivo: null,
     modoCotizacion: false,
     cotizacionCargadaFolio: null,
+    modoEncargo: false,
     vendedorVenta: null,
   })
 

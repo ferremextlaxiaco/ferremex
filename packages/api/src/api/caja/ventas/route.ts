@@ -23,6 +23,9 @@ interface ItemVenta {
   // validación de existencia para ella, descuenta en negativo, y la agrega al
   // pedido abierto de su proveedor. `proveedor_id`/`proveedor` = destino del pedido.
   encargo?: boolean
+  // Modo encargo GLOBAL (reposición): la línea NO descuenta inventario aunque haya
+  // stock. Solo genera el pedido al proveedor. Cuando true, `encargo` también lo es.
+  no_descontar?: boolean
   proveedor_id?: string
   proveedor?: string
 }
@@ -324,6 +327,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       const aplicados: { itemId: string; locationId: string; cantidad: number }[] = []
       try {
         for (const item of items) {
+          // Modo encargo global (reposición): la línea NO toca inventario. Solo
+          // alimenta el pedido al proveedor. El resto del flujo (folio, cobro,
+          // ficha) es idéntico. Un encargo por FALTA de stock (encargo sin
+          // no_descontar) sí descuenta en negativo.
+          if (item.no_descontar) continue
           const inventoryItemId = itemPorSku.get(item.sku)
           if (!inventoryItemId) continue
           const nivel = nivelPorItemId.get(inventoryItemId)
@@ -352,7 +360,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             // Traza del paquete (si aplica) para ticket / historial / corte.
             ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre ?? null } : {}),
             // Marca de venta por encargo (para ticket / historial / rastreo).
-            ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null } : {}),
+            // `no_descontar` se persiste para que la CANCELACIÓN no reintegre
+            // inventario de líneas que nunca lo descontaron (modo encargo global).
+            ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null, ...(i.no_descontar ? { no_descontar: true } : {}) } : {}),
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
           // encargo es el total normal; con encargo es parte-con-stock + anticipo.
