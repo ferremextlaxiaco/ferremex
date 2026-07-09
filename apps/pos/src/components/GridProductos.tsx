@@ -1,3 +1,4 @@
+import { Package, PackageCheck, Plus, Minus } from "lucide-react"
 import type { ProductoPOS } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
 
@@ -9,7 +10,7 @@ interface GridProductosProps {
   onQuitar?: (sku: string) => void
   /** Agrega un producto SIN stock al carrito marcado como venta por encargo. */
   onEncargar?: (p: ProductoPOS) => void
-  /** SKUs que son componentes de algún paquete (para mostrar el badge 📦). */
+  /** SKUs que son componentes de algún paquete (para mostrar el badge de paquete). */
   skusEnPaquete?: Set<string>
 }
 
@@ -40,21 +41,25 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
         return (
           <button
             key={p.sku}
-            className="tarjeta-producto"
+            className={`tarjeta-producto${agotado ? " tarjeta-agotada" : ""}`}
             onClick={() => onSeleccionar(p)}
             disabled={agotado && !onEncargar}
           >
+            {/* La imagen se atenúa (blur) en productos sin stock; el resto de la
+                tarjeta queda legible y clickeable (se puede encargar). */}
             <div className="tarjeta-imagen">
               {p.thumbnail ? (
                 <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />
               ) : (
                 <div className="tarjeta-sin-imagen">
-                  <span>📦</span>
+                  <Package size={34} strokeWidth={1.5} />
                 </div>
               )}
               <span className={`badge-stock ${stock.clase}`}>{stock.texto}</span>
               {skusEnPaquete?.has(p.sku) && (
-                <span className="badge-en-paquete" title="Este artículo forma parte de un paquete">📦 Paquete</span>
+                <span className="badge-en-paquete" title="Este artículo forma parte de un paquete">
+                  <Package size={12} /> Paquete
+                </span>
               )}
             </div>
             <div className="tarjeta-info">
@@ -69,7 +74,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                     onClick={(e) => { e.stopPropagation(); onEncargar!(p) }}
                     title="Agregar por encargo (venta sobre pedido)"
                   >
-                    📦 Encargar
+                    <PackageCheck size={14} /> Encargar
                   </button>
                 )}
                 {showControls && (
@@ -79,7 +84,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                       onClick={(e) => { e.stopPropagation(); onAgregar(p) }}
                       title="Agregar al carrito"
                     >
-                      +
+                      <Plus size={18} />
                     </button>
                   ) : (
                     <div className="qty-control" onClick={(e) => e.stopPropagation()}>
@@ -88,7 +93,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                         onClick={() => onQuitar?.(p.sku)}
                         title="Quitar uno"
                       >
-                        −
+                        <Minus size={15} />
                       </button>
                       <span className="qty-num">{qty}</span>
                       <button
@@ -97,7 +102,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                         disabled={!cotizando && qty >= p.existencia}
                         title="Agregar uno más"
                       >
-                        +
+                        <Plus size={15} />
                       </button>
                     </div>
                   )

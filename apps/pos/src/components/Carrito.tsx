@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { List, FileText, ShoppingCart, Bookmark, PackageCheck } from "lucide-react"
+import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, X, AlertTriangle, Trash2 } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
@@ -131,7 +131,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
       {items.length === 0 ? (
         <div className="carrito-vacio">
-          <span style={{ fontSize: 32 }}>🛒</span>
+          <ShoppingCart size={32} strokeWidth={1.5} />
           <p>Carrito vacío</p>
           <p style={{ fontSize: 12 }}>Busca y agrega productos</p>
         </div>
@@ -163,7 +163,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             return (
               <div key={pkgId} className="carrito-paquete">
                 <div className="carrito-paquete-head">
-                  <span className="carrito-paquete-nombre">📦 {nombre}</span>
+                  <span className="carrito-paquete-nombre"><Package size={14} /> {nombre}</span>
                   <div className="carrito-paquete-right">
                     <span className="carrito-paquete-total">{formatMXN(totalPkg)}</span>
                     <button
@@ -271,14 +271,20 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                       </span>
                     )}
                     {esEncargo && (
-                      <button
-                        type="button"
-                        className="badge-encargo-carrito"
-                        title="Venta sobre pedido. Clic para quitar el encargo."
-                        onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_ENCARGO", sku: item.sku, esEncargo: false }) }}
-                      >
-                        📦 Por encargo ✕
-                      </button>
+                      modoEncargo ? (
+                        <span className="badge-encargo-carrito badge-encargo-carrito--fijo" title="Venta sobre pedido (modo encargo)">
+                          <PackageCheck size={12} /> Por encargo
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="badge-encargo-carrito"
+                          title="Venta sobre pedido. Clic para quitar el encargo."
+                          onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_ENCARGO", sku: item.sku, esEncargo: false }) }}
+                        >
+                          <PackageCheck size={12} /> Por encargo <X size={11} />
+                        </button>
+                      )
                     )}
                   </div>
                 </div>
@@ -338,8 +344,8 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             vender lo faltante POR ENCARGO (venta sobre pedido, Fase 3). */}
         {hayExcesoStock && (
           <div className="carrito-aviso-stock">
-            <span>
-              ⚠ {skusSinStock.length} artículo{skusSinStock.length !== 1 ? "s" : ""} sin existencia
+            <span className="carrito-aviso-stock-texto">
+              <AlertTriangle size={14} /> {skusSinStock.length} artículo{skusSinStock.length !== 1 ? "s" : ""} sin existencia
               suficiente. Ajusta al stock o véndelo por encargo.
             </span>
             <div className="carrito-aviso-stock-acciones">
@@ -349,7 +355,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                 title="Vender lo faltante sobre pedido; se agrega al pedido del proveedor"
                 onClick={() => dispatch({ type: "SET_ENCARGO", esEncargo: true })}
               >
-                📦 Vender por encargo
+                <PackageCheck size={14} /> Vender por encargo
               </button>
               <button
                 type="button"
@@ -440,7 +446,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             onClick={() => dispatch({ type: "CLEAR_ITEMS" })}
             disabled={items.length === 0}
           >
-            🗑 Vaciar
+            <Trash2 size={15} /> Vaciar
           </button>
           {modoCotizacion ? (
             <button

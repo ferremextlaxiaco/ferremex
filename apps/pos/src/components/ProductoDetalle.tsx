@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { Tag } from "lucide-react"
+import { Tag, Package, PackageCheck, Check, AlertTriangle, XCircle } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 import { promosDeArticulo, describirPromo, contextoDeCliente } from "../lib/promociones"
 import { DetallePromoModal } from "./DetallePromoModal"
@@ -92,7 +92,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
             <img src={producto.thumbnail} alt={producto.descripcion} />
           ) : (
             <div className="detalle-sin-imagen">
-              <span>📦</span>
+              <Package size={48} strokeWidth={1.4} />
             </div>
           )}
         </div>
@@ -138,11 +138,13 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           )}
 
           <div className={`detalle-stock-badge ${sinStock ? "badge-sin-stock" : producto.existencia <= 3 ? "badge-poco-stock" : "badge-en-stock"}`}>
-            {sinStock
-              ? "❌ Sin existencia"
-              : producto.existencia <= 3
-              ? `⚠️ Solo ${producto.existencia} disponibles`
-              : `✓ ${producto.existencia} en almacén`}
+            {sinStock ? (
+              <><XCircle size={14} /> Sin existencia</>
+            ) : producto.existencia <= 3 ? (
+              <><AlertTriangle size={14} /> Solo {producto.existencia} disponibles</>
+            ) : (
+              <><Check size={14} /> {producto.existencia} en almacén</>
+            )}
           </div>
 
           {!bloqueadoPorStock && (
@@ -202,9 +204,11 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
               onClick={() => handleAgregar(true)}
               disabled={agregado}
             >
-              {agregado
-                ? "✓ Agregado por encargo"
-                : `📦 Agregar por encargo ${cantidad > 1 ? `(${cantidad})` : ""}`}
+              {agregado ? (
+                <><Check size={17} /> Agregado por encargo</>
+              ) : (
+                <><PackageCheck size={17} /> Agregar por encargo {cantidad > 1 ? `(${cantidad})` : ""}</>
+              )}
             </button>
           ) : (
             <button
@@ -212,9 +216,11 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
               onClick={() => handleAgregar(false)}
               disabled={agregado}
             >
-              {agregado
-                ? "✓ Agregado al carrito"
-                : `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} ${state.modoCotizacion ? "a la cotización" : "al carrito"}`}
+              {agregado ? (
+                <><Check size={17} /> Agregado al carrito</>
+              ) : (
+                `Agregar ${cantidad > 1 ? `(${cantidad})` : ""} ${state.modoCotizacion ? "a la cotización" : "al carrito"}`
+              )}
             </button>
           )}
         </div>
