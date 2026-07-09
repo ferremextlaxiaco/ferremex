@@ -24,19 +24,21 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
   // número real como en el texto del input. En cotización el tope es libre
   // (presupuesto); en venta se limita a la existencia disponible.
   const sinStock = producto.existencia <= 0
+  // Sin tope de existencia en cotización (presupuesto) o encargo (sobre pedido).
+  const sinTope = state.modoCotizacion || state.modoEncargo
 
   function fijarCantidad(n: number) {
-    // Sin tope cuando es cotización (presupuesto) o el producto está agotado (se
-    // agregará por encargo, sobre pedido). En venta normal se limita a existencia.
-    const tope = state.modoCotizacion || sinStock ? Infinity : producto.existencia
+    const tope = sinTope ? Infinity : producto.existencia
     const limpio = Math.max(1, Math.min(tope, Math.floor(n)))
     setCantidad(limpio)
     setCantidadTexto(String(limpio))
   }
 
-  // Bloqueo real de agregar por falta de stock: solo en venta. En cotización un
-  // producto agotado sí se puede presupuestar; agotado se puede pedir por encargo.
-  const bloqueadoPorStock = sinStock && !state.modoCotizacion
+  // Agotado en modo ENCARGO → se ofrece "Agregar por encargo" (venta sobre pedido).
+  const puedeEncargarDetalle = sinStock && state.modoEncargo
+  // Bloqueo real por falta de stock: solo en VENTA NORMAL. En cotización se
+  // presupuesta; en encargo se pide sobre pedido.
+  const bloqueadoPorStock = sinStock && !state.modoCotizacion && !state.modoEncargo
   // Promociones vigentes en las que participa este artículo (segmento del cliente
   // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
   const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
@@ -170,8 +172,8 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
                     setCantidadTexto(v)
                     const n = parseInt(v, 10)
                     if (!Number.isNaN(n) && n >= 1) {
-                      // Cotización o agotado (encargo): sin tope de existencia.
-                      setCantidad(state.modoCotizacion || sinStock ? n : Math.min(producto.existencia, n))
+                      // Cotización o encargo: sin tope de existencia.
+                      setCantidad(sinTope ? n : Math.min(producto.existencia, n))
                     }
                   }}
                   onFocus={(e) => e.target.select()}
@@ -187,7 +189,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
                 <button
                   className="btn-qty"
                   onClick={() => fijarCantidad(cantidad + 1)}
-                  disabled={!state.modoCotizacion && !sinStock && cantidad >= producto.existencia}
+                  disabled={!sinTope && cantidad >= producto.existencia}
                 >
                   +
                 </button>
@@ -195,10 +197,11 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
             </div>
           )}
 
-          {/* Producto agotado (venta): en vez de bloquear, se ofrece agregarlo por
-              ENCARGO (venta sobre pedido). Alimenta el pedido al proveedor y crea
-              la ficha de encargo al cobrar. */}
-          {bloqueadoPorStock ? (
+          {/* Tres casos del botón principal:
+              1. Modo encargo + agotado → "Agregar por encargo" (sobre pedido).
+              2. Venta normal + agotado → "Sin existencia" (deshabilitado, como antes).
+              3. Con stock / cotización → agregar normal. */}
+          {puedeEncargarDetalle ? (
             <button
               className={`btn-agregar-detalle btn-agregar-encargo ${agregado ? "btn-agregado" : ""}`}
               onClick={() => handleAgregar(true)}
@@ -209,6 +212,10 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
               ) : (
                 <><PackageCheck size={17} /> Agregar por encargo {cantidad > 1 ? `(${cantidad})` : ""}</>
               )}
+            </button>
+          ) : bloqueadoPorStock ? (
+            <button className="btn-agregar-detalle" disabled>
+              <XCircle size={17} /> Sin existencia
             </button>
           ) : (
             <button

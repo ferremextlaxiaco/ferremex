@@ -65,7 +65,7 @@ export interface VentaRequest {
   // `encargo`: la línea se vende SIN stock (venta sobre pedido). El backend salta
   // la validación de stock para ella, descuenta en negativo, y la agrega al pedido
   // abierto de su proveedor. `proveedor_id`/`proveedor` viajan para ese pedido.
-  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; proveedor_id?: string; proveedor?: string }[]
+  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; existencia?: number; proveedor_id?: string; proveedor?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
   // Pago con tarjeta bancaria (crédito/débito vía TPV). No es efectivo (no abre

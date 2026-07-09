@@ -617,14 +617,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   cursor: not-allowed;
 }
 
-/* Producto sin stock (pero encargable): se difumina SOLO la imagen para señalar
-   la falta de existencia; el nombre, precio y botón "Encargar" siguen nítidos y
-   la tarjeta queda clickeable. */
-.tarjeta-agotada .tarjeta-imagen img,
-.tarjeta-agotada .tarjeta-sin-imagen {
-  filter: blur(3px) grayscale(0.4);
-  opacity: 0.65;
-}
+/* Producto sin stock: la imagen se muestra nítida (sin blur). El estado "agotado"
+   se comunica por el badge "Sin stock" y —en modo encargo— por el botón "Encargar". */
 .tarjeta-agotada:hover:not(:disabled) .tarjeta-imagen img {
   transform: none;
 }
@@ -8465,6 +8459,49 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   /* Oculta el turno del bloque derecho para compactar, pero la fecha junto a la
      marca (izquierda) se conserva: tiene espacio y es el contexto principal. */
   .pos-header-derecha .pos-sesion-turno, .pos-sesion-sep:last-of-type { display: none; }
+}
+
+/* ============================================================
+   SELECTOR DE MODO DE VENTA (Venta / Cotización / Encargo / Reposición)
+   ============================================================ */
+.modo-venta-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 8px;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+.modo-venta-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 38px;
+  padding: 6px 4px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  white-space: nowrap;
+}
+.modo-venta-btn svg { flex-shrink: 0; }
+.modo-venta-btn:hover:not(.activo) { background: var(--bg-card); color: var(--text); }
+.modo-venta-btn.activo {
+  background: var(--orange);
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(249,99,2,0.28);
+}
+/* En pantallas angostas el texto se oculta y quedan solo los iconos. */
+@media (max-width: 1240px) {
+  .modo-venta-btn { font-size: 0; gap: 0; padding: 6px 0; }
+  .modo-venta-btn svg { width: 17px; height: 17px; }
 }
 
 /* ============================================================

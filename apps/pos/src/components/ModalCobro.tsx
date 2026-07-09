@@ -63,11 +63,21 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
   // ── Venta por encargo ─────────────────────────────────────────────────────
-  // Si el carrito tiene líneas por encargo (o está en modo encargo global), la
-  // FICHA se abre al entrar al cobro (define el anticipo). Al confirmarla, el
-  // modal exige cobrar solo parte-con-stock + anticipo, y adjunta la ficha.
-  const modoEncargoGlobal = state.modoEncargo
-  const hayEncargo = modoEncargoGlobal || state.items.some((i) => i.esEncargo)
+  // Dos sub-modos de encargo:
+  //   - REPOSICIÓN: todas las líneas se encargan sin descontar inventario.
+  //   - MIXTO: solo se encarga el faltante (cantidad > existencia) de cada línea;
+  //     lo que hay se vende. Una línea marcada esEncargo (agotado agregado) o que
+  //     excede su stock cuenta como encargo.
+  const modoReposicion = state.modoEncargo && state.encargoReposicion
+  const modoMixto = state.modoEncargo && !state.encargoReposicion
+  // ¿Una línea aporta faltante encargado? (para preview de resta y para la ficha)
+  const esLineaEncargo = (i: (typeof state.items)[number]) =>
+    modoReposicion || i.esEncargo || (modoMixto && i.cantidad > i.existencia)
+  const faltanteLinea = (i: (typeof state.items)[number]) =>
+    modoReposicion ? i.cantidad : Math.max(0, i.cantidad - i.existencia)
+  // Si la FICHA se abre al entrar al cobro (define el anticipo). Hay encargo si el
+  // modo es reposición, o si alguna línea aporta faltante.
+  const hayEncargo = modoReposicion || state.items.some((i) => esLineaEncargo(i) && faltanteLinea(i) > 0)
   // Datos de la ficha ya confirmada (con anticipo). En estado —no ref— para que
   // el total a cobrar se recalcule al definir el anticipo.
   const [datosFicha, setDatosFicha] = useState<DatosFichaEncargo | null>(null)
@@ -120,13 +130,12 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const tieneCredito = (state.clienteActivo?.limite_credito ?? 0) > 0
 
   // ── Total a cobrar HOY ────────────────────────────────────────────────────
-  // En una venta por encargo, el cliente solo paga hoy la parte-con-stock más el
-  // anticipo capturado en la ficha; la resta del encargo queda pendiente. Hasta
-  // que la ficha se confirme (anticipo definido), se muestra el total completo.
-  // En modo encargo global, TODAS las líneas son encargo; si no, solo las marcadas.
-  const totalEncargoCarrito = state.items
-    .filter((i) => modoEncargoGlobal || i.esEncargo)
-    .reduce((s, i) => s + precioUnitEfectivo(i) * i.cantidad, 0)
+  // En una venta por encargo, el cliente paga hoy la parte-con-stock + el anticipo;
+  // la resta del encargo queda pendiente. El valor ENCARGADO es el faltante (lo que
+  // no hay) × precio: en reposición = toda la línea, en mixto = cantidad − stock.
+  const totalEncargoCarrito = Math.round(
+    state.items.reduce((s, i) => s + precioUnitEfectivo(i) * faltanteLinea(i), 0) * 100
+  ) / 100
   const restaEncargo = datosFicha
     ? Math.max(0, Math.round((totalEncargoCarrito - datosFicha.anticipo) * 100) / 100)
     : 0
@@ -404,15 +413,16 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
           // Venta por encargo. Dos sabores:
-          //  - encargo por línea (falta stock): descuenta en negativo.
-          //  - modo encargo global (reposición): no_descontar → NO toca inventario.
-          // Ambos alimentan el pedido del proveedor.
-          ...((modoEncargoGlobal || i.esEncargo)
+          //  - MIXTO (esEncargo o cantidad > stock): el backend vende lo que hay y
+          //    encarga el faltante. Enviamos `existencia` para que parta la línea.
+          //  - REPOSICIÓN (no_descontar): no toca inventario; todo se encarga.
+          ...(esLineaEncargo(i)
             ? {
                 encargo: true,
+                existencia: i.existencia,
                 proveedor_id: i.proveedor_id ?? "",
                 proveedor: i.proveedor ?? "",
-                ...(modoEncargoGlobal ? { no_descontar: true } : {}),
+                ...(modoReposicion ? { no_descontar: true } : {}),
               }
             : {}),
         })),

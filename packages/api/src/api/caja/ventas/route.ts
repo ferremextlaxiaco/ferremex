@@ -26,6 +26,9 @@ interface ItemVenta {
   // Modo encargo GLOBAL (reposición): la línea NO descuenta inventario aunque haya
   // stock. Solo genera el pedido al proveedor. Cuando true, `encargo` también lo es.
   no_descontar?: boolean
+  // Existencia disponible de la línea (la conoce el front). En encargo MIXTO define
+  // cuánto se vende hoy (min(cantidad, existencia)) y cuánto falta (se encarga).
+  existencia?: number
   proveedor_id?: string
   proveedor?: string
 }
@@ -176,19 +179,28 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
   // ── Venta por encargo: pago parcial (anticipo) ────────────────────────────
   // Cuando hay líneas por encargo, el cliente puede dejar solo un ANTICIPO por
-  // esa porción; el resto queda pendiente (ficha/cartera). El pago exigido baja
-  // de `total` a `total_stock + anticipo`: la parte con existencia se paga
-  // completa hoy, la parte por encargo solo su anticipo. Reglas:
-  //   - anticipo obligatorio > 0 (no se levanta un encargo sin comprometerlo).
-  //   - anticipo ≤ total_encargo (no puede exceder lo encargado).
+  // la parte ENCARGADA (el faltante); la parte con stock se paga completa hoy.
+  //   - MIXTO: por línea, se venden min(cantidad, existencia) y se encarga el
+  //     resto → total_encargo = Σ (faltante × precio).
+  //   - REPOSICIÓN (no_descontar): se encarga toda la cantidad → faltante = cantidad.
+  // Reglas: anticipo > 0 y ≤ total_encargo.
   const hayEncargo = items.some((i) => i.encargo)
-  const total_encargo = items.filter((i) => i.encargo).reduce((s, i) => s + i.precio_unitario * i.cantidad, 0)
+  const faltanteDe = (i: ItemVenta): number => {
+    if (!i.encargo) return 0
+    if (i.no_descontar) return i.cantidad // reposición: todo se encarga
+    return Math.max(0, i.cantidad - (Number(i.existencia) || 0)) // mixto: solo el faltante
+  }
+  const total_encargo = Math.round(items.reduce((s, i) => s + i.precio_unitario * faltanteDe(i), 0) * 100) / 100
+  // Todo lo que se cobra hoy = total − lo encargado (que solo lleva anticipo).
   const total_stock = Math.round((total - total_encargo) * 100) / 100
-  // Anticipo solicitado (solo aplica si hay encargo). Sin encargo, el pago exigido
-  // es el total de siempre.
-  const anticipoSolicitado = hayEncargo ? Number(body.encargo_ficha?.anticipo ?? 0) : 0
+  // Hay algo que encargar solo si el faltante total > 0. En mixto, si todas las
+  // líneas de encargo tenían stock suficiente, no hay faltante → se cobra como
+  // venta normal (sin anticipo obligatorio).
+  const hayFaltante = total_encargo > 0.005
+  // Anticipo solicitado (solo aplica si hay faltante que encargar).
+  const anticipoSolicitado = hayFaltante ? Number(body.encargo_ficha?.anticipo ?? 0) : 0
 
-  if (hayEncargo) {
+  if (hayFaltante) {
     if (!(anticipoSolicitado > 0)) {
       res.status(400).json({ error: "Una venta por encargo requiere un anticipo mayor a $0" })
       return
@@ -200,10 +212,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   // Monto que DEBE cubrirse hoy: parte con stock completa + anticipo del encargo.
-  const pago_requerido = hayEncargo ? Math.round((total_stock + anticipoSolicitado) * 100) / 100 : total
+  const pago_requerido = hayFaltante ? Math.round((total_stock + anticipoSolicitado) * 100) / 100 : total
 
   if (total_pagado < pago_requerido - 0.01) {
-    res.status(400).json({ error: hayEncargo ? "El pago no cubre la parte con existencia más el anticipo" : "El pago es menor al total" })
+    res.status(400).json({ error: hayFaltante ? "El pago no cubre la parte con existencia más el anticipo" : "El pago es menor al total" })
     return
   }
 
@@ -215,8 +227,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // La resta del encargo va a cartera si: hay encargo, queda resta > 0, el
   // frontend lo pidió (resta_a_cartera) y hay cliente_id (con crédito). Si no,
   // la resta vive solo en la ficha.
-  const restaEncargo = hayEncargo ? Math.round((total_encargo - anticipoSolicitado) * 100) / 100 : 0
-  const restaACartera = hayEncargo && restaEncargo > 0.01 && !!body.encargo_ficha?.resta_a_cartera && !!body.cliente_id
+  const restaEncargo = hayFaltante ? Math.round((total_encargo - anticipoSolicitado) * 100) / 100 : 0
+  const restaACartera = hayFaltante && restaEncargo > 0.01 && !!body.encargo_ficha?.resta_a_cartera && !!body.cliente_id
 
   const carteraService: FerremexCarteraService | null =
     (pago_credito > 0 || restaACartera) ? req.scope.resolve(FERREMEX_CARTERA) : null
@@ -324,18 +336,37 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
 
       // Descontar inventario acumulando lo aplicado para poder revertir ante error.
+      // `encargadoPorSku` guarda cuántas piezas de cada SKU quedan ENCARGADAS al
+      // proveedor (el faltante), para alimentar el pedido con la cantidad correcta.
       const aplicados: { itemId: string; locationId: string; cantidad: number }[] = []
+      const encargadoPorSku = new Map<string, number>()
       try {
         for (const item of items) {
-          // Modo encargo global (reposición): la línea NO toca inventario. Solo
-          // alimenta el pedido al proveedor. El resto del flujo (folio, cobro,
-          // ficha) es idéntico. Un encargo por FALTA de stock (encargo sin
-          // no_descontar) sí descuenta en negativo.
-          if (item.no_descontar) continue
           const inventoryItemId = itemPorSku.get(item.sku)
-          if (!inventoryItemId) continue
-          const nivel = nivelPorItemId.get(inventoryItemId)
-          if (!nivel) continue
+          const nivel = inventoryItemId ? nivelPorItemId.get(inventoryItemId) : undefined
+          const stockDisp = nivel?.stocked_quantity ?? 0
+
+          // REPOSICIÓN (no_descontar): nada toca inventario; TODO se encarga.
+          if (item.no_descontar) {
+            if (item.encargo) encargadoPorSku.set(item.sku, item.cantidad)
+            continue
+          }
+
+          // ENCARGO MIXTO: descuenta lo que HAY (nunca a negativo) y encarga el
+          // faltante. Vende 2 de 5 pedidas → descuenta 2, encarga 3.
+          if (item.encargo) {
+            const aDescontar = Math.max(0, Math.min(item.cantidad, stockDisp))
+            const aEncargar = item.cantidad - aDescontar
+            if (aEncargar > 0) encargadoPorSku.set(item.sku, aEncargar)
+            if (aDescontar > 0 && inventoryItemId && nivel) {
+              await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -aDescontar)
+              aplicados.push({ itemId: inventoryItemId, locationId: nivel.location_id, cantidad: aDescontar })
+            }
+            continue
+          }
+
+          // VENTA NORMAL: descuenta la cantidad completa (ya validada contra stock).
+          if (!inventoryItemId || !nivel) continue
           await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -item.cantidad)
           aplicados.push({ itemId: inventoryItemId, locationId: nivel.location_id, cantidad: item.cantidad })
         }
@@ -369,8 +400,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           // La resta del encargo NO es parte de esta venta (vive en ficha/cartera).
           total: pago_requerido,
           // Trazabilidad del encargo: total real de lo encargado, anticipo cobrado
-          // hoy y resta pendiente. Solo se persisten cuando hay encargo.
-          ...(hayEncargo ? {
+          // hoy y resta pendiente. Solo se persisten cuando hay faltante encargado.
+          ...(hayFaltante ? {
             encargo_total: Math.round(total_encargo * 100) / 100,
             encargo_anticipo: Math.round(anticipoSolicitado * 100) / 100,
             encargo_resta: Math.round((total_encargo - anticipoSolicitado) * 100) / 100,
@@ -457,7 +488,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         const ventas = cargarVentas()
         ventas.push(registro)
         writeJsonAtomic(VENTAS_FILE, ventas)
-        return { registro } as const
+        // Devolvemos el faltante encargado por SKU para alimentar el pedido al
+        // proveedor con la cantidad correcta (en mixto = lo que no había en stock).
+        return { registro, encargado: Object.fromEntries(encargadoPorSku) } as const
       } catch (err) {
         // Compensación: revertir los decrementos ya aplicados para no dejar el
         // inventario descontado sin venta registrada.
@@ -481,13 +514,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     // propio lock de pedidos → sin deadlock), alimentar el pedido abierto de cada
     // proveedor con las líneas marcadas como encargo. Es best-effort: si falla, la
     // venta YA quedó registrada (el encargo se puede recrear a mano desde Pedidos).
+    // La cantidad encargada = el faltante calculado dentro del lock (mixto:
+    // cantidad − stock; reposición: cantidad completa). Líneas cuyo faltante es 0
+    // (había stock suficiente en mixto) NO generan pedido al proveedor.
+    const encargado = resultado.encargado ?? {}
     const encargos: EncargoLinea[] = items
-      .filter((i) => i.encargo)
+      .filter((i) => i.encargo && (encargado[i.sku] ?? 0) > 0)
       .map((i) => ({
         sku: i.sku,
         clave: i.sku,
         descripcion: i.descripcion,
-        cantidad: i.cantidad,
+        cantidad: encargado[i.sku],
         proveedor_id: i.proveedor_id ?? null,
         proveedor: i.proveedor ?? null,
         origen_venta: resultado.registro.folio,
@@ -507,15 +544,18 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     // ficha, salvo que se haya cargado a cartera (restaACartera → resta_en_cartera).
     if (encargos.length > 0 && body.encargo_ficha?.cliente_nombre && body.encargo_ficha?.telefono) {
       try {
-        const encargoItems = items.filter((i) => i.encargo)
-        const articulos: EncargoArticulo[] = encargoItems.map((i) => ({
-          sku: i.sku,
-          descripcion: i.descripcion,
-          cantidad: i.cantidad,
-          precio_unitario: i.precio_unitario,
-          proveedor: i.proveedor ?? null,
-          proveedor_id: i.proveedor_id ?? null,
-        }))
+        // Los artículos de la ficha reflejan lo realmente ENCARGADO (el faltante),
+        // no la cantidad total pedida (parte de la cual pudo venderse hoy).
+        const articulos: EncargoArticulo[] = items
+          .filter((i) => i.encargo && (encargado[i.sku] ?? 0) > 0)
+          .map((i) => ({
+            sku: i.sku,
+            descripcion: i.descripcion,
+            cantidad: encargado[i.sku],
+            precio_unitario: i.precio_unitario,
+            proveedor: i.proveedor ?? null,
+            proveedor_id: i.proveedor_id ?? null,
+          }))
         await crearEncargoFicha({
           folio: resultado.registro.folio,
           cliente_nombre: body.encargo_ficha.cliente_nombre,

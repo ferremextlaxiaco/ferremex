@@ -23,6 +23,9 @@ function stockLabel(existencia: number) {
 export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete }: GridProductosProps) {
   const { state } = usePOS()
   const cotizando = state.modoCotizacion
+  const enEncargo = state.modoEncargo
+  // En cotización o encargo se puede seleccionar/agregar aunque no haya stock.
+  const sinTopeStock = cotizando || enEncargo
   if (productos.length === 0) return null
 
   return (
@@ -30,23 +33,24 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
       {productos.map((p) => {
         const stock = stockLabel(p.existencia)
         const qty = cartMap?.get(p.sku) ?? 0
-        // En cotización se permite seleccionar/agregar aunque no haya existencia.
-        const showControls = onAgregar && (cotizando || p.existencia > 0)
-        // Sin stock (fuera de cotización): en vez de bloquear, se puede agregar
-        // por ENCARGO (venta sobre pedido). La tarjeta queda clickeable para ver
-        // el detalle, y el control "+" se reemplaza por "📦 Encargar".
+        // En cotización o encargo se permite agregar aunque no haya existencia.
+        const showControls = onAgregar && (sinTopeStock || p.existencia > 0)
+        // Producto agotado. En VENTA NORMAL se bloquea (como antes). En modo
+        // ENCARGO se ofrece el botón "Encargar" (venta sobre pedido). En cotización
+        // se agrega normal (presupuesto), sin botón de encargo.
         const agotado = p.existencia <= 0 && !cotizando
-        const puedeEncargar = agotado && !!onEncargar
+        // El botón de encargo SOLO aparece en modo encargo (no en venta normal).
+        const puedeEncargar = agotado && enEncargo && !!onEncargar
 
         return (
           <button
             key={p.sku}
             className={`tarjeta-producto${agotado ? " tarjeta-agotada" : ""}`}
             onClick={() => onSeleccionar(p)}
-            disabled={agotado && !onEncargar}
+            // Agotado en VENTA NORMAL → bloqueado (como antes). En cotización o
+            // encargo la tarjeta queda clickeable (se agrega/encarga).
+            disabled={agotado && !sinTopeStock}
           >
-            {/* La imagen se atenúa (blur) en productos sin stock; el resto de la
-                tarjeta queda legible y clickeable (se puede encargar). */}
             <div className="tarjeta-imagen">
               {p.thumbnail ? (
                 <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />

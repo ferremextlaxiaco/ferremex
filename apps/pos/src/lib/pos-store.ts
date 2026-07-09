@@ -68,6 +68,16 @@ export interface CartItem {
   paqueteCantidad?: number
 }
 
+/** Los 4 modos de la pantalla de venta (derivados de los flags del estado). */
+export type ModoVenta = "venta" | "cotizacion" | "encargo" | "reposicion"
+
+/** Modo de venta actual derivado de los flags. Fuente única para el selector. */
+export function modoVentaActual(s: { modoCotizacion: boolean; modoEncargo: boolean; encargoReposicion: boolean }): ModoVenta {
+  if (s.modoCotizacion) return "cotizacion"
+  if (s.modoEncargo) return s.encargoReposicion ? "reposicion" : "encargo"
+  return "venta"
+}
+
 export function efectivoPrecio(item: CartItem): number {
   // Items de paquete usan su precio prorrateado tal cual (sin mayoreo).
   if (item.paquete_id) return item.precio
@@ -109,11 +119,17 @@ interface PosState {
   // marcarla "convertida" al venderse.
   modoCotizacion: boolean
   cotizacionCargadaFolio: string | null
-  // Modo encargo GLOBAL: todo el carrito se cobra como venta sobre pedido y NO
-  // descuenta inventario (pedido de reposición al proveedor, aunque haya stock).
-  // Excluyente con modoCotizacion. Al cobrar, marca cada línea como encargo con
-  // no_descontar=true. Se resetea al terminar la venta (CLEAR).
+  // Modo encargo: el carrito se cobra como venta sobre pedido (ficha + anticipo +
+  // pedido al proveedor). Excluyente con modoCotizacion. Tiene DOS sub-modos según
+  // `encargoReposicion`:
+  //   - MIXTO (encargoReposicion=false): se puede mezclar stock y faltantes; las
+  //     líneas con stock SÍ descuentan inventario, los faltantes/excedentes se
+  //     encargan (inventario en negativo). Resolución automática por existencia.
+  //   - REPOSICIÓN (encargoReposicion=true): NADA descuenta inventario aunque haya
+  //     stock; todo se pide al proveedor (no_descontar en todas las líneas).
+  // Se resetean al terminar la venta (CLEAR).
   modoEncargo: boolean
+  encargoReposicion: boolean
   // Vendedor de la venta actual (quién la hace). `null` = el cajero logueado.
   // Se cambia en el panel de venta cuando otra persona atiende en esta caja; es
   // solo atribución (reportes/comisiones), NO afecta el corte (que agrupa por
@@ -166,9 +182,10 @@ type PosAction =
   // Alterna el modo cotización (toggle "Convertir a cotización" ↔ "Convertir a
   // venta"). Al desactivarlo se olvida la cotización cargada (vuelve a venta limpia).
   | { type: "SET_MODO_COTIZACION"; activo: boolean }
-  // Alterna el modo encargo GLOBAL: todo el carrito se vende sobre pedido sin
-  // descontar inventario. Excluyente con cotización.
-  | { type: "SET_MODO_ENCARGO"; activo: boolean }
+  // Activa/desactiva el modo encargo. `reposicion` elige el sub-modo: false =
+  // mixto (descuenta lo que hay, encarga faltantes), true = reposición (no
+  // descuenta nada). Excluyente con cotización.
+  | { type: "SET_MODO_ENCARGO"; activo: boolean; reposicion?: boolean }
   // Carga una cotización guardada al carrito: restaura items + cliente, entra en
   // modo cotización y recuerda su folio para enlazarla si se convierte en venta.
   | { type: "CARGAR_COTIZACION"; items: CartItem[]; cliente: Cliente | null; folio: string }
@@ -315,7 +332,7 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // Reset TOTAL: al completar una venta o poner el carrito en espera se
       // reinicia el cliente activo, el vendedor manual y se sale del modo
       // cotización (la transacción terminó / se guardó aparte).
-      return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, modoEncargo: false, cotizacionCargadaFolio: null }
+      return { ...state, items: [], clienteActivo: null, vendedorVenta: null, modoCotizacion: false, modoEncargo: false, encargoReposicion: false, cotizacionCargadaFolio: null }
 
     case "RESTORE_CART":
       // Reemplaza el carrito y el cliente con un pedido en espera retomado.
@@ -328,15 +345,17 @@ function posReducer(state: PosState, action: PosAction): PosState {
         ...state,
         modoCotizacion: action.activo,
         modoEncargo: action.activo ? false : state.modoEncargo,
+        encargoReposicion: action.activo ? false : state.encargoReposicion,
         cotizacionCargadaFolio: action.activo ? state.cotizacionCargadaFolio : null,
       }
 
     case "SET_MODO_ENCARGO":
-      // Modo encargo global (todo sobre pedido, sin descontar inventario).
-      // Excluyente con cotización: activarlo apaga el modo cotización.
+      // Modo encargo (mixto o reposición según `reposicion`). Excluyente con
+      // cotización: activarlo apaga el modo cotización.
       return {
         ...state,
         modoEncargo: action.activo,
+        encargoReposicion: action.activo ? !!action.reposicion : false,
         modoCotizacion: action.activo ? false : state.modoCotizacion,
         cotizacionCargadaFolio: action.activo ? null : state.cotizacionCargadaFolio,
       }
@@ -348,6 +367,7 @@ function posReducer(state: PosState, action: PosAction): PosState {
         clienteActivo: action.cliente,
         modoCotizacion: true,
         modoEncargo: false,
+        encargoReposicion: false,
         cotizacionCargadaFolio: action.folio,
       }
 
@@ -414,6 +434,7 @@ export function PosProvider({ children }: { children: ReactNode }) {
     modoCotizacion: false,
     cotizacionCargadaFolio: null,
     modoEncargo: false,
+    encargoReposicion: false,
     vendedorVenta: null,
   })
 

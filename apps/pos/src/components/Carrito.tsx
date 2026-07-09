@@ -1,6 +1,6 @@
 import { useRef, useState } from "react"
-import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, X, AlertTriangle, Trash2 } from "lucide-react"
-import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, X, AlertTriangle, Trash2, Boxes } from "lucide-react"
+import { usePOS, efectivoPrecio, modoVentaActual } from "../lib/pos-store"
 import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
@@ -19,6 +19,8 @@ interface CarritoProps {
 export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: CarritoProps) {
   const { state, dispatch, total, promosCarrito, ahorroPromos, promos } = usePOS()
   const { items, modoCotizacion, modoEncargo } = state
+  // Modo actual (venta | cotizacion | encargo | reposicion) para el selector.
+  const modo = modoVentaActual(state)
   const ctxPromo = contextoDeCliente(state.clienteActivo)
 
   // Líneas cuya cantidad supera la existencia (típico al convertir una cotización
@@ -95,10 +97,15 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
     }
   }
 
+  const tituloCarrito = modo === "cotizacion" ? "Cotización"
+    : modo === "encargo" ? "Encargo"
+    : modo === "reposicion" ? "Reposición"
+    : "Carrito"
+
   return (
     <div className={`carrito${modoCotizacion ? " carrito--cotizacion" : ""}${modoEncargo ? " carrito--encargo-global" : ""}`}>
       <div className="carrito-header">
-        <span>{modoCotizacion ? "Cotización" : modoEncargo ? "Encargo" : "Carrito"} ({items.length} productos)</span>
+        <span>{tituloCarrito} ({items.length} productos)</span>
         {/* Poner en espera: junto al resumen. Solo en modo venta con items. */}
         {onPonerEnEspera && !modoCotizacion && (
           <button
@@ -119,10 +126,17 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
         </div>
       )}
 
-      {/* Banner de modo encargo global: todo se pide al proveedor, sin tocar stock. */}
-      {modoEncargo && (
+      {/* Banner de modo encargo MIXTO: vende lo que hay y encarga el faltante. */}
+      {modo === "encargo" && (
         <div className="carrito-banner-encargo">
-          <PackageCheck size={14} /> Modo encargo — todo sobre pedido, no descuenta inventario
+          <PackageCheck size={14} /> Modo encargo — vende lo disponible y encarga el faltante al proveedor
+        </div>
+      )}
+
+      {/* Banner de modo REPOSICIÓN: nada descuenta inventario. */}
+      {modo === "reposicion" && (
+        <div className="carrito-banner-encargo">
+          <Boxes size={14} /> Modo reposición — todo se pide al proveedor, no descuenta inventario
         </div>
       )}
 
@@ -414,31 +428,39 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
           <span className="carrito-total-label">Total</span>
           <span className="carrito-total-valor">${total.toFixed(2)}</span>
         </div>
-        {/* Toggle venta ↔ cotización (solo si el contenedor cableó la impresión) */}
+        {/* Selector de modo: Venta · Cotización · Encargo · Reposición.
+            Un solo control; cada modo tiene reglas propias de stock/inventario. */}
         {onImprimirCotizacion && (
-          <button
-            className={`btn-toggle-cotizacion${modoCotizacion ? " activo" : ""}`}
-            onClick={() => dispatch({ type: "SET_MODO_COTIZACION", activo: !modoCotizacion })}
-            disabled={items.length === 0}
-          >
-            {modoCotizacion
-              ? <><ShoppingCart size={15} /> Convertir a venta</>
-              : <><FileText size={15} /> Convertir a cotización</>}
-          </button>
-        )}
-        {/* Toggle modo encargo global: todo sobre pedido, sin descontar inventario.
-            Oculto en cotización (son excluyentes). */}
-        {!modoCotizacion && (
-          <button
-            className={`btn-toggle-encargo${modoEncargo ? " activo" : ""}`}
-            onClick={() => dispatch({ type: "SET_MODO_ENCARGO", activo: !modoEncargo })}
-            disabled={items.length === 0}
-            title="Todo el carrito se pide al proveedor; no descuenta inventario aunque haya stock"
-          >
-            {modoEncargo
-              ? <><ShoppingCart size={15} /> Volver a venta normal</>
-              : <><PackageCheck size={15} /> Convertir a encargo</>}
-          </button>
+          <div className="modo-venta-selector" role="group" aria-label="Modo de venta">
+            <button
+              className={`modo-venta-btn${modo === "venta" ? " activo" : ""}`}
+              onClick={() => { dispatch({ type: "SET_MODO_COTIZACION", activo: false }); dispatch({ type: "SET_MODO_ENCARGO", activo: false }) }}
+              title="Venta normal (descuenta inventario)"
+            >
+              <ShoppingCart size={14} /> Venta
+            </button>
+            <button
+              className={`modo-venta-btn${modo === "cotizacion" ? " activo" : ""}`}
+              onClick={() => dispatch({ type: "SET_MODO_COTIZACION", activo: true })}
+              title="Cotización (presupuesto, no descuenta ni cobra)"
+            >
+              <FileText size={14} /> Cotización
+            </button>
+            <button
+              className={`modo-venta-btn${modo === "encargo" ? " activo" : ""}`}
+              onClick={() => dispatch({ type: "SET_MODO_ENCARGO", activo: true, reposicion: false })}
+              title="Encargo: vende lo que hay y encarga el faltante al proveedor"
+            >
+              <PackageCheck size={14} /> Encargo
+            </button>
+            <button
+              className={`modo-venta-btn${modo === "reposicion" ? " activo" : ""}`}
+              onClick={() => dispatch({ type: "SET_MODO_ENCARGO", activo: true, reposicion: true })}
+              title="Reposición: todo se pide al proveedor sin descontar inventario"
+            >
+              <Boxes size={14} /> Reposición
+            </button>
+          </div>
         )}
         <div className="carrito-acciones">
           <button
