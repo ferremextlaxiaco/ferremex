@@ -71,8 +71,10 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
               <p className="tarjeta-sku">{p.sku}</p>
               <div className="tarjeta-footer">
                 <p className="tarjeta-precio">${p.precio.toFixed(2)}</p>
-                {/* Sin stock → botón de encargo (venta sobre pedido). */}
-                {puedeEncargar && qty === 0 && (
+                {/* Agotado (modo encargo) sin unidades aún → SOLO botón "Encargar"
+                    (reemplaza al "+", no se muestran ambos). Con unidades ya en el
+                    carrito, cae al qty-control de abajo para subir/bajar. */}
+                {puedeEncargar && qty === 0 ? (
                   <button
                     className="btn-encargar-rapido"
                     onClick={(e) => { e.stopPropagation(); onEncargar!(p) }}
@@ -80,8 +82,7 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                   >
                     <PackageCheck size={14} /> Encargar
                   </button>
-                )}
-                {showControls && (
+                ) : showControls && (
                   qty === 0 ? (
                     <button
                       className="btn-agregar-rapido"

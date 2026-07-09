@@ -712,6 +712,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   justify-content: space-between;
   margin-top: 4px;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .tarjeta-precio {
@@ -748,11 +749,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   transform: scale(0.95);
 }
 
-/* Botón "Encargar" en la tarjeta de un producto agotado (venta sobre pedido). */
+/* Botón "Encargar" en la tarjeta de un producto agotado (venta sobre pedido).
+   Es el ÚNICO control en tarjetas agotadas (reemplaza al "+"), así que puede
+   crecer para ocupar el ancho disponible junto al precio sin desbordar. */
 .btn-encargar-rapido {
-  flex-shrink: 0;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 28px;
-  padding: 0 10px;
+  padding: 0 8px;
   border-radius: 14px;
   border: 1.5px solid var(--orange);
   background: #fff7f0;
@@ -763,6 +767,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
   white-space: nowrap;
   transition: background 0.15s, transform 0.1s;
