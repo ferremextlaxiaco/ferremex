@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from "react"
-import { Plus, ArrowLeftRight, Factory } from "lucide-react"
+import { Plus, ArrowLeftRight } from "lucide-react"
 import CatalogosColumnas from "./CatalogosColumnas"
 import CatalogosReasignacion from "./CatalogosReasignacion"
-import CatalogosAsignarProveedor from "./CatalogosAsignarProveedor"
 import { listarCatalogos, actualizarCatalogo } from "../lib/client"
 import { loadProveedores } from "../lib/proveedores"
 import { COLORES_ACENTO } from "../lib/catalogos-colores"
@@ -106,7 +105,7 @@ export default function CatalogosModule() {
   const [selCat, setSelCat] = useState(null)
   const [selMar, setSelMar] = useState(null)
 
-  const [viewMode,     setViewMode]     = useState("columns") // "columns" | "reasignacion" | "proveedor"
+  const [viewMode,     setViewMode]     = useState("columns") // "columns" | "reasignacion"
   const [globalSearch, setGlobalSearch] = useState("")
   const [inlineAdd,    setInlineAdd]    = useState(null)      // null | "dep" | "cat" | "mar"
   // Catálogo de proveedores (para la asignación masiva de proveedor).
@@ -424,39 +423,26 @@ export default function CatalogosModule() {
 
   // ── Reasignación (persiste en BD) ────────────────────────────────────────────
 
-  function handleReasign({ productIds, destDeptNombre, destMarcaNombre }) {
+  // Reasignación masiva unificada: aplica los campos que vengan (depto/categoría/
+  // marca/proveedor) a los productos seleccionados.
+  function handleReasign({ productIds, departamento, categoria, marca, proveedorId, proveedorNombre }) {
     showToast(`Guardando reasignación de ${productIds.length} artículo${productIds.length !== 1 ? "s" : ""}…`)
     actualizarCatalogo({
       op: "reasignar",
       product_ids: productIds,
-      ...(destDeptNombre  ? { departamento: destDeptNombre }  : {}),
-      ...(destMarcaNombre ? { marca:        destMarcaNombre } : {}),
+      ...(departamento ? { departamento } : {}),
+      ...(categoria ? { categoria } : {}),
+      ...(marca ? { marca } : {}),
+      ...(proveedorId ? { proveedor_id: proveedorId, proveedor: proveedorNombre ?? "" } : {}),
     })
       .then(r => {
         showToast(`${r.actualizados} artículo${r.actualizados !== 1 ? "s" : ""} reasignados correctamente`)
         // Refresca el catálogo para reflejar los nuevos conteos
-        listarCatalogos()
+        listarCatalogos(true)
           .then(data => { setDepts(asignarColores(data.depts)); setCats(data.cats); setMarcas(data.marcas) })
           .catch(() => {})
       })
       .catch(e => showToast(e.message ?? "Error en reasignación", "error"))
-    setViewMode("columns")
-  }
-
-  // ── Asignación masiva de proveedor (persiste en BD) ──────────────────────────
-
-  function handleAsignarProveedor({ productIds, proveedorId, proveedorNombre }) {
-    showToast(`Asignando proveedor a ${productIds.length} artículo${productIds.length !== 1 ? "s" : ""}…`)
-    actualizarCatalogo({
-      op: "assign_proveedor",
-      product_ids: productIds,
-      proveedor_id: proveedorId,
-      proveedor: proveedorNombre,
-    })
-      .then(r => {
-        showToast(`Proveedor "${proveedorNombre}" asignado a ${r.actualizados} artículo${r.actualizados !== 1 ? "s" : ""}`)
-      })
-      .catch(e => showToast(e.message ?? "Error al asignar proveedor", "error"))
     setViewMode("columns")
   }
 
@@ -495,14 +481,15 @@ export default function CatalogosModule() {
   return (
     <div className="ctg-root">
 
-      {/* Toolbar */}
-      <div className="ctg-toolbar">
-        <div className="ctg-toolbar-left">
-          <p className="admin-seccion-titulo" style={{ marginBottom: 0 }}>Catálogos</p>
-          <span className="ctg-toolbar-sub">Departamentos, Categorías y Marcas</span>
-        </div>
+      {/* Toolbar — solo en modo columnas. En reasignación, el asistente trae su
+          propia barra superior (con "Volver") y sube pegado al header global. */}
+      {viewMode === "columns" && (
+        <div className="ctg-toolbar">
+          <div className="ctg-toolbar-left">
+            <p className="admin-seccion-titulo" style={{ marginBottom: 0 }}>Catálogos</p>
+            <span className="ctg-toolbar-sub">Departamentos, Categorías y Marcas</span>
+          </div>
 
-        {viewMode === "columns" && (
           <div className="ctg-global-search-wrap">
             <svg className="ctg-search-icon" viewBox="0 0 24 24" fill="none"
               stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -518,28 +505,17 @@ export default function CatalogosModule() {
               <button className="ctg-search-clear" onClick={() => setGlobalSearch("")}>✕</button>
             )}
           </div>
-        )}
 
-        <div className="ctg-toolbar-right">
-          {viewMode === "columns" ? (
-            <>
-              <button className="ar-btn-add" onClick={() => setInlineAdd("dep")}>
-                <Plus size={14} /> Nuevo departamento
-              </button>
-              <button className="ar-btn-action" onClick={() => setViewMode("reasignacion")}>
-                <ArrowLeftRight size={14} /> Reasignación masiva
-              </button>
-              <button className="ar-btn-action" onClick={() => setViewMode("proveedor")}>
-                <Factory size={14} /> Asignar proveedor
-              </button>
-            </>
-          ) : (
-            <button className="ar-btn-action" onClick={() => setViewMode("columns")}>
-              ← Volver a catálogos
+          <div className="ctg-toolbar-right">
+            <button className="ar-btn-add" onClick={() => setInlineAdd("dep")}>
+              <Plus size={14} /> Nuevo departamento
             </button>
-          )}
+            <button className="ar-btn-action" onClick={() => setViewMode("reasignacion")}>
+              <ArrowLeftRight size={14} /> Reasignación masiva
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Área principal */}
       <div className="ctg-main">
@@ -568,21 +544,13 @@ export default function CatalogosModule() {
             onDeleteMar={handleDeleteMar}
             onOpenReasign={() => setViewMode("reasignacion")}
           />
-        ) : viewMode === "reasignacion" ? (
+        ) : (
           <CatalogosReasignacion
             depts={depts}
             cats={cats}
             marcas={marcas}
-            onComplete={handleReasign}
-            onCancel={() => setViewMode("columns")}
-          />
-        ) : (
-          <CatalogosAsignarProveedor
-            depts={depts}
-            cats={cats}
-            marcas={marcas}
             proveedores={proveedores}
-            onComplete={handleAsignarProveedor}
+            onComplete={handleReasign}
             onCancel={() => setViewMode("columns")}
           />
         )}

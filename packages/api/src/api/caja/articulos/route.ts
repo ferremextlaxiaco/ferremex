@@ -246,19 +246,22 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   // poder alcanzarlos y clasificarlos. Sin esto, un producto sin depto/proveedor
   // sería invisible en los asistentes que filtran por taxonomía. Limitado a
   // MAX_SIN para no traer decenas de miles de golpe (avisa si se recortó).
-  const sinCampo = String(req.query["sin"] ?? "").trim() // "departamento" | "proveedor"
+  const sinCampo = String(req.query["sin"] ?? "").trim() // departamento|categoria|marca|proveedor
   if (!q && !faltantes && sinCampo) {
     const MAX_SIN = 500
     const todos = await productModule.listProducts(
       { status: ProductStatus.PUBLISHED },
-      { select: ["id", "title", "metadata"], take: 99999 }
+      { select: ["id", "title", "metadata"], relations: ["categories"], take: 99999 }
     ) as any[]
 
     const vacio = (v: unknown) => !(typeof v === "string" && v.trim())
     const faltan = todos.filter((p) => {
       const meta = (p.metadata ?? {}) as Record<string, unknown>
       if (sinCampo === "departamento") return vacio(meta.departamento)
+      if (sinCampo === "marca")        return vacio(meta.marca)
       if (sinCampo === "proveedor")    return vacio(meta.proveedor_id) && vacio(meta.proveedor)
+      // Categoría: nativa de Medusa. Sin categoría = sin relación de categorías.
+      if (sinCampo === "categoria")    return !((p.categories ?? []) as any[]).length && vacio(meta.categoria)
       return false
     })
 

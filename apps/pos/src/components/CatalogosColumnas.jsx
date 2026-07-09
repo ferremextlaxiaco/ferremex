@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react"
-import { ChevronRight, Check, X } from "lucide-react"
+import { ChevronRight, Check, X, Factory } from "lucide-react"
 import { COLORES_ACENTO } from "../lib/catalogos-colores"
+import { listarArticulosDeCatalogo } from "../lib/client"
 
 // ── Color picker ──────────────────────────────────────────────────────────────
 
@@ -90,6 +91,8 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
   const [dirty, setDirty] = useState(false)
   // Para cascada dept→cat en formulario de Marca
   const [catDepFilter, setCatDepFilter] = useState(null)
+  // Proveedores presentes en los productos de este nivel (informativo, solo lectura).
+  const [provs, setProvs] = useState({ cargando: false, lista: [], sinAsignar: 0 })
 
   // Reiniciar form al cambiar nodo seleccionado
   useEffect(() => {
@@ -105,6 +108,46 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
       const cat = cats.find(c => c.id === node.catId)
       setCatDepFilter(cat?.depId ?? depts[0]?.id ?? null)
     }
+  }, [node?.id, type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Carga los proveedores presentes en los productos de este nivel (informativo).
+  // Resuelve depto/categoría según el tipo de nodo y agrupa por proveedor.
+  useEffect(() => {
+    if (!node) { setProvs({ cargando: false, lista: [], sinAsignar: 0 }); return }
+    let on = true
+    let depNombre = "", catNombre = ""
+    if (type === "dep") {
+      depNombre = node.nombre
+    } else if (type === "cat") {
+      depNombre = depts.find(d => d.id === node.depId)?.nombre ?? ""
+      catNombre = node.nombre
+    } else if (type === "mar") {
+      const cat = cats.find(c => c.id === node.catId)
+      depNombre = depts.find(d => d.id === cat?.depId)?.nombre ?? ""
+      catNombre = cat?.nombre ?? ""
+    }
+    if (!depNombre && !catNombre) { setProvs({ cargando: false, lista: [], sinAsignar: 0 }); return }
+
+    setProvs({ cargando: true, lista: [], sinAsignar: 0 })
+    listarArticulosDeCatalogo(depNombre, catNombre)
+      .then(arts => {
+        if (!on) return
+        // Para una marca, filtrar solo sus artículos (la ruta no filtra por marca).
+        const propios = type === "mar" ? arts.filter(a => (a.marca ?? "") === node.nombre) : arts
+        const conteo = new Map()
+        let sinAsignar = 0
+        for (const a of propios) {
+          const p = (a.proveedor ?? "").trim()
+          if (!p) { sinAsignar++; continue }
+          conteo.set(p, (conteo.get(p) ?? 0) + 1)
+        }
+        const lista = [...conteo.entries()]
+          .map(([nombre, n]) => ({ nombre, n }))
+          .sort((a, b) => b.n - a.n)
+        setProvs({ cargando: false, lista, sinAsignar })
+      })
+      .catch(() => { if (on) setProvs({ cargando: false, lista: [], sinAsignar: 0 }) })
+    return () => { on = false }
   }, [node?.id, type]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!node) {
@@ -187,6 +230,31 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
           <div className="ctg-stat">
             <span className="ctg-stat-value">{marCount}</span>
             <span className="ctg-stat-label">Marcas</span>
+          </div>
+        )}
+      </div>
+
+      {/* Proveedores de los productos de este nivel (informativo, solo lectura). */}
+      <div className="ctg-provs">
+        <div className="ctg-provs-title">
+          <Factory size={13} /> Proveedores
+        </div>
+        {provs.cargando ? (
+          <p className="ctg-provs-empty">Cargando…</p>
+        ) : provs.lista.length === 0 && provs.sinAsignar === 0 ? (
+          <p className="ctg-provs-empty">Sin artículos que mostrar.</p>
+        ) : (
+          <div className="ctg-provs-chips">
+            {provs.lista.map(p => (
+              <span key={p.nombre} className="ctg-prov-chip" title={`${p.n} artículo${p.n !== 1 ? "s" : ""}`}>
+                {p.nombre} <span className="ctg-prov-chip-n">{p.n}</span>
+              </span>
+            ))}
+            {provs.sinAsignar > 0 && (
+              <span className="ctg-prov-chip ctg-prov-chip--sin" title={`${provs.sinAsignar} sin proveedor`}>
+                Sin proveedor <span className="ctg-prov-chip-n">{provs.sinAsignar}</span>
+              </span>
+            )}
           </div>
         )}
       </div>

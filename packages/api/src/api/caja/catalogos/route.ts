@@ -257,18 +257,39 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
   }
 
   // ── reasignar ───────────────────────────────────────────────────────────────
-  // Bulk-update dept and/or marca on a list of products.
+  // Bulk-assign de hasta 4 campos a una lista de productos: departamento, marca y
+  // proveedor (metadata) + categoría (entidad nativa Medusa → category_ids).
+  // Cada campo es OPCIONAL: solo se toca lo que venga en el body.
   if (op === "reasignar") {
-    const { product_ids, departamento, marca } = body
+    const { product_ids, departamento, categoria, marca, proveedor, proveedor_id } = body
     if (!Array.isArray(product_ids) || !product_ids.length) {
       res.status(400).json({ error: "product_ids requeridos" }); return
     }
+
+    // Categoría: resolver (o crear) la categoría nativa por nombre → category_id.
+    let categoryId: string | null = null
+    if (categoria !== undefined && String(categoria).trim() !== "") {
+      const nombreCat = String(categoria).trim()
+      const found = await productModule.listProductCategories(
+        { name: nombreCat }, { select: ["id", "name"], take: 1 }
+      )
+      categoryId = (found as any[])[0]?.id
+        ?? (await productModule.createProductCategories([{ name: nombreCat, is_active: true }]))[0].id
+    }
+
     const products = await productModule.listProducts({ id: product_ids }, { select: ["id", "metadata"], take: product_ids.length + 10 })
     const actualizados = await batchUpdateProducts(productModule, products as any[], (p) => {
       const meta = { ...(p.metadata ?? {}) } as Record<string, unknown>
       if (departamento) meta.departamento = departamento
       if (marca !== undefined && marca !== "") meta.marca = marca
-      return { metadata: meta }
+      // Proveedor: dual-write id + nombre (igual que assign_proveedor / drawer).
+      if (proveedor_id !== undefined && proveedor_id !== "") {
+        meta.proveedor_id = proveedor_id
+        meta.proveedor = proveedor ?? ""
+      }
+      const update: Record<string, unknown> = { metadata: meta }
+      if (categoryId) update.category_ids = [categoryId]
+      return update
     })
     // Remove from extras if the brand now has real products
     if (marca) {

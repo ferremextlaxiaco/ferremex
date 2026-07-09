@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { Type, FolderTree, Package, X, Check, ArrowLeft } from "lucide-react"
 import {
   listarCatalogos,
   type CatalogosData,
@@ -109,26 +110,26 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
           className={`filtro-tab ${modo === "nombre" ? "filtro-tab-activo" : ""}`}
           onClick={handleNombreClick}
         >
-          🔤 Nombre
+          <Type size={16} /> Nombre
         </button>
         <button
           className={`filtro-tab ${modo === "explorar" ? "filtro-tab-activo" : ""}`}
           onClick={() => setModo("explorar")}
         >
-          🗂️ Explorar{explorarActivo ? " ●" : ""}
+          <FolderTree size={16} /> Explorar{explorarActivo && <span className="filtro-tab-dot" />}
         </button>
         <button
           className={`filtro-tab ${modo === "existencia" ? "filtro-tab-activo" : ""} ${filtroStock !== "todos" ? "filtro-tab-con-dato" : ""}`}
           onClick={() => setModo("existencia")}
         >
-          📦 Existencia{filtroStock !== "todos" ? " ●" : ""}
+          <Package size={16} /> Existencia{filtroStock !== "todos" && <span className="filtro-tab-dot" />}
         </button>
         {hayFiltroActivo && (
           <button
             className="filtro-limpiar"
             onClick={() => { resetCascada(); setModo("nombre"); onChange({}); onFiltroStockChange("todos") }}
           >
-            ✕ Limpiar
+            <X size={14} /> Limpiar
           </button>
         )}
       </div>
@@ -140,7 +141,7 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
 
           {datos && deptActivo && (
             <div className="filtro-breadcrumb">
-              <button className="filtro-bc-back" onClick={irAtras}>←</button>
+              <button className="filtro-bc-back" onClick={irAtras}><ArrowLeft size={15} /></button>
               <button
                 className={`filtro-bc-item ${!catActiva ? "filtro-bc-activo" : ""}`}
                 onClick={irADept}
@@ -223,17 +224,17 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
         <div className="filtro-chips">
           {(
             [
-              ["todos", "Todos los productos"],
-              ["con-stock", "✓ Con existencia"],
-              ["sin-stock", "✗ Sin existencia"],
-            ] as [FiltroStock, string][]
-          ).map(([val, label]) => (
+              ["todos", "Todos los productos", null],
+              ["con-stock", "Con existencia", <Check key="c" size={14} />],
+              ["sin-stock", "Sin existencia", <X key="x" size={14} />],
+            ] as [FiltroStock, string, React.ReactNode][]
+          ).map(([val, label, icon]) => (
             <button
               key={val}
               className={`filtro-chip ${filtroStock === val ? "filtro-chip-activo" : ""}`}
               onClick={() => onFiltroStockChange(val)}
             >
-              {label}
+              {icon}{label}
             </button>
           ))}
         </div>

@@ -2006,6 +2006,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .filtro-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 6px 14px;
   border-radius: 20px;
   font-size: 13px;
@@ -2014,6 +2017,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--text-soft);
   border: 1px solid var(--border);
   transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+/* Punto indicador de "filtro activo" (reemplaza el ● emoji). */
+.filtro-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--orange);
+  flex-shrink: 0;
 }
 
 .filtro-tab:hover {
@@ -2028,6 +2040,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .filtro-limpiar {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin-left: auto;
   padding: 6px 12px;
   border-radius: 20px;
@@ -2054,6 +2069,9 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .filtro-chips::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
 .filtro-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 5px 12px;
   border-radius: 4px;
   font-size: 12px;
@@ -2090,6 +2108,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 .filtro-bc-back {
+  display: inline-flex;
+  align-items: center;
   padding: 4px 10px;
   border-radius: 4px;
   font-size: 13px;
@@ -6783,6 +6803,28 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .ctg-stat { display: flex; flex-direction: column; }
 .ctg-stat-value { font-size: 20px; font-weight: 800; color: var(--at-text); line-height: 1; }
 .ctg-stat-label { font-size: 11px; color: var(--at-text-muted); margin-top: 2px; }
+/* ── Proveedores del nivel (informativo, panel de edición) ── */
+.ctg-provs { margin-bottom: 14px; }
+.ctg-provs-title {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 12px; font-weight: 600; color: var(--at-text-soft);
+  letter-spacing: 0.02em; margin-bottom: 8px;
+}
+.ctg-provs-empty { font-size: 12px; color: var(--at-text-muted); margin: 0; }
+.ctg-provs-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.ctg-prov-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 500;
+  background: var(--at-bg-hover, #f4f4f5); color: var(--at-text);
+  border: 1px solid var(--at-border); border-radius: 6px;
+  padding: 3px 8px;
+}
+.ctg-prov-chip-n {
+  font-size: 11px; font-weight: 700; color: var(--at-text-muted);
+  background: var(--at-card, #fff); border-radius: 4px; padding: 0 5px;
+}
+.ctg-prov-chip--sin { color: var(--at-text-muted); border-style: dashed; }
+
 .ctg-edit-divider { height: 1px; background: var(--at-border); margin-bottom: 14px; }
 
 /* ── Campos del formulario ── */
@@ -6919,10 +6961,26 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 20px;
-  gap: 16px;
+  /* Menos espacio arriba para que la fila de pasos/botones quede pegada al
+     header global; el resto de márgenes se conservan. */
+  padding: 10px 20px 20px;
+  gap: 12px;
   background: var(--at-bg);
 }
+
+/* Progreso + selección en una fila */
+.ctg-reasig-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+/* El progreso ocupa un ancho acotado (no todo) para dejar sitio a lo demás */
+.ctg-reasig-topbar .ctg-reasig-progress { flex: 0 1 420px; }
+/* La barra de selección se pega a la derecha (empuja con auto) */
+.ctg-reasig-topbar .ctg-reasig-selbar { margin-left: auto; flex: 0 0 auto; margin-bottom: 0; }
+/* Botón "Volver" en la extrema derecha de la fila */
+.ctg-reasig-volver { flex: 0 0 auto; }
 
 /* Barra de progreso */
 .ctg-reasig-progress { display: flex; align-items: center; flex-shrink: 0; }
@@ -7054,6 +7112,77 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   color: var(--at-text);
 }
 .ctg-reasig-summary-arrow-icon { font-size: 16px; color: var(--at-orange); font-weight: 700; }
+
+/* ── Asistente unificado de reasignación (buscar + seleccionar + paginar) ── */
+.ctg-modo-tabs { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+
+.ctg-reasig-selbar {
+  display: flex; align-items: center; gap: 12px;
+  margin-bottom: 12px; padding: 8px 12px;
+  background: var(--at-orange-dim, rgba(234,88,12,0.08));
+  border: 1px solid var(--at-orange, #ea580c);
+  border-radius: var(--at-radius);
+}
+.ctg-reasig-sel-badge { font-size: 13px; font-weight: 700; color: var(--at-orange, #ea580c); }
+.ctg-reasig-sel-clear {
+  margin-left: auto; font-size: 12px; color: var(--at-text-muted);
+  background: none; border: none; cursor: pointer; text-decoration: underline;
+}
+
+.ctg-reasig-buscador { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+.ctg-reasig-search-input { position: relative; flex: 1; }
+.ctg-reasig-search-icon {
+  position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+  color: var(--at-text-muted); pointer-events: none;
+}
+.ctg-reasig-search-input .ctg-input { padding-left: 34px; width: 100%; }
+
+.ctg-reasig-results-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin: 12px 0 6px; font-size: 12px; color: var(--at-text-muted);
+}
+.ctg-reasig-selall {
+  font-size: 12px; font-weight: 600; color: var(--at-orange, #ea580c);
+  background: none; border: none; cursor: pointer;
+}
+
+.ctg-reasig-table tr.ctg-row-sel td { background: var(--at-orange-dim, rgba(234,88,12,0.06)); }
+.ctg-muted { color: var(--at-text-muted); }
+
+/* Miniatura del producto en la tabla de búsqueda */
+.ctg-reasig-thumb {
+  width: 36px; height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--at-border);
+  background: var(--at-bg);
+  display: block;
+}
+.ctg-reasig-thumb--vacio {
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--at-text-muted);
+}
+
+.ctg-reasig-pager {
+  display: flex; align-items: center; justify-content: center; gap: 14px;
+  margin-top: 10px; font-size: 13px; color: var(--at-text-soft);
+}
+
+.ctg-reasig-loading {
+  display: flex; align-items: center; gap: 8px;
+  padding: 20px; color: var(--at-text-muted); font-size: 14px;
+}
+.ctg-spin { animation: ctg-spin 0.8s linear infinite; }
+@keyframes ctg-spin { to { transform: rotate(360deg); } }
+
+.ctg-reasig-empty {
+  padding: 24px; text-align: center; color: var(--at-text-muted); font-size: 14px;
+}
+.ctg-reasig-error {
+  padding: 10px 12px; background: rgba(220,38,38,0.08);
+  border: 1px solid rgba(220,38,38,0.3); border-radius: var(--at-radius);
+  color: #b91c1c; font-size: 13px; margin: 8px 0;
+}
 
 /* ── Reasignación: estados extra ── */
 .ctg-reasig-src-label { font-weight: 400; font-size: 13px; color: var(--at-text-muted); }

@@ -293,9 +293,9 @@ export async function listarArticulosDeCatalogo(
 }
 
 /** Lista artículos que NO tienen asignado un campo (para poder clasificarlos).
- *  `campo` = "departamento" | "proveedor". Limitado server-side a 500. */
+ *  Limitado server-side a 500. */
 export async function listarArticulosSinClasificar(
-  campo: "departamento" | "proveedor"
+  campo: "departamento" | "categoria" | "marca" | "proveedor"
 ): Promise<ArticuloPOS[]> {
   return apiFetch<ArticuloPOS[]>(`/caja/articulos?sin=${encodeURIComponent(campo)}`)
 }
@@ -984,7 +984,16 @@ export type CatalogosOp =
   | { op: "rename_marca"; nombre_actual: string; nombre_nuevo: string }
   | { op: "move_cat"; cat_nombre: string; dept_nombre_actual: string; dept_nombre_nuevo: string }
   | { op: "assign_marca"; marca: string; product_ids: string[] }
-  | { op: "reasignar"; product_ids: string[]; departamento?: string; marca?: string }
+  | {
+      op: "reasignar"
+      product_ids: string[]
+      // Los 4 campos, todos opcionales. Solo se aplica lo que venga.
+      departamento?: string
+      categoria?: string
+      marca?: string
+      proveedor?: string
+      proveedor_id?: string
+    }
   | { op: "assign_proveedor"; product_ids: string[]; proveedor_id: string; proveedor?: string }
 
 export async function actualizarCatalogo(
