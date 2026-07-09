@@ -59,6 +59,9 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           marca: producto.marca,
           departamento: producto.departamento,
           categoria: producto.categoria,
+          // Proveedor → para el pedido automático si se vende por encargo.
+          proveedor: producto.proveedor,
+          proveedor_id: producto.proveedor_id,
         },
       })
     }

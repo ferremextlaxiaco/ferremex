@@ -5,6 +5,7 @@ import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
 import { ModalCobro } from "../components/ModalCobro"
 import { Ticket } from "../components/Ticket"
+import { ComprobanteEncargo } from "../components/ComprobanteEncargo"
 import { BarraComandos } from "../components/BarraComandos"
 import { PedidosEnEspera } from "../components/PedidosEnEspera"
 import { CargarCotizacionPopup } from "../components/CargarCotizacionPopup"
@@ -15,7 +16,7 @@ import { usePedidosEnEspera, guardarEnEspera } from "../lib/pedidos-espera"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { useToasts } from "../hooks/useToasts"
-import { crearCotizacion, actualizarCotizacion, type VentaResponse, type Cotizacion } from "../lib/client"
+import { crearCotizacion, actualizarCotizacion, obtenerEncargoPorFolio, type VentaResponse, type Cotizacion, type EncargoFicha } from "../lib/client"
 
 // Ancho a partir del cual el carrito se muestra como columna fija a la derecha.
 // Por debajo, cae al drawer deslizable con FAB (terminales/pantallas angostas).
@@ -26,6 +27,8 @@ export function Venta() {
   const navigate = useNavigate()
   const [mostrarCobro, setMostrarCobro] = useState(false)
   const [ventaCompletada, setVentaCompletada] = useState<VentaResponse | null>(null)
+  // Comprobante de encargo a mostrar tras el ticket (venta por encargo).
+  const [comprobanteEncargo, setComprobanteEncargo] = useState<EncargoFicha | null>(null)
   // El carrito es columna fija en pantallas anchas; drawer en las angostas.
   const [carritoFijo, setCarritoFijo] = useState(
     () => typeof window !== "undefined" && window.innerWidth >= ANCHO_CARRITO_FIJO
@@ -109,7 +112,16 @@ export function Venta() {
   }
 
   function handleTicketImpreso() {
+    const venta = ventaCompletada
     setVentaCompletada(null)
+    // Venta por encargo: tras el ticket, cargar la ficha recién creada y ofrecer
+    // el comprobante de encargo (el papel que el cliente conserva). Best-effort:
+    // si no hay ficha (no se llenó) o falla la carga, simplemente no se abre.
+    if (venta?.items?.some((i) => i.encargo)) {
+      obtenerEncargoPorFolio(venta.folio)
+        .then((f) => { if (f) setComprobanteEncargo(f) })
+        .catch(() => { /* sin comprobante, no bloquea */ })
+    }
   }
 
   function abrirCobro() {
@@ -319,6 +331,15 @@ export function Venta() {
           venta={ventaCompletada}
           cliente={state.clienteActivo}
           onImpreso={handleTicketImpreso}
+        />
+      )}
+
+      {/* ===== Comprobante de encargo (venta sobre pedido) ===== */}
+      {comprobanteEncargo && (
+        <ComprobanteEncargo
+          ficha={comprobanteEncargo}
+          negocio={state.ticketConfig?.encabezado?.nombre || "FERREMEX"}
+          onCerrar={() => setComprobanteEncargo(null)}
         />
       )}
 

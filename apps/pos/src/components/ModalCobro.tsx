@@ -12,6 +12,7 @@ import {
 import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
 import HuellaAnimacion from "./HuellaAnimacion"
+import { FichaEncargoModal, type DatosFichaEncargo } from "./FichaEncargoModal"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
@@ -61,6 +62,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [catMon, setCatMon] = useState<CatalogosData | null>(null)
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
+  // ── Venta por encargo ─────────────────────────────────────────────────────
+  // Si el carrito tiene líneas por encargo, al confirmar el cobro se abre primero
+  // la ficha del cliente (nombre/teléfono/motivo/tiempo de entrega). Una vez
+  // llena, sus datos se adjuntan a la venta (`encargo_ficha`) y el flujo continúa.
+  const hayEncargo = state.items.some((i) => i.esEncargo)
+  const [fichaAbierta, setFichaAbierta] = useState(false)
+  const datosFichaRef = useRef<DatosFichaEncargo | null>(null)
   // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
   //   idle → esperando que el cajero pulse "Verificar huella"
   //   verificando → capturando+comparando en el servicio local
@@ -317,7 +325,19 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
       setError(`Con puntos solo puedes cubrir ${fmt(maxCanjePesos)} de este ticket`)
       return
     }
+    // Venta por encargo: si hay líneas sobre pedido y aún no se llenó la ficha,
+    // abrirla primero. Al confirmarla, `onFichaConfirmada` reanuda el cobro.
+    if (hayEncargo && !datosFichaRef.current) { setFichaAbierta(true); return }
     // Si la config exige confirmación (huella/código), abrir el modal de canje.
+    if (requiereConfirmCanje) { setConfirmCanje(true); return }
+    await finalizarVenta()
+  }
+
+  // La ficha de encargo quedó llena: guardamos los datos y reanudamos el cobro
+  // (pasando por el gate de canje si aplica).
+  async function onFichaConfirmada(datos: DatosFichaEncargo) {
+    datosFichaRef.current = datos
+    setFichaAbierta(false)
     if (requiereConfirmCanje) { setConfirmCanje(true); return }
     await finalizarVenta()
   }
@@ -359,6 +379,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           precio_unitario: precioUnitEfectivo(i),
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
+          // Venta por encargo: el backend salta stock, descuenta en negativo y
+          // alimenta el pedido del proveedor con estos datos.
+          ...(i.esEncargo ? { encargo: true, proveedor_id: i.proveedor_id ?? "", proveedor: i.proveedor ?? "" } : {}),
         })),
         pago_efectivo: pEfectivo,
         pago_transferencia: pTransferencia,
@@ -377,6 +400,20 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               cliente_id: ventaCliente.id,
               cliente_nombre: ventaCliente.nombre,
               ...(pCredito > 0 ? { plazo: ventaCliente.dias_credito } : {}),
+            }
+          : {}),
+        // Ficha de encargo (venta sobre pedido): si el cajero la llenó, se adjunta
+        // para que el backend cree la EncargoFicha del módulo "Encargos".
+        ...(datosFichaRef.current
+          ? {
+              encargo_ficha: {
+                cliente_nombre: datosFichaRef.current.cliente_nombre,
+                telefono: datosFichaRef.current.telefono,
+                motivo: datosFichaRef.current.motivo,
+                tiempo_entrega: datosFichaRef.current.tiempo_entrega,
+                correo: datosFichaRef.current.correo ?? null,
+                notas: datosFichaRef.current.notas ?? null,
+              },
             }
           : {}),
       })
@@ -674,6 +711,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           </div>
         </div>
       </div>
+
+      {/* Ficha de encargo (venta sobre pedido): se abre antes de finalizar el cobro
+          cuando hay líneas por encargo. Al confirmarla, el cobro continúa. */}
+      {fichaAbierta && (
+        <FichaEncargoModal
+          onCancelar={() => setFichaAbierta(false)}
+          onConfirmar={onFichaConfirmada}
+        />
+      )}
 
       {/* Confirmación de canje de puntos (huella / código de barras). Mientras el
           lector no esté conectado, la confirmación se simula: huella con un botón,

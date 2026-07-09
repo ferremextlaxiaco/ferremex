@@ -37,7 +37,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number }
   const variantesBase: VarianteBase[] = []
   // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
   // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
@@ -72,6 +72,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let marca = ""
       let departamento = ""
       let categoria = ""
+      let proveedor = ""
+      let proveedor_id = ""
       let especificaciones: { clave: string; valor: string }[] = []
       let mayoreoActivo = false
       let mayoreoMin = 0
@@ -88,6 +90,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           marca = meta.marca ?? ""
           departamento = meta.departamento ?? ""
           categoria = meta.categoria ?? ""
+          proveedor = meta.proveedor ?? ""
+          proveedor_id = meta.proveedor_id ?? ""
           especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
           mayoreoActivo = !!meta.mayoreoActivo
           mayoreoMin = Number(meta.mayoreoMin) || 0
@@ -96,7 +100,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           precio4 = Number(meta.precio4) || 0
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4 })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4 })
       matchExacto = true
     }
   }
@@ -152,6 +156,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb,
                 impuesto: !!meta.impuesto, marca: meta.marca ?? "",
                 departamento: meta.departamento ?? "", categoria: meta.categoria ?? "",
+                proveedor: meta.proveedor ?? "", proveedor_id: meta.proveedor_id ?? "",
                 especificaciones: Array.isArray(meta.especificaciones) ? meta.especificaciones : [],
                 mayoreoActivo: !!meta.mayoreoActivo, mayoreoMin: Number(meta.mayoreoMin) || 0,
                 precio2: Number(meta.precio2) || 0,
@@ -239,6 +244,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const marca = meta.marca ?? ""
         const departamento = meta.departamento ?? ""
         const categoria = meta.categoria ?? ""
+        const proveedor = meta.proveedor ?? ""
+        const proveedor_id = meta.proveedor_id ?? ""
         const especificaciones = Array.isArray(meta.especificaciones) ? meta.especificaciones : []
         const vMayoreoActivo = !!meta.mayoreoActivo
         const vMayoreoMin = Number(meta.mayoreoMin) || 0
@@ -246,7 +253,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vPrecio3 = Number(meta.precio3) || 0
         const vPrecio4 = Number(meta.precio4) || 0
         for (const v of p.variants ?? []) {
-          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
         }
       }
     }
@@ -330,6 +337,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         marca: v.marca,
         departamento: v.departamento,
         categoria: v.categoria,
+        // Proveedor del producto — necesario para el pedido automático de una
+        // venta por encargo (Fase 3). Vacío si el producto no tiene proveedor.
+        proveedor: v.proveedor,
+        proveedor_id: v.proveedor_id,
         especificaciones: v.especificaciones,
         mayoreoActivo: v.mayoreoActivo,
         mayoreoMin: v.mayoreoMin,

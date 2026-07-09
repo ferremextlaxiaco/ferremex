@@ -3,6 +3,8 @@ import { Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import * as crypto from "crypto"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../lib/json-store"
+import { agregarEncargosAPedidos, type EncargoLinea } from "../../../lib/pedidos-encargo"
+import { crearEncargoFicha, type EncargoArticulo } from "../../../lib/encargos-store"
 import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
 import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
@@ -17,6 +19,12 @@ interface ItemVenta {
   // ya viene prorrateado desde el front). Opcionales y retrocompatibles.
   paquete_id?: string
   paquete_nombre?: string
+  // Venta por encargo (Fase 3): la línea se vende SIN stock. El backend salta la
+  // validación de existencia para ella, descuenta en negativo, y la agrega al
+  // pedido abierto de su proveedor. `proveedor_id`/`proveedor` = destino del pedido.
+  encargo?: boolean
+  proveedor_id?: string
+  proveedor?: string
 }
 
 interface VentaBody {
@@ -54,6 +62,19 @@ interface VentaBody {
   cliente_id?: string
   cliente_nombre?: string
   plazo?: number
+  // Venta por encargo (Fase 3): ficha del cliente que se llena al cobrar (nombre,
+  // teléfono, motivo, tiempo de entrega, notas). Se persiste como EncargoFicha
+  // (encargos-pos.json) para el módulo de consulta "Encargos". El anticipo NO va
+  // aquí: se deriva de lo cobrado (efectivo+transferencia+tarjeta) sobre el total
+  // de las líneas por encargo. Solo se crea si hay ≥1 línea con `encargo`.
+  encargo_ficha?: {
+    cliente_nombre: string
+    telefono: string
+    motivo?: string
+    tiempo_entrega?: string
+    correo?: string | null
+    notas?: string | null
+  }
 }
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
@@ -223,8 +244,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       )
       const nivelPorItemId = new Map(niveles.map((n) => [n.inventory_item_id, n]))
 
-      // Validar que ningún item supere el stock disponible
+      // Validar que ningún item supere el stock disponible. Las líneas marcadas
+      // como ENCARGO se exceptúan: se venden sobre pedido (inventario a negativo).
       for (const item of items) {
+        if (item.encargo) continue
         const inventoryItemId = itemPorSku.get(item.sku)
         if (!inventoryItemId) {
           // SKU sin inventory item: lo registramos pero advertimos en log en vez
@@ -285,6 +308,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             subtotal: i.precio_unitario * i.cantidad,
             // Traza del paquete (si aplica) para ticket / historial / corte.
             ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre ?? null } : {}),
+            // Marca de venta por encargo (para ticket / historial / rastreo).
+            ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null } : {}),
           })),
           total,
           pago_efectivo,
@@ -372,6 +397,67 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       res.status(400).json({ error: resultado.error })
       return
     }
+
+    // Venta por encargo (Fase 3): fuera del lock de ventas (el helper toma su
+    // propio lock de pedidos → sin deadlock), alimentar el pedido abierto de cada
+    // proveedor con las líneas marcadas como encargo. Es best-effort: si falla, la
+    // venta YA quedó registrada (el encargo se puede recrear a mano desde Pedidos).
+    const encargos: EncargoLinea[] = items
+      .filter((i) => i.encargo)
+      .map((i) => ({
+        sku: i.sku,
+        clave: i.sku,
+        descripcion: i.descripcion,
+        cantidad: i.cantidad,
+        proveedor_id: i.proveedor_id ?? null,
+        proveedor: i.proveedor ?? null,
+        origen_venta: resultado.registro.folio,
+      }))
+    if (encargos.length > 0) {
+      try {
+        await agregarEncargosAPedidos(encargos)
+      } catch (e) {
+        console.error("[caja/ventas] Venta OK pero falló alimentar pedidos de encargo:", e)
+      }
+    }
+
+    // Ficha de encargo (atención al cliente): si la venta trae líneas por encargo
+    // y el cajero llenó la ficha, la persistimos para el módulo de consulta
+    // "Encargos". Best-effort: la venta ya quedó registrada. El anticipo hacia el
+    // encargo = lo pagado hoy (todo menos crédito, que es deuda a cartera) acotado
+    // al total de las líneas por encargo.
+    if (encargos.length > 0 && body.encargo_ficha?.cliente_nombre && body.encargo_ficha?.telefono) {
+      try {
+        const encargoItems = items.filter((i) => i.encargo)
+        const totalEncargo = encargoItems.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0)
+        const pagadoHoy = pago_efectivo + pago_transferencia + pago_tarjeta + pago_puntos
+        const anticipo = Math.min(Math.round(totalEncargo * 100) / 100, Math.round(pagadoHoy * 100) / 100)
+        const articulos: EncargoArticulo[] = encargoItems.map((i) => ({
+          sku: i.sku,
+          descripcion: i.descripcion,
+          cantidad: i.cantidad,
+          precio_unitario: i.precio_unitario,
+          proveedor: i.proveedor ?? null,
+          proveedor_id: i.proveedor_id ?? null,
+        }))
+        await crearEncargoFicha({
+          folio: resultado.registro.folio,
+          cliente_nombre: body.encargo_ficha.cliente_nombre,
+          telefono: body.encargo_ficha.telefono,
+          motivo: body.encargo_ficha.motivo ?? "",
+          tiempo_entrega: body.encargo_ficha.tiempo_entrega ?? "",
+          correo: body.encargo_ficha.correo ?? null,
+          notas: body.encargo_ficha.notas ?? null,
+          cliente_id: body.cliente_id ?? null,
+          total: Math.round(totalEncargo * 100) / 100,
+          anticipo,
+          articulos,
+        })
+      } catch (e) {
+        console.error("[caja/ventas] Venta OK pero falló crear la ficha de encargo:", e)
+      }
+    }
+
     res.json(resultado.registro)
   } catch (err) {
     console.error("[caja/ventas] Error registrando venta:", err)

@@ -22,6 +22,10 @@ export interface ProductoPOS {
   // taxonomía sin depender de que el producto tenga marca registrada.
   departamento?: string
   categoria?: string
+  // Proveedor del producto (para venta por encargo → pedido automático). El
+  // backend de /caja/productos los proyecta desde metadata. Vacío = sin proveedor.
+  proveedor?: string
+  proveedor_id?: string
   especificaciones?: { clave: string; valor: string }[]
   mayoreoActivo?: boolean
   mayoreoMin?: number
@@ -58,7 +62,10 @@ export interface VentaRequest {
   // paquete_id/paquete_nombre marcan que el item forma parte de un paquete
   // vendido (el precio_unitario ya viene prorrateado). Opcionales y
   // retrocompatibles: una venta normal no los envía.
-  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string }[]
+  // `encargo`: la línea se vende SIN stock (venta sobre pedido). El backend salta
+  // la validación de stock para ella, descuenta en negativo, y la agrega al pedido
+  // abierto de su proveedor. `proveedor_id`/`proveedor` viajan para ese pedido.
+  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; proveedor_id?: string; proveedor?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
   // Pago con tarjeta bancaria (crédito/débito vía TPV). No es efectivo (no abre
@@ -75,13 +82,25 @@ export interface VentaRequest {
   cliente_id?: string
   cliente_nombre?: string
   plazo?: number
+  // Venta por encargo (Fase 3): ficha del cliente que se llena al cobrar. Solo se
+  // envía si hay ≥1 línea con `encargo`. El backend la persiste como EncargoFicha
+  // (ver /caja/encargos) y deriva el anticipo de lo pagado hoy.
+  encargo_ficha?: {
+    cliente_nombre: string
+    telefono: string
+    motivo?: string
+    tiempo_entrega?: string
+    correo?: string | null
+    notas?: string | null
+  }
 }
 
 export interface VentaResponse {
   folio: string
   fecha: string
   cajero: string
-  items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number }[]
+  // `encargo` marca líneas vendidas sobre pedido (sin stock). El ticket lo rotula.
+  items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number; encargo?: boolean }[]
   total: number
   pago_efectivo: number
   pago_transferencia: number
@@ -944,7 +963,15 @@ export async function listarCatalogos(force = false): Promise<CatalogosData> {
 
 // ── Pedidos a proveedor ───────────────────────────────────────────────────────
 
-export interface PedidoArticulo { clave?: string; descripcion?: string; cantidad: number }
+export interface PedidoArticulo {
+  clave?: string
+  descripcion?: string
+  cantidad: number
+  // SKU real + folio de la venta que originó este renglón (venta por encargo).
+  // Presentes solo en líneas generadas automáticamente por un encargo.
+  sku?: string
+  origen_venta?: string
+}
 
 export interface Pedido {
   id: string
@@ -952,7 +979,11 @@ export interface Pedido {
   fecha: string
   proveedor?: string | null
   proveedorId?: string | null
+  // "borrador" | "enviado" | "confirmado" | "recibido" | "encargo" (abierto por
+  // encargos de clientes, se sigue alimentando hasta enviarse al proveedor).
   status: string
+  // true si el pedido nació/creció de ventas por encargo (base del rastreo).
+  esEncargo?: boolean
   articulos: PedidoArticulo[]
 }
 
@@ -979,6 +1010,97 @@ export async function actualizarPedido(data: Partial<Pedido> & { id: string }): 
 
 export async function eliminarPedido(id: string): Promise<void> {
   await apiFetch(`/caja/pedidos?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ── Encargos (venta por encargo — Fase 3) ─────────────────────────────────────
+// Fichas de atención al cliente para ventas sobre pedido. Distintas de los
+// pedidos a proveedor: aquí vive nombre/teléfono/motivo/tiempo de entrega/montos
+// y el status (pendiente → recibido → entregado). El módulo "Encargos" consulta
+// estas fichas. Normalmente las crea el backend al cobrar una venta por encargo.
+
+export type EncargoStatus = "pendiente" | "recibido" | "entregado" | "cancelado"
+
+export interface EncargoAbono {
+  id: string
+  monto: number
+  fecha: string
+  metodo?: string
+  nota?: string
+}
+
+export interface EncargoArticulo {
+  sku: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+  proveedor?: string | null
+  proveedor_id?: string | null
+}
+
+export interface EncargoFicha {
+  id: string
+  folio: string
+  fecha: string
+  cliente_nombre: string
+  telefono: string
+  motivo: string
+  tiempo_entrega: string
+  correo?: string | null
+  notas?: string | null
+  cliente_id?: string | null
+  total: number
+  anticipo: number
+  abonos: EncargoAbono[]
+  status: EncargoStatus
+  articulos: EncargoArticulo[]
+  historial: { fecha: string; de: EncargoStatus; a: EncargoStatus; nota?: string }[]
+  // Derivados que agrega el backend en las respuestas.
+  resta?: number
+  abonado?: number
+}
+
+/** Lista todas las fichas de encargo (más reciente primero). */
+export async function listarEncargos(status?: EncargoStatus): Promise<EncargoFicha[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ""
+  return apiFetch<EncargoFicha[]>(`/caja/encargos${qs}`)
+}
+
+/** Detalle de una ficha de encargo por id. */
+export async function obtenerEncargo(id: string): Promise<EncargoFicha> {
+  return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}`)
+}
+
+/**
+ * Busca la ficha de encargo asociada a un folio de venta. Útil justo después de
+ * cobrar una venta por encargo para imprimir el comprobante. Devuelve null si no
+ * existe (venta sin ficha). Reusa la lista (la crea el backend al cobrar).
+ */
+export async function obtenerEncargoPorFolio(folio: string): Promise<EncargoFicha | null> {
+  const todos = await listarEncargos()
+  return todos.find((f) => f.folio === folio) ?? null
+}
+
+/** Cambia el status de una ficha (pendiente → recibido → entregado → cancelado). */
+export async function actualizarStatusEncargo(
+  id: string,
+  status: EncargoStatus,
+  nota?: string
+): Promise<EncargoFicha> {
+  return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status, ...(nota ? { nota } : {}) }),
+  })
+}
+
+/** Registra un abono (pago parcial / liquidación) sobre una ficha de encargo. */
+export async function agregarAbonoEncargo(
+  id: string,
+  abono: { monto: number; metodo?: string; nota?: string }
+): Promise<EncargoFicha> {
+  return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ abono }),
+  })
 }
 
 export type CatalogosOp =

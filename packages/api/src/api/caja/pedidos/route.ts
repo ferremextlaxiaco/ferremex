@@ -12,6 +12,15 @@ import { readJson, writeJsonAtomic, updateJson } from "../../../lib/json-store"
  * secuencial generado en el servidor.
  */
 
+interface PedidoArticulo {
+  clave?: string
+  descripcion?: string
+  cantidad: number
+  // Presentes en renglones generados por una venta por encargo (Fase 3).
+  sku?: string
+  origen_venta?: string
+}
+
 interface Pedido {
   id: string
   folio: string
@@ -19,7 +28,9 @@ interface Pedido {
   proveedor?: string | null
   proveedorId?: string | null
   status: string
-  articulos: { clave?: string; descripcion?: string; cantidad: number }[]
+  // true si el pedido nació/creció de ventas por encargo.
+  esEncargo?: boolean
+  articulos: PedidoArticulo[]
   [k: string]: unknown
 }
 
@@ -72,6 +83,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         clave: a.clave,
         descripcion: a.descripcion,
         cantidad: Number(a.cantidad) || 0,
+        ...(a.sku ? { sku: a.sku } : {}),
+        ...(a.origen_venta ? { origen_venta: a.origen_venta } : {}),
       })),
     }
     return [nuevo, ...pedidos]

@@ -731,6 +731,9 @@ export type Routes = {
         cotizaciones: typeof import("../../src/api/caja/cotizaciones/route") & {
             $folio: typeof import("../../src/api/caja/cotizaciones/[folio]/route");
         };
+        encargos: typeof import("../../src/api/caja/encargos/route") & {
+            $id: typeof import("../../src/api/caja/encargos/[id]/route");
+        };
         facturable: typeof import("../../src/api/caja/facturable/route") & {
             deptos: typeof import("../../src/api/caja/facturable/deptos/route");
         };

@@ -45,6 +45,15 @@ export interface CartItem {
   // cuando el producto no tiene marca. Opcionales/retrocompatibles.
   departamento?: string | null
   categoria?: string | null
+  // Proveedor del producto (de la búsqueda). Se propaga al carrito para la venta
+  // por encargo: si la línea se vende sin stock, alimenta el pedido de este
+  // proveedor. Vacío = sin proveedor asignado (pedido "sin asignar").
+  proveedor?: string | null
+  proveedor_id?: string | null
+  // Marca de "venta por encargo": la línea se vende SIN existencia (sobre pedido).
+  // La activa el cajero al confirmar el modal de encargo en el cobro. Cuando true,
+  // el carrito no bloquea el cobro por esta línea y el backend descuenta en negativo.
+  esEncargo?: boolean
   /** Si true, `precio`/`precio2` ya incluyen IVA (16%). Para el desglose fiscal. */
   impuesto?: boolean
   mayoreoActivo?: boolean
@@ -123,6 +132,10 @@ type PosAction =
   | { type: "INCREMENT"; sku: string }
   | { type: "DECREMENT"; sku: string }
   | { type: "SET_CANTIDAD"; sku: string; cantidad: number }
+  // Marca/desmarca una línea como "venta por encargo" (sin stock). Si `sku` se
+  // omite, aplica a TODAS las líneas que exceden su existencia (uso del modal de
+  // encargo: "vender todo lo faltante por encargo").
+  | { type: "SET_ENCARGO"; sku?: string; esEncargo: boolean }
   | { type: "REMOVE"; sku: string }
   | { type: "ADD_PAQUETE"; paqueteId: string; paqueteNombre: string; lineas: LineaPaquete[] }
   | { type: "REMOVE_PAQUETE"; paqueteId: string }
@@ -212,16 +225,28 @@ function posReducer(state: PosState, action: PosAction): PosState {
       }
 
     case "SET_CANTIDAD": {
-      // En cotización el tope es la cantidad pedida (no la existencia); en venta,
-      // se limita a lo disponible en inventario.
-      const existencia = state.items.find(i => i.sku === action.sku)?.existencia ?? action.cantidad
-      const tope = state.modoCotizacion ? action.cantidad : existencia
+      // En cotización o si la línea es ENCARGO, el tope es la cantidad pedida (no
+      // la existencia); en venta normal, se limita a lo disponible en inventario.
+      const linea = state.items.find(i => i.sku === action.sku)
+      const existencia = linea?.existencia ?? action.cantidad
+      const sinTope = state.modoCotizacion || !!linea?.esEncargo
+      const tope = sinTope ? action.cantidad : existencia
       const clamped = Math.max(1, Math.min(action.cantidad, tope))
       return {
         ...state,
         items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),
       }
     }
+
+    case "SET_ENCARGO":
+      return {
+        ...state,
+        items: state.items.map((i) => {
+          // Con sku: solo esa línea. Sin sku: todas las que exceden su existencia.
+          const aplica = action.sku ? i.sku === action.sku : i.cantidad > i.existencia
+          return aplica ? { ...i, esEncargo: action.esEncargo } : i
+        }),
+      }
 
     case "REMOVE":
       return { ...state, items: state.items.filter((i) => i.sku !== action.sku) }

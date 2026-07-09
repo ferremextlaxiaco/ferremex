@@ -66,7 +66,7 @@ function ventaATicketPrintData(
     cajero: venta.cajero,
     cliente: venta.cliente_nombre ? { name: venta.cliente_nombre, rfc: "" } : null,
     lines: venta.items.map((it) => ({
-      description: it.descripcion,
+      description: it.encargo ? `${it.descripcion} (POR ENCARGO)` : it.descripcion,
       qty: it.cantidad,
       unitPrice: it.precio_unitario,
       total: it.subtotal,
@@ -186,7 +186,10 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
             <tbody>
               {venta.items.map((item, idx) => (
                 <tr key={idx}>
-                  <td className="ticket-col-desc">{item.descripcion}</td>
+                  <td className="ticket-col-desc">
+                    {item.descripcion}
+                    {item.encargo && <span className="ticket-encargo"> (POR ENCARGO)</span>}
+                  </td>
                   <td className="ticket-col-num">{item.cantidad}</td>
                   <td className="ticket-col-num">${item.precio_unitario.toFixed(2)}</td>
                   <td className="ticket-col-num">${item.subtotal.toFixed(2)}</td>

@@ -23,8 +23,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
   // Líneas cuya cantidad supera la existencia (típico al convertir una cotización
   // —donde se permite exceder stock— a venta). En cotización no aplica; en venta
-  // se marcan en rojo y bloquean el cobro hasta corregirlas.
-  const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia
+  // se marcan en rojo y bloquean el cobro hasta corregirlas O marcarlas como
+  // ENCARGO (venta sobre pedido). Una línea de encargo NO cuenta como exceso.
+  const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia && !i.esEncargo
   const skusSinStock = modoCotizacion ? [] : items.filter(excedeStock)
   const hayExcesoStock = skusSinStock.length > 0
 
@@ -211,12 +212,14 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const faltanMayoreo = !tienePromo && item.mayoreoActivo && item.precio2 && item.mayoreoMin && item.cantidad < item.mayoreoMin
               ? item.mayoreoMin - item.cantidad : 0
 
-            const sinStock = !modoCotizacion && item.cantidad > item.existencia
+            const esEncargo = !modoCotizacion && !!item.esEncargo
+            // "Sin stock" (rojo, bloquea) solo si excede Y NO está marcado encargo.
+            const sinStock = !modoCotizacion && item.cantidad > item.existencia && !esEncargo
 
             return (
               <div
                 key={item.sku}
-                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}${sinStock ? " carrito-item--sin-stock" : ""}`}
+                className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}${sinStock ? " carrito-item--sin-stock" : ""}${esEncargo ? " carrito-item--encargo" : ""}`}
                 onClick={() => inputRefs.current[item.sku]?.focus()}
               >
                 <div className="carrito-item-desc">
@@ -252,6 +255,16 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                       <span className="badge-sin-stock-carrito" title="Corrige la cantidad para poder cobrar">
                         ⚠ Solo {item.existencia} en stock (tienes {item.cantidad})
                       </span>
+                    )}
+                    {esEncargo && (
+                      <button
+                        type="button"
+                        className="badge-encargo-carrito"
+                        title="Venta sobre pedido. Clic para quitar el encargo."
+                        onClick={(e) => { e.stopPropagation(); dispatch({ type: "SET_ENCARGO", sku: item.sku, esEncargo: false }) }}
+                      >
+                        📦 Por encargo ✕
+                      </button>
                     )}
                   </div>
                 </div>
@@ -307,28 +320,38 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       )}
 
       <div className="carrito-footer">
-        {/* Aviso de exceso de stock (típico al convertir cotización → venta).
-            Bloquea el cobro; ofrece ajustar todas las líneas al stock de un clic. */}
+        {/* Aviso de exceso de stock. Da DOS salidas: ajustar a lo disponible, o
+            vender lo faltante POR ENCARGO (venta sobre pedido, Fase 3). */}
         {hayExcesoStock && (
           <div className="carrito-aviso-stock">
             <span>
-              ⚠ {skusSinStock.length} artículo{skusSinStock.length !== 1 ? "s" : ""} super
-              {skusSinStock.length !== 1 ? "an" : "a"} el stock disponible. Corrige las cantidades para cobrar.
+              ⚠ {skusSinStock.length} artículo{skusSinStock.length !== 1 ? "s" : ""} sin existencia
+              suficiente. Ajusta al stock o véndelo por encargo.
             </span>
-            <button
-              type="button"
-              className="carrito-aviso-stock-btn"
-              onClick={() => {
-                for (const it of skusSinStock) {
-                  // Sin existencia (agotado): la línea no puede venderse → se quita.
-                  // Con stock parcial: se ajusta a lo disponible.
-                  if (it.existencia <= 0) dispatch({ type: "REMOVE", sku: it.sku })
-                  else dispatch({ type: "SET_CANTIDAD", sku: it.sku, cantidad: it.existencia })
-                }
-              }}
-            >
-              Ajustar al stock
-            </button>
+            <div className="carrito-aviso-stock-acciones">
+              <button
+                type="button"
+                className="carrito-aviso-stock-btn carrito-aviso-stock-btn--encargo"
+                title="Vender lo faltante sobre pedido; se agrega al pedido del proveedor"
+                onClick={() => dispatch({ type: "SET_ENCARGO", esEncargo: true })}
+              >
+                📦 Vender por encargo
+              </button>
+              <button
+                type="button"
+                className="carrito-aviso-stock-btn"
+                onClick={() => {
+                  for (const it of skusSinStock) {
+                    // Sin existencia (agotado): la línea no puede venderse → se quita.
+                    // Con stock parcial: se ajusta a lo disponible.
+                    if (it.existencia <= 0) dispatch({ type: "REMOVE", sku: it.sku })
+                    else dispatch({ type: "SET_CANTIDAD", sku: it.sku, cantidad: it.existencia })
+                  }
+                }}
+              >
+                Ajustar al stock
+              </button>
+            </div>
           </div>
         )}
         {/* Desglose fiscal POR ÍTEM: solo los artículos con IVA (precio ya

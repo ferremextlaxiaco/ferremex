@@ -21,6 +21,7 @@ import { AdminCompras } from "./pages/AdminCompras"
 import { AdminComprasNueva } from "./pages/AdminComprasNueva"
 import { AdminConsultarCompras } from "./pages/AdminConsultarCompras"
 import { AdminPedidos } from "./pages/AdminPedidos"
+import { AdminEncargos } from "./pages/AdminEncargos"
 import { AdminCatalogos } from "./pages/AdminCatalogos"
 import { AdminMonedero } from "./pages/AdminMonedero"
 import { AdminFacturacion } from "./pages/AdminFacturacion"
@@ -61,6 +62,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="compras-nueva" element={<AdminComprasNueva />} />
             <Route path="consultar-compras" element={<AdminConsultarCompras />} />
             <Route path="pedidos" element={<AdminPedidos />} />
+          <Route path="encargos" element={<AdminEncargos />} />
           <Route path="catalogos" element={<AdminCatalogos />} />
           <Route path="monedero" element={<AdminMonedero />} />
           <Route path="facturacion" element={<AdminFacturacion />} />
