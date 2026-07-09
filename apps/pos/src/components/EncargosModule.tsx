@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from "react"
 import {
   ClipboardList, Search, RefreshCw, Phone, CalendarClock, Package, X,
-  Printer, CheckCircle2, Truck, Clock, Ban, Wallet, User, MessageSquare,
+  Printer, CheckCircle2, Truck, Clock, Ban, Wallet, User, MessageSquare, CreditCard,
 } from "lucide-react"
 import {
-  listarEncargos, actualizarStatusEncargo, agregarAbonoEncargo,
+  listarEncargos, actualizarStatusEncargo, agregarAbonoEncargo, liquidarEncargo,
   type EncargoFicha, type EncargoStatus,
 } from "../lib/client"
 import { ComprobanteEncargo } from "./ComprobanteEncargo"
 import ConfirmDialog from "./ConfirmDialog"
 import { useToasts } from "../hooks/useToasts"
+import { usePOS } from "../lib/pos-store"
 import { formatMXN as fmt } from "../lib/format"
 
 // ── Metadatos de status (etiqueta, color, icono, siguiente paso) ──────────────
@@ -228,10 +229,12 @@ interface DetalleProps {
   push: (msg: string, type?: "success" | "error" | "info" | "warning") => void
 }
 function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: DetalleProps) {
+  const { state } = usePOS()
   const [guardando, setGuardando] = useState(false)
   const [abonoTxt, setAbonoTxt] = useState("")
   const [metodoAbono, setMetodoAbono] = useState("efectivo")
   const [confirmCancel, setConfirmCancel] = useState(false)
+  const [confirmLiquidar, setConfirmLiquidar] = useState(false)
   const resta = ficha.resta ?? Math.max(0, ficha.total - ficha.anticipo - (ficha.abonado ?? 0))
 
   useEffect(() => {
@@ -265,6 +268,29 @@ function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
       push(`Abono de ${fmt(monto)} registrado`)
     } catch {
       push("No se pudo registrar el abono", "error")
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  // Liquidar y entregar: cobra la resta pendiente (abono + movimiento de caja del
+  // día para el corte) y marca entregado, en una sola operación backend.
+  async function liquidarYEntregar() {
+    setConfirmLiquidar(false)
+    setGuardando(true)
+    try {
+      const f = await liquidarEncargo(ficha.id, {
+        caja_id: state.cajero?.caja_id ?? null,
+        caja_name: state.cajero?.caja_nombre ?? null,
+        cajero_id: state.cajero?.id,
+        cajero_name: state.cajero?.nombre,
+        turno_id: state.cajero?.turno_id,
+        metodo: metodoAbono,
+      })
+      onCambiado(f)
+      push(resta > 0 ? `Encargo liquidado (${fmt(resta)}) y entregado` : "Encargo entregado")
+    } catch (e) {
+      push(e instanceof Error ? e.message : "No se pudo liquidar el encargo", "error")
     } finally {
       setGuardando(false)
     }
@@ -314,16 +340,25 @@ function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
             <FilaMonto label="Anticipo pagado" valor={fmt(ficha.anticipo)} />
             {(ficha.abonado ?? 0) > 0 && <FilaMonto label="Abonos posteriores" valor={fmt(ficha.abonado ?? 0)} />}
             <div className="h-px bg-gray-200 my-1" />
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-700">Resta por pagar</span>
-              <span className={`text-lg font-black tabular-nums ${resta > 0 ? "text-orange-600" : "text-green-600"}`}>{fmt(resta)}</span>
-            </div>
+            {ficha.resta_en_cartera ? (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">Resta</span>
+                <span className="inline-flex items-center gap-1.5 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-full px-2.5 py-1">
+                  <CreditCard size={13} /> En cartera del cliente
+                </span>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">Resta por pagar</span>
+                <span className={`text-lg font-black tabular-nums ${resta > 0 ? "text-orange-600" : "text-green-600"}`}>{fmt(resta)}</span>
+              </div>
+            )}
 
-            {/* Registrar abono (solo si queda resta y no está cancelado) */}
-            {resta > 0 && ficha.status !== "cancelado" && (
+            {/* Registrar abono parcial (solo si la resta vive en la ficha) */}
+            {resta > 0 && !ficha.resta_en_cartera && ficha.status !== "cancelado" && ficha.status !== "entregado" && (
               <div className="mt-3 flex items-center gap-2">
                 <input value={abonoTxt} onChange={(e) => setAbonoTxt(e.target.value.replace(/[^0-9.]/g, ""))}
-                  inputMode="decimal" placeholder="Monto del abono"
+                  inputMode="decimal" placeholder="Abono parcial"
                   className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-orange-500" />
                 <select value={metodoAbono} onChange={(e) => setMetodoAbono(e.target.value)}
                   className="border border-gray-300 rounded-lg px-2 py-2 text-sm focus:outline-none focus:border-orange-500">
@@ -332,7 +367,7 @@ function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
                   <option value="tarjeta">Tarjeta</option>
                 </select>
                 <button onClick={registrarAbono} disabled={guardando}
-                  className="bg-orange-600 text-white px-3 py-2 rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-40">
+                  className="bg-white border border-orange-300 text-orange-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-orange-50 disabled:opacity-40">
                   Abonar
                 </button>
               </div>
@@ -340,20 +375,30 @@ function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
           </Bloque>
 
           {/* Cambio de status */}
-          {ficha.status !== "cancelado" && (
-            <Bloque titulo="Cambiar estado">
+          {ficha.status !== "cancelado" && ficha.status !== "entregado" && (
+            <Bloque titulo="Acciones">
               <div className="flex flex-col gap-2">
                 {ficha.status === "pendiente" && (
                   <BotonStatus icon={Package} onClick={() => cambiarStatus("recibido")} disabled={guardando}
                     label="Marcar como recibido en tienda" />
                 )}
-                {(ficha.status === "pendiente" || ficha.status === "recibido") && (
-                  <BotonStatus icon={Truck} onClick={() => cambiarStatus("entregado")} disabled={guardando}
-                    label="Marcar como entregado al cliente" tono="green" />
-                )}
+                {/* Liquidar y entregar: si hay resta en ficha, cobra la resta (con el
+                    método elegido arriba) + movimiento de caja del día + entregado.
+                    Si la resta está en cartera o es 0, solo marca entregado. */}
+                <BotonStatus
+                  icon={Truck}
+                  onClick={() => (resta > 0 && !ficha.resta_en_cartera ? setConfirmLiquidar(true) : liquidarYEntregar())}
+                  disabled={guardando}
+                  label={resta > 0 && !ficha.resta_en_cartera ? `Liquidar ${fmt(resta)} y entregar` : "Entregar al cliente"}
+                  tono="green" />
                 <BotonStatus icon={Ban} onClick={() => setConfirmCancel(true)} disabled={guardando}
                   label="Cancelar encargo" tono="red" />
               </div>
+              {resta > 0 && !ficha.resta_en_cartera && (
+                <p className="text-[11px] text-gray-400 mt-2 leading-snug">
+                  La liquidación cobra la resta como <strong>{metodoAbono}</strong>; en efectivo entra al corte de hoy.
+                </p>
+              )}
             </Bloque>
           )}
         </div>
@@ -375,6 +420,15 @@ function EncargoDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
         danger
         onConfirm={() => { setConfirmCancel(false); cambiarStatus("cancelado") }}
         onClose={() => setConfirmCancel(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmLiquidar}
+        title="Liquidar y entregar"
+        message={`Se cobrará la resta de ${fmt(resta)} (${metodoAbono}) y el encargo se marcará como entregado. ¿Continuar?`}
+        confirmLabel="Liquidar y entregar"
+        onConfirm={liquidarYEntregar}
+        onClose={() => setConfirmLiquidar(false)}
       />
     </div>
   )

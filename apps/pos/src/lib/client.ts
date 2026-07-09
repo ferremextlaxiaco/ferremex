@@ -84,7 +84,8 @@ export interface VentaRequest {
   plazo?: number
   // Venta por encargo (Fase 3): ficha del cliente que se llena al cobrar. Solo se
   // envía si hay ≥1 línea con `encargo`. El backend la persiste como EncargoFicha
-  // (ver /caja/encargos) y deriva el anticipo de lo pagado hoy.
+  // (ver /caja/encargos). El `anticipo` define lo cobrado hoy; `resta_a_cartera`
+  // manda el resto a la cartera del cliente (con crédito) en vez de la ficha.
   encargo_ficha?: {
     cliente_nombre: string
     telefono: string
@@ -92,6 +93,8 @@ export interface VentaRequest {
     tiempo_entrega?: string
     correo?: string | null
     notas?: string | null
+    anticipo?: number
+    resta_a_cartera?: boolean
   }
 }
 
@@ -1050,6 +1053,9 @@ export interface EncargoFicha {
   cliente_id?: string | null
   total: number
   anticipo: number
+  // Si true, la resta se cargó a la cartera de crédito del cliente (se liquida en
+  // su cuenta, no en la ficha). Si false, la resta vive en la ficha (esporádico).
+  resta_en_cartera?: boolean
   abonos: EncargoAbono[]
   status: EncargoStatus
   articulos: EncargoArticulo[]
@@ -1100,6 +1106,22 @@ export async function agregarAbonoEncargo(
   return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}`, {
     method: "PATCH",
     body: JSON.stringify({ abono }),
+  })
+}
+
+/**
+ * Liquida y entrega un encargo en una sola operación: abona la resta en la ficha,
+ * crea el movimiento de caja de entrada ("Abono de cliente") del día de HOY (para
+ * que entre al corte), y marca el encargo entregado. Si la resta está en cartera,
+ * solo marca entregado (la resta se cobra por la cuenta de crédito).
+ */
+export async function liquidarEncargo(
+  id: string,
+  ctx: { caja_id?: string | null; caja_name?: string | null; cajero_id?: string; cajero_name?: string; turno_id?: string; metodo?: string }
+): Promise<EncargoFicha> {
+  return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}/liquidar`, {
+    method: "POST",
+    body: JSON.stringify(ctx),
   })
 }
 

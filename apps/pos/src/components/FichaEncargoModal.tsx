@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { ClipboardList, X, User, Phone, MessageSquare, CalendarClock, Mail, StickyNote, AlertCircle } from "lucide-react"
+import { ClipboardList, X, User, Phone, MessageSquare, CalendarClock, Mail, StickyNote, AlertCircle, Wallet, CreditCard } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { formatMXN as fmt } from "../lib/format"
 
@@ -11,6 +11,12 @@ export interface DatosFichaEncargo {
   tiempo_entrega: string
   correo?: string
   notas?: string
+  // Anticipo que el cliente deja hoy por la porción de encargo (> 0). El modal de
+  // cobro se ajusta a este monto (parte-con-stock + anticipo).
+  anticipo: number
+  // Si true, la resta se carga a la CARTERA del cliente registrado (con crédito).
+  // Si false, la resta queda pendiente solo en la ficha (esporádico / sin crédito).
+  resta_a_cartera: boolean
 }
 
 interface FichaEncargoModalProps {
@@ -27,25 +33,32 @@ interface FichaEncargoModalProps {
  * registra con la ficha adjunta (`encargo_ficha` en el body). El anticipo NO se
  * captura aquí: lo deriva el backend de lo que el cajero cobre en el modal.
  *
- * Obligatorios: nombre, teléfono, tiempo de entrega, motivo (decisión del
- * usuario). Correo y notas son opcionales. Si hay cliente activo, precargamos su
- * nombre/teléfono para no re-teclear (editable).
+ * Obligatorios: nombre, teléfono, tiempo de entrega, motivo, anticipo (> 0).
+ * Correo y notas son opcionales. Si hay cliente activo, precargamos su
+ * nombre/teléfono para no re-teclear (editable). Si el cliente tiene crédito,
+ * puede mandar la resta a su cartera; si no, la resta queda pendiente en la ficha.
  */
 export function FichaEncargoModal({ onCancelar, onConfirmar }: FichaEncargoModalProps) {
   const { state } = usePOS()
 
   // Líneas por encargo (para el resumen visual y el total).
   const lineasEncargo = state.items.filter((i) => i.esEncargo)
-  const totalEncargo = lineasEncargo.reduce((s, i) => s + efectivoPrecio(i) * i.cantidad, 0)
+  const totalEncargo = Math.round(lineasEncargo.reduce((s, i) => s + efectivoPrecio(i) * i.cantidad, 0) * 100) / 100
 
   // Precarga desde el cliente activo si lo hay (el tipo Cliente no tiene correo).
   const cli = state.clienteActivo
+  const tieneCredito = (cli?.limite_credito ?? 0) > 0
   const [nombre, setNombre] = useState(cli?.nombre ?? "")
   const [telefono, setTelefono] = useState(cli?.telefono ?? "")
   const [motivo, setMotivo] = useState("")
   const [tiempoEntrega, setTiempoEntrega] = useState("")
   const [correo, setCorreo] = useState("")
   const [notas, setNotas] = useState("")
+  // Anticipo: por defecto el total (cliente que paga completo al levantar). El
+  // cajero lo reduce si el cliente solo deja un anticipo parcial.
+  const [anticipoTxt, setAnticipoTxt] = useState(totalEncargo > 0 ? totalEncargo.toFixed(2) : "")
+  // Resta a cartera: solo ofrecible a cliente con crédito. Default off.
+  const [restaACartera, setRestaACartera] = useState(false)
   const [tocado, setTocado] = useState(false)
   const nombreRef = useRef<HTMLInputElement>(null)
 
@@ -56,11 +69,16 @@ export function FichaEncargoModal({ onCancelar, onConfirmar }: FichaEncargoModal
     return () => window.removeEventListener("keydown", onKey)
   }, [onCancelar])
 
+  const anticipo = Math.round((parseFloat(anticipoTxt) || 0) * 100) / 100
+  const resta = Math.max(0, Math.round((totalEncargo - anticipo) * 100) / 100)
+
   const faltaNombre = !nombre.trim()
   const faltaTel = !telefono.trim()
   const faltaTiempo = !tiempoEntrega.trim()
   const faltaMotivo = !motivo.trim()
-  const invalido = faltaNombre || faltaTel || faltaTiempo || faltaMotivo
+  // Anticipo: obligatorio > 0 y ≤ total del encargo.
+  const anticipoInvalido = !(anticipo > 0) || anticipo > totalEncargo + 0.01
+  const invalido = faltaNombre || faltaTel || faltaTiempo || faltaMotivo || anticipoInvalido
 
   function confirmar() {
     setTocado(true)
@@ -72,6 +90,9 @@ export function FichaEncargoModal({ onCancelar, onConfirmar }: FichaEncargoModal
       tiempo_entrega: tiempoEntrega.trim(),
       correo: correo.trim() || undefined,
       notas: notas.trim() || undefined,
+      anticipo,
+      // Solo tiene sentido si hay cliente con crédito y queda resta.
+      resta_a_cartera: restaACartera && tieneCredito && resta > 0,
     })
   }
 
@@ -148,6 +169,69 @@ export function FichaEncargoModal({ onCancelar, onConfirmar }: FichaEncargoModal
               <input value={notas} onChange={(e) => setNotas(e.target.value)}
                 className={inputCls(false)} placeholder="Color, medida, referencia…" />
             </Campo>
+          </div>
+
+          {/* Anticipo + resta */}
+          <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex flex-col gap-3">
+            <div className="flex items-end gap-3">
+              <label className="flex-1 flex flex-col gap-1.5">
+                <span className="flex items-center gap-1.5 text-xs font-medium text-gray-600">
+                  <Wallet size={14} className="text-gray-400" /> Anticipo que deja hoy <span className="text-orange-500">*</span>
+                </span>
+                <input
+                  value={anticipoTxt}
+                  onChange={(e) => setAnticipoTxt(e.target.value.replace(/[^0-9.]/g, ""))}
+                  inputMode="decimal"
+                  className={`w-full text-right text-lg font-bold text-gray-900 bg-white border rounded-lg px-3 py-2 focus:outline-none ${
+                    tocado && anticipoInvalido ? "border-red-300 focus:border-red-500" : "border-gray-300 focus:border-orange-500"
+                  }`}
+                  placeholder="$0.00" />
+              </label>
+              <div className="flex flex-col gap-1.5">
+                <button type="button" onClick={() => setAnticipoTxt(totalEncargo.toFixed(2))}
+                  className="text-xs font-medium text-orange-700 border border-orange-200 rounded-lg px-3 py-1.5 hover:bg-orange-50">
+                  Paga todo
+                </button>
+                <button type="button" onClick={() => setAnticipoTxt((Math.round(totalEncargo * 50) / 100).toFixed(2))}
+                  className="text-xs font-medium text-gray-600 border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-100">
+                  Mitad
+                </button>
+              </div>
+            </div>
+
+            {/* Preview total / anticipo / resta */}
+            <div className="flex flex-col gap-1 text-sm">
+              <div className="flex items-center justify-between text-gray-500">
+                <span>Total del encargo</span><span className="tabular-nums">{fmt(totalEncargo)}</span>
+              </div>
+              <div className="flex items-center justify-between text-gray-500">
+                <span>Anticipo hoy</span><span className="tabular-nums">−{fmt(anticipo)}</span>
+              </div>
+              <div className="h-px bg-gray-200 my-0.5" />
+              <div className="flex items-center justify-between font-semibold">
+                <span className="text-gray-700">Resta al entregar</span>
+                <span className={`tabular-nums ${resta > 0 ? "text-orange-600" : "text-green-600"}`}>{fmt(resta)}</span>
+              </div>
+            </div>
+
+            {/* Toggle: mandar resta a cartera (solo cliente con crédito y con resta) */}
+            {tieneCredito && resta > 0 && (
+              <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
+                <input type="checkbox" checked={restaACartera} onChange={(e) => setRestaACartera(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-orange-600" />
+                <span className="text-xs text-gray-600 leading-snug">
+                  <span className="inline-flex items-center gap-1 font-medium text-gray-700">
+                    <CreditCard size={13} className="text-gray-400" /> Cargar la resta a la cartera de {cli?.nombre}
+                  </span>
+                  <br />La resta ({fmt(resta)}) se sumará a su cuenta de crédito. Si no lo marcas, queda pendiente en la ficha y se cobra al entregar.
+                </span>
+              </label>
+            )}
+            {!tieneCredito && resta > 0 && (
+              <p className="text-[11px] text-gray-400 leading-snug">
+                La resta ({fmt(resta)}) quedará pendiente en la ficha; se cobra al entregar el pedido.
+              </p>
+            )}
           </div>
 
           {tocado && invalido && (

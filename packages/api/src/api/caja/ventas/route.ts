@@ -74,6 +74,15 @@ interface VentaBody {
     tiempo_entrega?: string
     correo?: string | null
     notas?: string | null
+    // Anticipo que el cliente deja hoy por la porción de encargo (> 0). El resto
+    // (total_encargo − anticipo) queda pendiente: en la cartera del cliente si
+    // está registrado y tiene crédito, o solo en la ficha (cliente esporádico).
+    anticipo?: number
+    // Si true, la resta del encargo se carga a la CARTERA del cliente (requiere
+    // cliente_id con crédito). Si false/omitido, la resta vive solo en la ficha
+    // (cliente esporádico o registrado sin crédito). Lo decide el frontend según
+    // el cliente activo; el backend lo respeta solo si hay cliente_id.
+    resta_a_cartera?: boolean
   }
 }
 
@@ -162,8 +171,36 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
   const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
 
-  if (total_pagado < total - 0.01) {
-    res.status(400).json({ error: "El pago es menor al total" })
+  // ── Venta por encargo: pago parcial (anticipo) ────────────────────────────
+  // Cuando hay líneas por encargo, el cliente puede dejar solo un ANTICIPO por
+  // esa porción; el resto queda pendiente (ficha/cartera). El pago exigido baja
+  // de `total` a `total_stock + anticipo`: la parte con existencia se paga
+  // completa hoy, la parte por encargo solo su anticipo. Reglas:
+  //   - anticipo obligatorio > 0 (no se levanta un encargo sin comprometerlo).
+  //   - anticipo ≤ total_encargo (no puede exceder lo encargado).
+  const hayEncargo = items.some((i) => i.encargo)
+  const total_encargo = items.filter((i) => i.encargo).reduce((s, i) => s + i.precio_unitario * i.cantidad, 0)
+  const total_stock = Math.round((total - total_encargo) * 100) / 100
+  // Anticipo solicitado (solo aplica si hay encargo). Sin encargo, el pago exigido
+  // es el total de siempre.
+  const anticipoSolicitado = hayEncargo ? Number(body.encargo_ficha?.anticipo ?? 0) : 0
+
+  if (hayEncargo) {
+    if (!(anticipoSolicitado > 0)) {
+      res.status(400).json({ error: "Una venta por encargo requiere un anticipo mayor a $0" })
+      return
+    }
+    if (anticipoSolicitado > total_encargo + 0.01) {
+      res.status(400).json({ error: `El anticipo no puede exceder el total del encargo ($${total_encargo.toFixed(2)})` })
+      return
+    }
+  }
+
+  // Monto que DEBE cubrirse hoy: parte con stock completa + anticipo del encargo.
+  const pago_requerido = hayEncargo ? Math.round((total_stock + anticipoSolicitado) * 100) / 100 : total
+
+  if (total_pagado < pago_requerido - 0.01) {
+    res.status(400).json({ error: hayEncargo ? "El pago no cubre la parte con existencia más el anticipo" : "El pago es menor al total" })
     return
   }
 
@@ -172,8 +209,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // respecto a otras ventas concurrentes, eliminando: (a) sobreventa por race
   // check→decrement, (b) folios secuenciales duplicados, (c) pérdida de registros
   // por read-modify-write concurrente.
+  // La resta del encargo va a cartera si: hay encargo, queda resta > 0, el
+  // frontend lo pidió (resta_a_cartera) y hay cliente_id (con crédito). Si no,
+  // la resta vive solo en la ficha.
+  const restaEncargo = hayEncargo ? Math.round((total_encargo - anticipoSolicitado) * 100) / 100 : 0
+  const restaACartera = hayEncargo && restaEncargo > 0.01 && !!body.encargo_ficha?.resta_a_cartera && !!body.cliente_id
+
   const carteraService: FerremexCarteraService | null =
-    pago_credito > 0 ? req.scope.resolve(FERREMEX_CARTERA) : null
+    (pago_credito > 0 || restaACartera) ? req.scope.resolve(FERREMEX_CARTERA) : null
 
   // Monedero: lo resolvemos si hay puntos a ganar o a canjear. La validación de
   // saldo (canje) y el tope de canje se hacen ANTES del lock para fallar barato;
@@ -311,7 +354,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             // Marca de venta por encargo (para ticket / historial / rastreo).
             ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null } : {}),
           })),
-          total,
+          // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
+          // encargo es el total normal; con encargo es parte-con-stock + anticipo.
+          // La resta del encargo NO es parte de esta venta (vive en ficha/cartera).
+          total: pago_requerido,
+          // Trazabilidad del encargo: total real de lo encargado, anticipo cobrado
+          // hoy y resta pendiente. Solo se persisten cuando hay encargo.
+          ...(hayEncargo ? {
+            encargo_total: Math.round(total_encargo * 100) / 100,
+            encargo_anticipo: Math.round(anticipoSolicitado * 100) / 100,
+            encargo_resta: Math.round((total_encargo - anticipoSolicitado) * 100) / 100,
+          } : {}),
           pago_efectivo,
           pago_transferencia,
           pago_tarjeta,
@@ -326,8 +379,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           cliente_id: body.cliente_id ?? null,
           cliente_nombre: body.cliente_nombre ?? null,
           // El cambio solo se devuelve sobre el excedente de EFECTIVO, restando
-          // lo cubierto por otros métodos (transferencia, tarjeta, crédito, puntos).
-          cambio: Math.max(0, pago_efectivo - Math.max(0, total - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
+          // lo cubierto por otros métodos. Se calcula sobre lo COBRADO HOY
+          // (pago_requerido), no sobre el total teórico del encargo.
+          cambio: Math.max(0, pago_efectivo - Math.max(0, pago_requerido - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
         }
 
         // Cargo a crédito: registrar el movimiento en la cartera del cliente.
@@ -346,6 +400,21 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             folio: registro.folio,
             plazo: body.plazo != null ? Number(body.plazo) : null,
             descripcion: `Venta a crédito ${registro.folio}`,
+          })
+        }
+
+        // Resta de encargo a cartera: cuando el cliente registrado (con crédito)
+        // deja anticipo y el resto se le carga a su cuenta. Transaccional con la
+        // venta (mismo lock), igual que el cargo a crédito de arriba. La ficha del
+        // encargo se marca resta_en_cartera=true para no cobrarla también ahí.
+        if (carteraService && restaACartera && body.cliente_id) {
+          await carteraService.agregarMovimiento(body.cliente_id, {
+            tipo: "compra",
+            monto: restaEncargo,
+            fecha: registro.fecha.slice(0, 10),
+            folio: registro.folio,
+            plazo: body.plazo != null ? Number(body.plazo) : null,
+            descripcion: `Resta de encargo ${registro.folio}`,
           })
         }
 
@@ -423,15 +492,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
     // Ficha de encargo (atención al cliente): si la venta trae líneas por encargo
     // y el cajero llenó la ficha, la persistimos para el módulo de consulta
-    // "Encargos". Best-effort: la venta ya quedó registrada. El anticipo hacia el
-    // encargo = lo pagado hoy (todo menos crédito, que es deuda a cartera) acotado
-    // al total de las líneas por encargo.
+    // "Encargos". Best-effort: la venta ya quedó registrada. El anticipo es el
+    // capturado en la ficha (validado > 0 y ≤ total_encargo). La resta queda en la
+    // ficha, salvo que se haya cargado a cartera (restaACartera → resta_en_cartera).
     if (encargos.length > 0 && body.encargo_ficha?.cliente_nombre && body.encargo_ficha?.telefono) {
       try {
         const encargoItems = items.filter((i) => i.encargo)
-        const totalEncargo = encargoItems.reduce((s, i) => s + i.precio_unitario * i.cantidad, 0)
-        const pagadoHoy = pago_efectivo + pago_transferencia + pago_tarjeta + pago_puntos
-        const anticipo = Math.min(Math.round(totalEncargo * 100) / 100, Math.round(pagadoHoy * 100) / 100)
         const articulos: EncargoArticulo[] = encargoItems.map((i) => ({
           sku: i.sku,
           descripcion: i.descripcion,
@@ -449,8 +515,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           correo: body.encargo_ficha.correo ?? null,
           notas: body.encargo_ficha.notas ?? null,
           cliente_id: body.cliente_id ?? null,
-          total: Math.round(totalEncargo * 100) / 100,
-          anticipo,
+          total: Math.round(total_encargo * 100) / 100,
+          anticipo: Math.round(anticipoSolicitado * 100) / 100,
+          resta_en_cartera: restaACartera,
           articulos,
         })
       } catch (e) {

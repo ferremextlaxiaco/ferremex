@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Banknote, Smartphone, CreditCard, FileText, Coins, Sparkles,
-  Check, X, AlertCircle, Fingerprint, ScanLine, Lock, Wallet, RotateCcw,
+  Check, X, AlertCircle, Fingerprint, ScanLine, Lock, Wallet, RotateCcw, ClipboardList,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -63,12 +63,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
   // ── Venta por encargo ─────────────────────────────────────────────────────
-  // Si el carrito tiene líneas por encargo, al confirmar el cobro se abre primero
-  // la ficha del cliente (nombre/teléfono/motivo/tiempo de entrega). Una vez
-  // llena, sus datos se adjuntan a la venta (`encargo_ficha`) y el flujo continúa.
+  // Si el carrito tiene líneas por encargo, la FICHA se abre al entrar al cobro
+  // (define el anticipo). Al confirmarla, el modal exige cobrar solo
+  // parte-con-stock + anticipo (no el total), y adjunta la ficha a la venta.
   const hayEncargo = state.items.some((i) => i.esEncargo)
-  const [fichaAbierta, setFichaAbierta] = useState(false)
-  const datosFichaRef = useRef<DatosFichaEncargo | null>(null)
+  // Datos de la ficha ya confirmada (con anticipo). En estado —no ref— para que
+  // el total a cobrar se recalcule al definir el anticipo.
+  const [datosFicha, setDatosFicha] = useState<DatosFichaEncargo | null>(null)
+  // La ficha se abre automáticamente al montar si hay encargo (antes de cobrar).
+  const [fichaAbierta, setFichaAbierta] = useState(hayEncargo)
   // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
   //   idle → esperando que el cajero pulse "Verificar huella"
   //   verificando → capturando+comparando en el servicio local
@@ -115,6 +118,19 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
 
   const tieneCredito = (state.clienteActivo?.limite_credito ?? 0) > 0
 
+  // ── Total a cobrar HOY ────────────────────────────────────────────────────
+  // En una venta por encargo, el cliente solo paga hoy la parte-con-stock más el
+  // anticipo capturado en la ficha; la resta del encargo queda pendiente. Hasta
+  // que la ficha se confirme (anticipo definido), se muestra el total completo.
+  const totalEncargoCarrito = state.items
+    .filter((i) => i.esEncargo)
+    .reduce((s, i) => s + precioUnitEfectivo(i) * i.cantidad, 0)
+  const restaEncargo = datosFicha
+    ? Math.max(0, Math.round((totalEncargoCarrito - datosFicha.anticipo) * 100) / 100)
+    : 0
+  // Lo que se debe cubrir en el modal = total del carrito − resta diferida.
+  const totalACobrar = Math.round((total - restaEncargo) * 100) / 100
+
   const pEfectivo      = parseFloat(pagos.efectivo)      || 0
   const pTransferencia = parseFloat(pagos.transferencia)  || 0
   const pTarjeta       = parseFloat(pagos.tarjeta)        || 0
@@ -123,11 +139,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const asignado       = pEfectivo + pTransferencia + pTarjeta + pCredito + pPuntos
 
   // Cuánto falta cubrir con efectivo una vez restados otros métodos
-  const neededCash = Math.max(0, total - pTransferencia - pTarjeta - pCredito - pPuntos)
+  const neededCash = Math.max(0, totalACobrar - pTransferencia - pTarjeta - pCredito - pPuntos)
   const cambio     = Math.max(0, pEfectivo - neededCash)
   const pendiente  = Math.max(0, neededCash - pEfectivo)
-  const cubierto   = asignado >= total - 0.005
-  const pctCubierto = total > 0 ? Math.min(100, (asignado / total) * 100) : 100
+  const cubierto   = asignado >= totalACobrar - 0.005
+  const pctCubierto = totalACobrar > 0 ? Math.min(100, (asignado / totalACobrar) * 100) : 100
 
   // ── Derivados del monedero ──────────────────────────────────────────────
   // Saldo disponible (en pesos), tope de canje del ticket y puntos a ganar.
@@ -139,7 +155,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   // valor mostrado del saldo, no el descuento real en una venta).
   const valorCanje = cfgMon?.valor_punto || 1
   const saldoPesos = Math.round(saldoPuntos * valorCanje * 100) / 100
-  const topePesos = cfgMon ? topeCanjePesos(total, cfgMon) : 0
+  const topePesos = cfgMon ? topeCanjePesos(totalACobrar, cfgMon) : 0
   const maxCanjePesos = Math.min(saldoPesos, topePesos)
   // Tope de canje expresado en PUNTOS (lo que el cajero/cliente razona): el menor
   // entre el saldo, lo que cabe en el tope del ticket, y lo que cubre el total.
@@ -198,7 +214,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     setPagos((prev) => {
       const enPesos = (["efectivo", "transferencia", "tarjeta", "credito"] as Metodo[])
         .filter((m) => (parseFloat(prev[m]) || 0) > 0)
-      const aPagar = Math.max(0, total - pesos)
+      const aPagar = Math.max(0, totalACobrar - pesos)
       // Un único método cubriéndolo todo → reajustarlo al nuevo "a pagar".
       if (enPesos.length === 1) {
         return { ...prev, puntos: nuevoPuntos, [enPesos[0]]: aPagar > 0 ? aPagar.toFixed(2) : "" }
@@ -219,7 +235,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
 
   function completar(id: Metodo) {
     const otros = asignado - (parseFloat(pagos[id]) || 0)
-    let resto = Math.max(0, total - otros)
+    let resto = Math.max(0, totalACobrar - otros)
     // El pago con puntos no puede exceder lo canjeable (saldo y tope del ticket).
     if (id === "puntos") resto = Math.min(resto, maxCanjePesos)
     setPagos(p => ({ ...p, [id]: resto.toFixed(2) }))
@@ -231,7 +247,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   // el cajero sigue usando "Completar" o teclea manualmente.
   function pagarTodoAqui(id: Metodo) {
     if (id === "credito" && !tieneCredito) return
-    const resto = Math.max(0, total - pPuntos)
+    const resto = Math.max(0, totalACobrar - pPuntos)
     setPagos((p) => ({
       ...p,
       efectivo: "", transferencia: "", tarjeta: "", credito: "",
@@ -325,21 +341,27 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
       setError(`Con puntos solo puedes cubrir ${fmt(maxCanjePesos)} de este ticket`)
       return
     }
-    // Venta por encargo: si hay líneas sobre pedido y aún no se llenó la ficha,
-    // abrirla primero. Al confirmarla, `onFichaConfirmada` reanuda el cobro.
-    if (hayEncargo && !datosFichaRef.current) { setFichaAbierta(true); return }
+    // Venta por encargo: la ficha se llena al ENTRAR al cobro (define el anticipo).
+    // Si por algún motivo aún no está, reabrirla en vez de cobrar.
+    if (hayEncargo && !datosFicha) { setFichaAbierta(true); return }
     // Si la config exige confirmación (huella/código), abrir el modal de canje.
     if (requiereConfirmCanje) { setConfirmCanje(true); return }
     await finalizarVenta()
   }
 
-  // La ficha de encargo quedó llena: guardamos los datos y reanudamos el cobro
-  // (pasando por el gate de canje si aplica).
-  async function onFichaConfirmada(datos: DatosFichaEncargo) {
-    datosFichaRef.current = datos
+  // La ficha de encargo quedó llena: guardamos los datos (definen el anticipo) y
+  // volvemos al modal, que ahora exige cobrar solo la parte-con-stock + anticipo.
+  // NO se cobra automáticamente: el cajero teclea el pago del anticipo y confirma.
+  function onFichaConfirmada(datos: DatosFichaEncargo) {
+    setDatosFicha(datos)
     setFichaAbierta(false)
-    if (requiereConfirmCanje) { setConfirmCanje(true); return }
-    await finalizarVenta()
+  }
+
+  // Cancelar la ficha = cancelar el cobro por encargo (no tiene sentido cobrar sin
+  // la ficha). Cierra todo el modal de cobro.
+  function onFichaCancelada() {
+    setFichaAbierta(false)
+    onCerrar()
   }
 
   async function finalizarVenta() {
@@ -403,16 +425,19 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             }
           : {}),
         // Ficha de encargo (venta sobre pedido): si el cajero la llenó, se adjunta
-        // para que el backend cree la EncargoFicha del módulo "Encargos".
-        ...(datosFichaRef.current
+        // para que el backend cree la EncargoFicha del módulo "Encargos". Incluye
+        // el anticipo (define lo cobrado hoy) y si la resta va a cartera.
+        ...(datosFicha
           ? {
               encargo_ficha: {
-                cliente_nombre: datosFichaRef.current.cliente_nombre,
-                telefono: datosFichaRef.current.telefono,
-                motivo: datosFichaRef.current.motivo,
-                tiempo_entrega: datosFichaRef.current.tiempo_entrega,
-                correo: datosFichaRef.current.correo ?? null,
-                notas: datosFichaRef.current.notas ?? null,
+                cliente_nombre: datosFicha.cliente_nombre,
+                telefono: datosFicha.telefono,
+                motivo: datosFicha.motivo,
+                tiempo_entrega: datosFicha.tiempo_entrega,
+                correo: datosFicha.correo ?? null,
+                notas: datosFicha.notas ?? null,
+                anticipo: datosFicha.anticipo,
+                resta_a_cartera: datosFicha.resta_a_cartera,
               },
             }
           : {}),
@@ -478,12 +503,26 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             })}
           </div>
 
+          {/* Aviso de encargo: cuando hay resta diferida, aclarar que hoy se cobra
+              solo la parte con stock + anticipo (el total del carrito es mayor). */}
+          {restaEncargo > 0 && (
+            <div className="rounded-xl border border-orange-200 bg-orange-50 px-4 py-2.5 flex flex-col gap-1 text-sm">
+              <div className="flex items-center justify-between text-gray-500">
+                <span>Total del carrito</span><span className="tabular-nums">{fmt(total)}</span>
+              </div>
+              <div className="flex items-center justify-between text-orange-700">
+                <span className="inline-flex items-center gap-1"><ClipboardList size={14} /> Resta de encargo (al entregar)</span>
+                <span className="font-semibold tabular-nums">−{fmt(restaEncargo)}</span>
+              </div>
+            </div>
+          )}
+
           {/* Total — con desglose cuando se aplican puntos (Total − puntos = a pagar) */}
           {pPuntos > 0 ? (
             <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-sm text-gray-500">
-                <span>Total</span>
-                <span className="font-medium text-gray-700">{fmt(total)}</span>
+                <span>{restaEncargo > 0 ? "A cobrar hoy" : "Total"}</span>
+                <span className="font-medium text-gray-700">{fmt(totalACobrar)}</span>
               </div>
               <div className="flex items-center justify-between text-sm text-amber-700">
                 <span className="inline-flex items-center gap-1">
@@ -494,13 +533,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               <div className="h-px bg-gray-200 my-0.5" />
               <div className="flex items-end justify-between">
                 <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">A pagar</span>
-                <span className="text-4xl font-black text-orange-600 leading-none">{fmt(Math.max(0, total - pPuntos))}</span>
+                <span className="text-4xl font-black text-orange-600 leading-none">{fmt(Math.max(0, totalACobrar - pPuntos))}</span>
               </div>
             </div>
           ) : (
             <div className="flex items-end justify-between">
-              <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">Total</span>
-              <span className="text-4xl font-black text-orange-600 leading-none">{fmt(total)}</span>
+              <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">{restaEncargo > 0 ? "A cobrar hoy" : "Total"}</span>
+              <span className="text-4xl font-black text-orange-600 leading-none">{fmt(totalACobrar)}</span>
             </div>
           )}
 
@@ -598,7 +637,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             {METODOS.map(({ id, label, icon: Icon }) => {
               const disabled = id === "credito" && !tieneCredito
               const activo   = (parseFloat(pagos[id]) || 0) > 0
-              const restante = Math.max(0, total - asignado + (parseFloat(pagos[id]) || 0))
+              const restante = Math.max(0, totalACobrar - asignado + (parseFloat(pagos[id]) || 0))
 
               return (
                 <div key={id}
@@ -716,7 +755,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           cuando hay líneas por encargo. Al confirmarla, el cobro continúa. */}
       {fichaAbierta && (
         <FichaEncargoModal
-          onCancelar={() => setFichaAbierta(false)}
+          onCancelar={onFichaCancelada}
           onConfirmar={onFichaConfirmada}
         />
       )}

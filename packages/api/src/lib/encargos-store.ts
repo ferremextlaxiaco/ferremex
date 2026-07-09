@@ -61,6 +61,10 @@ export interface EncargoFicha {
   // ── Montos ──
   total: number // total de las líneas por encargo
   anticipo: number // lo cobrado hoy (anticipo)
+  // Si true, la resta se cargó a la CARTERA del cliente (no se cobra en la ficha:
+  // se liquida por abonos en su cuenta de crédito). Si false, la resta vive aquí
+  // y se liquida con abonos en la propia ficha (cliente esporádico / sin crédito).
+  resta_en_cartera?: boolean
   // resta = total - anticipo - Σ abonos (se deriva; se guarda para lectura simple)
   abonos: EncargoAbono[]
   // ── Estado ──
@@ -83,6 +87,7 @@ export interface NuevaEncargoFicha {
   cliente_id?: string | null
   total: number
   anticipo: number
+  resta_en_cartera?: boolean
   articulos: EncargoArticulo[]
 }
 
@@ -95,8 +100,13 @@ export function totalAbonado(f: EncargoFicha): number {
   return (f.abonos ?? []).reduce((s, a) => s + (Number(a.monto) || 0), 0)
 }
 
-/** Resta pendiente de pago = total − anticipo − abonos. Nunca negativa. */
+/**
+ * Resta pendiente DE PAGO EN LA FICHA = total − anticipo − abonos. Nunca negativa.
+ * Si la resta se cargó a la cartera del cliente (resta_en_cartera), aquí es 0: la
+ * deuda se cobra por la cuenta de crédito, no por la ficha (evita doble cobro).
+ */
 export function restaEncargo(f: EncargoFicha): number {
+  if (f.resta_en_cartera) return 0
   return Math.max(0, (f.total || 0) - (f.anticipo || 0) - totalAbonado(f))
 }
 
@@ -123,6 +133,7 @@ export async function crearEncargoFicha(data: NuevaEncargoFicha): Promise<Encarg
       cliente_id: data.cliente_id ?? null,
       total: Number(data.total) || 0,
       anticipo: Number(data.anticipo) || 0,
+      resta_en_cartera: !!data.resta_en_cartera,
       abonos: [],
       status: "pendiente",
       articulos: data.articulos ?? [],
