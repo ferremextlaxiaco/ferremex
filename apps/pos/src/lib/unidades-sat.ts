@@ -34,8 +34,22 @@ export function nombreUnidad(clave: string): string {
 const ABREVIATURA_UNIDAD: Record<string, string> = {
   KGM: "kg", GRM: "g", TNE: "t", MTR: "m", MTK: "m²", MTQ: "m³",
   LTR: "L", MLT: "ml", H87: "pz", EA: "pz", DOZ: "doc", PR: "par",
+  XBX: "caja", XPK: "paq", XBG: "bolsa", XRO: "rollo", SET: "juego",
+  KT: "kit", XST: "hoja", BO: "bot", TNE_: "t",
 }
-export function abreviaturaUnidad(clave: string): string {
-  if (!clave) return ""
-  return ABREVIATURA_UNIDAD[clave] ?? (UNIDADES_SAT.find((u) => u.clave === clave)?.nombre ?? clave)
+
+/**
+ * Abreviatura de la unidad de venta, aceptando tanto el CÓDIGO SAT (ej. "KGM")
+ * como el NOMBRE ("Kilogramo") — el catálogo mezcla ambos según cómo se cargó.
+ * Cadena vacía / desconocida → "" (no se muestra nada).
+ */
+export function abreviaturaUnidad(valor: string): string {
+  if (!valor) return ""
+  // 1) ¿Es un código SAT con abreviatura conocida?
+  if (ABREVIATURA_UNIDAD[valor]) return ABREVIATURA_UNIDAD[valor]
+  // 2) ¿Es un nombre ("Kilogramo", "Pieza")? Resuelve la clave y reintenta.
+  const porNombre = UNIDADES_SAT.find((u) => u.nombre.toLowerCase() === valor.toLowerCase())
+  if (porNombre && ABREVIATURA_UNIDAD[porNombre.clave]) return ABREVIATURA_UNIDAD[porNombre.clave]
+  // 3) Fallback: el propio valor (código no mapeado o nombre corto).
+  return valor
 }

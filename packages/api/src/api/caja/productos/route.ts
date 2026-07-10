@@ -102,7 +102,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           precio4 = Number(meta.precio4) || 0
           // Venta fraccionada (granel): permite capturar cantidad/monto decimal.
           granel = !!meta.granel
-          unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? ""
+          unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
         } catch { /* sin metadata */ }
       }
       variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, granel, unidadVenta })
@@ -167,7 +167,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 precio2: Number(meta.precio2) || 0,
                 precio3: Number(meta.precio3) || 0,
                 precio4: Number(meta.precio4) || 0,
-                granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "",
+                granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "H87",
               })
             }
           }
@@ -259,7 +259,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vPrecio3 = Number(meta.precio3) || 0
         const vPrecio4 = Number(meta.precio4) || 0
         const vGranel = !!meta.granel
-        const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? ""
+        const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
         for (const v of p.variants ?? []) {
           variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, granel: vGranel, unidadVenta: vUnidadVenta })
         }

@@ -255,7 +255,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             const displayValue = draft !== undefined
               ? draft
               : esGranel ? String(item.cantidad) : String(item.cantidad)
-            const unidadAbrev = esGranel ? abreviaturaUnidad(item.unidadVenta ?? "") : ""
+            const unidadAbrev = abreviaturaUnidad(item.unidadVenta ?? "")
 
             const precioEfectivo = efectivoPrecio(item)
             // Promo aplicada a la línea (gana sobre el mayoreo). importeSinPromo =
@@ -406,7 +406,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     >
                       +
                     </button>
-                    {esGranel && unidadAbrev && <span className="carrito-granel-unidad">{unidadAbrev}</span>}
+                    {unidadAbrev && <span className="carrito-granel-unidad">{unidadAbrev}</span>}
                   </div>
                   {/* Venta fraccionada: capturar el MONTO ($) → recalcula la cantidad. */}
                   {esGranel && (
