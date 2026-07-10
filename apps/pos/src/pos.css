@@ -1165,8 +1165,8 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .carrito-item {
   display: flex;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-left: 3px solid transparent;
@@ -1174,6 +1174,19 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 8px 10px;
   transition: border-color 0.12s, background 0.12s;
   cursor: pointer;
+}
+/* Fila 1: código + nombre (izq) y botón eliminar (der). */
+.carrito-item-sup {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+/* Fila 2: controles de cantidad (izq) + precio/monto (der), bajo el nombre. */
+.carrito-item-inf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 .carrito-item:hover { border-color: #d4d4d8; border-left-color: transparent; }
 .carrito-item:focus-within {
@@ -1200,11 +1213,13 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   line-height: 1.3;
 }
 
+/* Código del producto: prefijo del nombre, en la misma línea. */
 .carrito-item-sku {
   font-size: 11px;
   color: var(--orange);
   font-weight: 700;
   font-family: monospace;
+  margin-right: 2px;
 }
 
 .carrito-item-controles {
@@ -1251,10 +1266,14 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 }
 
 /* ── Venta fraccionada (granel): cantidad decimal + captura por monto ─────── */
+/* En la nueva fila inferior, los controles granel van en línea (cantidad a la
+   izquierda; el campo de monto lo empuja el space-between de .carrito-item-inf). */
 .carrito-item-controles--granel {
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  justify-content: space-between;
 }
 .carrito-granel-fila {
   display: flex;

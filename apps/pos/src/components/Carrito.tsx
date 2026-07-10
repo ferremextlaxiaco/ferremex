@@ -302,10 +302,12 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                 className={`carrito-item${esMayoreo ? " carrito-item--mayoreo" : ""}${tienePromo ? " carrito-item--promo" : ""}${sinStock ? " carrito-item--sin-stock" : ""}${esEncargo ? " carrito-item--encargo" : ""}`}
                 onClick={() => inputRefs.current[item.sku]?.focus()}
               >
+                <div className="carrito-item-sup">
                 <div className="carrito-item-desc">
-                  <span className="carrito-item-nombre">{item.descripcion}</span>
+                  <span className="carrito-item-nombre">
+                    <span className="carrito-item-sku">{item.sku}</span> {item.descripcion}
+                  </span>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                    <span className="carrito-item-sku">{item.sku}</span>
                     {tienePromo && (
                       <button
                         type="button"
@@ -354,6 +356,15 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     )}
                   </div>
                 </div>
+                <button
+                  className="btn-eliminar"
+                  onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE", sku: item.sku }) }}
+                  title="Eliminar"
+                >
+                  ✕
+                </button>
+                </div>
+                <div className="carrito-item-inf">
                 <div className={esGranel ? "carrito-item-controles carrito-item-controles--granel" : "carrito-item-controles"}>
                   <div className="carrito-granel-fila">
                     <button
@@ -432,13 +443,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                       monto: no repetimos el subtotal para evitar el doble precio. */}
                   {!esGranel && `$${importeLinea.toFixed(2)}`}
                 </div>
-                <button
-                  className="btn-eliminar"
-                  onClick={(e) => { e.stopPropagation(); dispatch({ type: "REMOVE", sku: item.sku }) }}
-                  title="Eliminar"
-                >
-                  ✕
-                </button>
+                </div>
               </div>
             )
           })}
