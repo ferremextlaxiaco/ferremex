@@ -449,7 +449,7 @@ export async function generarOCPdf(data: {
 
 export async function ajustarInventario(
   ajustes: { sku: string; nueva_cantidad: number }[]
-): Promise<{ ok: boolean; actualizados: number; errores: string[] }> {
+): Promise<{ ok: boolean; actualizados: number; reparados?: number; errores: string[] }> {
   return apiFetch("/caja/ajuste-inventario", {
     method: "POST",
     body: JSON.stringify({ ajustes }),

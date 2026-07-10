@@ -1,5 +1,5 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
-import { Modules } from "@medusajs/framework/utils"
+import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 
 interface AjusteItem {
   sku: string
@@ -9,10 +9,17 @@ interface AjusteItem {
 
 // POST /caja/ajuste-inventario
 // Body: { ajustes: [{ sku, nueva_cantidad }] }
-// Returns: { ok, actualizados, errores }
+// Returns: { ok, actualizados, errores, reparados }
+//
+// Auto-reparación: si un SKU no tiene inventory_item (deuda de catálogo —
+// productos creados con createProducts() no lo generan), el endpoint lo CREA
+// sobre la marcha (item + link variant↔item) para que el ajuste funcione,
+// en vez de rendirse. Mismo patrón que el script reparar-inventario.ts.
 export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const inventoryModule = req.scope.resolve(Modules.INVENTORY)
   const stockLocationModule = req.scope.resolve(Modules.STOCK_LOCATION)
+  const productModule = req.scope.resolve(Modules.PRODUCT)
+  const remoteLink = req.scope.resolve(ContainerRegistrationKeys.REMOTE_LINK)
 
   const body = req.body as { ajustes?: AjusteItem[] }
   if (!Array.isArray(body.ajustes) || body.ajustes.length === 0) {
@@ -37,8 +44,39 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const itemBySku = new Map<string, any>(items.map((i: any) => [i.sku, i]))
 
-  // Buscar niveles existentes para esos items en el almacén
-  const itemIds = items.map((i: any) => i.id)
+  // ── Auto-reparación: crear inventory_item + link para SKUs que no lo tienen ──
+  const skusSinItem = skus.filter((s) => !itemBySku.has(s))
+  let reparados = 0
+  if (skusSinItem.length > 0) {
+    // Buscar las variantes de esos SKUs (para el título y el link).
+    const variantes = await productModule.listProductVariants(
+      { sku: skusSinItem },
+      { select: ["id", "sku", "title"], take: skusSinItem.length + 10 }
+    )
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const varPorSku = new Map<string, any>(variantes.filter((v: any) => v.sku).map((v: any) => [v.sku, v]))
+
+    for (const sku of skusSinItem) {
+      const variante = varPorSku.get(sku)
+      if (!variante) continue // el SKU no existe como variante → no se puede reparar
+      try {
+        const [nuevoItem] = await inventoryModule.createInventoryItems([{
+          sku,
+          title: variante.title ?? sku,
+          requires_shipping: true,
+        }])
+        await (remoteLink as any).create([{
+          [Modules.PRODUCT]: { variant_id: variante.id },
+          [Modules.INVENTORY]: { inventory_item_id: nuevoItem.id },
+        }])
+        itemBySku.set(sku, nuevoItem)
+        reparados++
+      } catch { /* si falla la reparación, el ajuste lo reportará como error abajo */ }
+    }
+  }
+
+  // Buscar niveles existentes para esos items en el almacén (incluye los recién creados)
+  const itemIds = [...itemBySku.values()].map((i: any) => i.id)
   const levels = itemIds.length > 0
     ? await inventoryModule.listInventoryLevels(
         { inventory_item_id: itemIds },
@@ -56,7 +94,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     const item = itemBySku.get(ajuste.sku)
 
     if (!item) {
-      errores.push(`SKU "${ajuste.sku}" no encontrado en inventario`)
+      errores.push(`SKU "${ajuste.sku}" no encontrado en el catálogo`)
       continue
     }
 
@@ -96,6 +134,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   res.json({
     ok: errores.length === 0,
     actualizados,
+    reparados,
     errores,
   })
 }

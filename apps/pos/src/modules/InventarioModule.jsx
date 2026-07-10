@@ -234,9 +234,24 @@ export function InventarioModule() {
     setGuardando(true)
     try {
       const ajustes = conCambio.map((f) => ({ sku: f.clave, nueva_cantidad: Number(f.nueva) }))
-      await ajustarInventario(ajustes)
-      push(`Inventario ajustado: ${ajustes.length} artículo(s)`, "success")
-      setFilas([])
+      const res = await ajustarInventario(ajustes)
+      const actualizados = res?.actualizados ?? 0
+      const errores = res?.errores ?? []
+      const reparados = res?.reparados ?? 0
+
+      if (errores.length > 0) {
+        // Falló al menos un SKU: informa qué se logró y qué no (no borres las filas
+        // fallidas para que el cajero las vea y reintente).
+        const detalle = errores.slice(0, 3).join(" · ") + (errores.length > 3 ? ` (+${errores.length - 3} más)` : "")
+        push(`Se ajustaron ${actualizados} de ${ajustes.length}. Fallaron: ${detalle}`, "error")
+        // Deja solo las filas que fallaron para reintentar.
+        const skusFallidos = new Set(errores.map((e) => (e.match(/"([^"]+)"/)?.[1]) ?? ""))
+        setFilas((prev) => prev.filter((f) => skusFallidos.has(f.clave)))
+      } else {
+        const extra = reparados > 0 ? ` (${reparados} sin inventario previo, ya inicializado${reparados !== 1 ? "s" : ""})` : ""
+        push(`Inventario ajustado: ${actualizados} artículo(s)${extra}`, "success")
+        setFilas([])
+      }
     } catch (e) {
       push(`Error al guardar: ${e instanceof Error ? e.message : "desconocido"}`, "error")
     } finally {
