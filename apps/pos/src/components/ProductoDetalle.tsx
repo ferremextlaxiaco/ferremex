@@ -67,6 +67,9 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           // Proveedor → para el pedido automático si se vende por encargo.
           proveedor: producto.proveedor,
           proveedor_id: producto.proveedor_id,
+          // Venta fraccionada → captura por cantidad/monto decimal en el carrito.
+          granel: producto.granel,
+          unidadVenta: producto.unidadVenta,
           // Venta por encargo: la línea se vende sin stock (sobre pedido).
           ...(comoEncargo ? { esEncargo: true } : {}),
         },

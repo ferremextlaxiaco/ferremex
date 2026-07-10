@@ -37,7 +37,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; granel: boolean; unidadVenta: string }
   const variantesBase: VarianteBase[] = []
   // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
   // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
@@ -80,6 +80,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let precio2 = 0
       let precio3 = 0
       let precio4 = 0
+      let granel = false
+      let unidadVenta = ""
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
@@ -98,9 +100,12 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           precio2 = Number(meta.precio2) || 0
           precio3 = Number(meta.precio3) || 0
           precio4 = Number(meta.precio4) || 0
+          // Venta fraccionada (granel): permite capturar cantidad/monto decimal.
+          granel = !!meta.granel
+          unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? ""
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4 })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, granel, unidadVenta })
       matchExacto = true
     }
   }
@@ -162,6 +167,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 precio2: Number(meta.precio2) || 0,
                 precio3: Number(meta.precio3) || 0,
                 precio4: Number(meta.precio4) || 0,
+                granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "",
               })
             }
           }
@@ -252,8 +258,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vPrecio2 = Number(meta.precio2) || 0
         const vPrecio3 = Number(meta.precio3) || 0
         const vPrecio4 = Number(meta.precio4) || 0
+        const vGranel = !!meta.granel
+        const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? ""
         for (const v of p.variants ?? []) {
-          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4 })
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, granel: vGranel, unidadVenta: vUnidadVenta })
         }
       }
     }
@@ -344,6 +352,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         especificaciones: v.especificaciones,
         mayoreoActivo: v.mayoreoActivo,
         mayoreoMin: v.mayoreoMin,
+        // Venta fraccionada (granel): el POS habilita captura de cantidad/monto
+        // decimal en el carrito. `unidadVenta` (kg/m/L) se muestra junto a la cantidad.
+        granel: v.granel,
+        unidadVenta: v.unidadVenta,
       }
     })
     .filter((r) => r.sku && r.descripcion)

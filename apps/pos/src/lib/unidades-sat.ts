@@ -29,3 +29,13 @@ export const UNIDADES_SAT: UnidadSat[] = [
 export function nombreUnidad(clave: string): string {
   return UNIDADES_SAT.find((u) => u.clave === clave)?.nombre ?? clave
 }
+
+/** Abreviatura compacta de la unidad para mostrar junto a la cantidad (ej. "kg", "m", "L"). */
+const ABREVIATURA_UNIDAD: Record<string, string> = {
+  KGM: "kg", GRM: "g", TNE: "t", MTR: "m", MTK: "m²", MTQ: "m³",
+  LTR: "L", MLT: "ml", H87: "pz", EA: "pz", DOZ: "doc", PR: "par",
+}
+export function abreviaturaUnidad(clave: string): string {
+  if (!clave) return ""
+  return ABREVIATURA_UNIDAD[clave] ?? (UNIDADES_SAT.find((u) => u.clave === clave)?.nombre ?? clave)
+}

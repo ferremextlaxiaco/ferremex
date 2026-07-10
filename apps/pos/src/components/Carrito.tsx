@@ -1,6 +1,7 @@
 import { useRef, useState } from "react"
 import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, X, AlertTriangle, Trash2, Boxes } from "lucide-react"
 import { usePOS, efectivoPrecio, modoVentaActual } from "../lib/pos-store"
+import { abreviaturaUnidad } from "../lib/unidades-sat"
 import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
@@ -34,6 +35,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
   // draft values while the user is typing (sku → string)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
+  // Draft del MONTO ($) para líneas de venta fraccionada (granel). Al confirmar,
+  // la cantidad se recalcula = monto / precio unitario.
+  const [montoDrafts, setMontoDrafts] = useState<Record<string, string>>({})
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({})
   // Paquete cuyo desglose se está viendo (reconstruido desde las líneas del carrito)
   const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
@@ -43,20 +47,63 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
   function startDraft(sku: string, current: number) {
     setDrafts((prev) => ({ ...prev, [sku]: String(current) }))
+    // Si había un draft de monto abierto para esta línea, descártalo: la cantidad
+    // se está editando directamente, así que un blur posterior del monto no debe
+    // sobreescribir con un valor viejo.
+    setMontoDrafts((prev) => {
+      if (prev[sku] === undefined) return prev
+      const next = { ...prev }; delete next[sku]; return next
+    })
   }
 
   function commitDraft(sku: string) {
     const raw = drafts[sku]
     if (raw === undefined) return
-    const n = parseInt(raw, 10)
-    if (!isNaN(n) && n >= 1) {
-      dispatch({ type: "SET_CANTIDAD", sku, cantidad: n })
+    const item = items.find((i) => i.sku === sku)
+    // Granel: acepta cantidad DECIMAL (ej. 0.541 kg). No-granel: entero ≥ 1.
+    if (item?.granel) {
+      const n = parseFloat(raw.replace(",", "."))
+      if (!isNaN(n) && n > 0) dispatch({ type: "SET_CANTIDAD", sku, cantidad: n })
+    } else {
+      const n = parseInt(raw, 10)
+      if (!isNaN(n) && n >= 1) dispatch({ type: "SET_CANTIDAD", sku, cantidad: n })
     }
     setDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
   }
 
   function cancelDraft(sku: string) {
     setDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
+  }
+
+  // ── Captura por MONTO ($) para líneas granel ────────────────────────────────
+  function startMonto(sku: string, montoActual: number) {
+    setMontoDrafts((prev) => ({ ...prev, [sku]: montoActual.toFixed(2) }))
+  }
+  function commitMonto(sku: string) {
+    const raw = montoDrafts[sku]
+    if (raw === undefined) return
+    const item = items.find((i) => i.sku === sku)
+    const monto = parseFloat(raw.replace(",", "."))
+    if (item && !isNaN(monto) && monto > 0) {
+      // cantidad = monto / precio unitario. El precio efectivo puede cambiar si la
+      // cantidad cruza el umbral de mayoreo, así que iteramos: calculamos con el
+      // precio actual y, si la cantidad resultante activa/desactiva el mayoreo,
+      // recalculamos con el precio ya correcto. Converge en ≤2 pasadas.
+      let precioUnit = efectivoPrecio(item)
+      if (precioUnit > 0) {
+        let cant = monto / precioUnit
+        const precio2 = efectivoPrecio({ ...item, cantidad: cant })
+        if (precio2 > 0 && precio2 !== precioUnit) {
+          precioUnit = precio2
+          cant = monto / precioUnit
+        }
+        dispatch({ type: "SET_CANTIDAD", sku, cantidad: cant })
+      }
+    }
+    setMontoDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
+  }
+  function cancelMonto(sku: string) {
+    setMontoDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>, sku: string) {
@@ -202,8 +249,13 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
 
           {/* Items sueltos */}
           {sueltos.map((item) => {
+            const esGranel = !!item.granel
             const draft = drafts[item.sku]
-            const displayValue = draft !== undefined ? draft : String(item.cantidad)
+            // En granel se muestran hasta 3 decimales (ej. 0.541); en entero, tal cual.
+            const displayValue = draft !== undefined
+              ? draft
+              : esGranel ? String(item.cantidad) : String(item.cantidad)
+            const unidadAbrev = esGranel ? abreviaturaUnidad(item.unidadVenta ?? "") : ""
 
             const precioEfectivo = efectivoPrecio(item)
             // Promo aplicada a la línea (gana sobre el mayoreo). importeSinPromo =
@@ -302,35 +354,73 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     )}
                   </div>
                 </div>
-                <div className="carrito-item-controles">
-                  <button
-                    className="btn-cantidad"
-                    onClick={(e) => { e.stopPropagation(); dispatch({ type: "DECREMENT", sku: item.sku }) }}
-                  >
-                    −
-                  </button>
-                  <input
-                    ref={(el) => { inputRefs.current[item.sku] = el }}
-                    className="carrito-item-cantidad-input"
-                    type="number"
-                    min={1}
-                    max={sinTopeCantidad ? undefined : item.existencia}
-                    value={displayValue}
-                    onClick={(e) => e.stopPropagation()}
-                    onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
-                    onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
-                    onBlur={() => commitDraft(item.sku)}
-                    onKeyDown={(e) => handleKeyDown(e, item.sku)}
-                    title={sinTopeCantidad ? "Sin límite de existencia" : `Máximo ${item.existencia} disponibles`}
-                  />
-                  <button
-                    className="btn-cantidad"
-                    onClick={(e) => { e.stopPropagation(); dispatch({ type: "INCREMENT", sku: item.sku }) }}
-                    disabled={!sinTopeCantidad && item.cantidad >= item.existencia}
-                    title={!sinTopeCantidad && item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
-                  >
-                    +
-                  </button>
+                <div className={esGranel ? "carrito-item-controles carrito-item-controles--granel" : "carrito-item-controles"}>
+                  <div className="carrito-granel-fila">
+                    <button
+                      className="btn-cantidad"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        // Granel: bajar 1 unidad pero sin borrar la línea (clamp al
+                        // mínimo). No-granel: DECREMENT normal (resta 1, borra si 0).
+                        if (esGranel) {
+                          cancelMonto(item.sku)
+                          if (item.cantidad > 1) dispatch({ type: "SET_CANTIDAD", sku: item.sku, cantidad: item.cantidad - 1 })
+                        } else {
+                          dispatch({ type: "DECREMENT", sku: item.sku })
+                        }
+                      }}
+                    >
+                      −
+                    </button>
+                    <input
+                      ref={(el) => { inputRefs.current[item.sku] = el }}
+                      className="carrito-item-cantidad-input"
+                      type="number"
+                      min={esGranel ? 0.001 : 1}
+                      step={esGranel ? 0.001 : 1}
+                      max={sinTopeCantidad ? undefined : item.existencia}
+                      value={displayValue}
+                      onClick={(e) => e.stopPropagation()}
+                      onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
+                      onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
+                      onBlur={() => commitDraft(item.sku)}
+                      onKeyDown={(e) => handleKeyDown(e, item.sku)}
+                      title={sinTopeCantidad ? "Sin límite de existencia" : `Máximo ${item.existencia} disponibles`}
+                    />
+                    <button
+                      className="btn-cantidad"
+                      onClick={(e) => { e.stopPropagation(); if (esGranel) cancelMonto(item.sku); dispatch({ type: "INCREMENT", sku: item.sku }) }}
+                      disabled={!sinTopeCantidad && item.cantidad >= item.existencia}
+                      title={!sinTopeCantidad && item.cantidad >= item.existencia ? `Máximo ${item.existencia} disponibles` : undefined}
+                    >
+                      +
+                    </button>
+                    {esGranel && unidadAbrev && <span className="carrito-granel-unidad">{unidadAbrev}</span>}
+                  </div>
+                  {/* Venta fraccionada: capturar el MONTO ($) → recalcula la cantidad. */}
+                  {esGranel && (
+                    <label className="carrito-granel-monto" onClick={(e) => e.stopPropagation()}>
+                      <span className="carrito-granel-monto-sign">$</span>
+                      <input
+                        className="carrito-granel-monto-input"
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        inputMode="decimal"
+                        placeholder="monto"
+                        value={montoDrafts[item.sku] ?? importeLinea.toFixed(2)}
+                        onClick={(e) => e.stopPropagation()}
+                        onFocus={(e) => { startMonto(item.sku, importeLinea); e.currentTarget.select() }}
+                        onChange={(e) => setMontoDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
+                        onBlur={() => commitMonto(item.sku)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") { commitMonto(item.sku); e.currentTarget.blur() }
+                          else if (e.key === "Escape") { cancelMonto(item.sku); e.currentTarget.blur() }
+                        }}
+                        title="Monto en pesos — la cantidad se recalcula automáticamente"
+                      />
+                    </label>
+                  )}
                 </div>
                 <div className="carrito-item-subtotal">
                   {tienePromo ? (

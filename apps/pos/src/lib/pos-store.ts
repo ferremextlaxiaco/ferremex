@@ -58,6 +58,11 @@ export interface CartItem {
   impuesto?: boolean
   mayoreoActivo?: boolean
   mayoreoMin?: number
+  // Venta fraccionada (granel): si true, la línea acepta cantidad DECIMAL y el
+  // carrito ofrece captura por monto ($) con recálculo automático de la cantidad.
+  // `unidadVenta` = código SAT de la unidad (kg/m/L) para mostrarla junto al peso.
+  granel?: boolean
+  unidadVenta?: string
   // Cuando el item forma parte de un paquete vendido, `precio` ya es el precio
   // prorrateado del paquete para esa línea, `paquete_id`/`paquete_nombre` lo
   // marcan, y `paqueteCantidad` es cuántas unidades aporta el paquete por copia
@@ -262,7 +267,12 @@ function posReducer(state: PosState, action: PosAction): PosState {
       const existencia = linea?.existencia ?? action.cantidad
       const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo
       const tope = sinTope ? action.cantidad : existencia
-      const clamped = Math.max(1, Math.min(action.cantidad, tope))
+      // Granel: se permite cantidad DECIMAL (ej. 0.541 kg), mínimo 0.001 y
+      // redondeada a 3 decimales. No-granel: entero, mínimo 1 (como siempre).
+      const esGranel = !!linea?.granel
+      const min = esGranel ? 0.001 : 1
+      const bruto = Math.max(min, Math.min(action.cantidad, tope))
+      const clamped = esGranel ? Math.round(bruto * 1000) / 1000 : bruto
       return {
         ...state,
         items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),

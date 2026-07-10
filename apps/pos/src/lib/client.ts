@@ -29,6 +29,11 @@ export interface ProductoPOS {
   especificaciones?: { clave: string; valor: string }[]
   mayoreoActivo?: boolean
   mayoreoMin?: number
+  // Venta fraccionada (granel): si true, el carrito permite capturar cantidad o
+  // monto ($) con decimales y recalcular el otro automáticamente. `unidadVenta`
+  // es el código SAT de la unidad (ej. "KGM", "MTR"); se muestra abreviada.
+  granel?: boolean
+  unidadVenta?: string
 }
 
 export interface FiltrosBusqueda {
