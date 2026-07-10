@@ -96,6 +96,14 @@ export interface VentaRequest {
     anticipo?: number
     resta_a_cartera?: boolean
   }
+  // Venta CONTRA ENTREGA (a domicilio, pago diferido). Si viene, la venta se
+  // registra y descuenta inventario pero NO se cobra hoy (queda por_cobrar).
+  entrega_ficha?: {
+    direccion: string
+    recibe: { nombre: string; telefono: string }
+    paga: { nombre: string; telefono: string }
+    comentarios?: string
+  }
 }
 
 export interface VentaResponse {
@@ -114,6 +122,12 @@ export interface VentaResponse {
   puntos_canjeados?: number
   puntos_ganados?: number
   cambio: number
+  // Venta contra entrega (a domicilio, pago diferido). `estado: "por_cobrar"`,
+  // `metodo_pago: "contra_entrega"`, y `entrega_total` = monto real a cobrar al
+  // entregar (el `total` de la venta es 0 hoy, para que el corte cuadre).
+  estado?: string
+  metodo_pago?: string
+  entrega_total?: number
   // Cliente al que se hizo la venta (si lo hubo). Lo devuelve el backend desde
   // el registro; es la fuente de verdad para facturar (no el clienteActivo del
   // estado, que se resetea al terminar la venta).
@@ -504,6 +518,10 @@ export interface TicketConfig {
     nota_venta: FormatoDoc
     factura: FormatoDoc
     cupon: FormatoDoc
+    // Venta contra entrega: ticket del cliente + hoja del repartidor. Editables
+    // desde el módulo de Formatos como los demás.
+    entrega_cliente: FormatoDoc
+    entrega_repartidor: FormatoDoc
   }
 }
 
@@ -515,9 +533,13 @@ export interface FormatoDoc {
   mostrar_precios: boolean
   mostrar_vigencia: boolean
   vigencia_dias: number
+  // Solo para la hoja del repartidor: casillas ☐ por artículo y bloque de ficha
+  // de entrega (dirección/recibe/paga/comentarios). Opcionales/retrocompatibles.
+  mostrar_casillas?: boolean
+  mostrar_ficha?: boolean
 }
 
-export type FormatoKey = "nota_venta" | "factura" | "cupon"
+export type FormatoKey = "nota_venta" | "factura" | "cupon" | "entrega_cliente" | "entrega_repartidor"
 
 const FORMATOS_DEFAULT: NonNullable<TicketConfig["formatos"]> = {
   nota_venta: {
@@ -538,6 +560,19 @@ const FORMATOS_DEFAULT: NonNullable<TicketConfig["formatos"]> = {
     pie: ["Presenta este cupón en tu próxima compra"],
     mostrar_precios: false, mostrar_vigencia: true, vigencia_dias: 30,
   },
+  entrega_cliente: {
+    activo: true, titulo: "PAGO CONTRA ENTREGA",
+    encabezado: ["FERREMEX", "Tlaxiaco, Oaxaca"],
+    pie: ["Conserve este comprobante", "El pago se realiza al recibir el material"],
+    mostrar_precios: true, mostrar_vigencia: false, vigencia_dias: 0,
+  },
+  entrega_repartidor: {
+    activo: true, titulo: "HOJA DE ENTREGA",
+    encabezado: ["FERREMEX", "Copia del repartidor"],
+    pie: ["Marque cada artículo entregado", "Recabe firma y cobre el total"],
+    mostrar_precios: false, mostrar_vigencia: false, vigencia_dias: 0,
+    mostrar_casillas: true, mostrar_ficha: true,
+  },
 }
 
 export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
@@ -557,6 +592,8 @@ export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
       nota_venta: { ...FORMATOS_DEFAULT.nota_venta, ...raw.formatos?.nota_venta },
       factura: { ...FORMATOS_DEFAULT.factura, ...raw.formatos?.factura },
       cupon: { ...FORMATOS_DEFAULT.cupon, ...raw.formatos?.cupon },
+      entrega_cliente: { ...FORMATOS_DEFAULT.entrega_cliente, ...raw.formatos?.entrega_cliente },
+      entrega_repartidor: { ...FORMATOS_DEFAULT.entrega_repartidor, ...raw.formatos?.entrega_repartidor },
     },
   }
 }
@@ -1120,6 +1157,81 @@ export async function liquidarEncargo(
   ctx: { caja_id?: string | null; caja_name?: string | null; cajero_id?: string; cajero_name?: string; turno_id?: string; metodo?: string }
 ): Promise<EncargoFicha> {
   return apiFetch<EncargoFicha>(`/caja/encargos/${encodeURIComponent(id)}/liquidar`, {
+    method: "POST",
+    body: JSON.stringify(ctx),
+  })
+}
+
+// ── Entregas (venta contra entrega — a domicilio, pago diferido) ──────────────
+// Fichas de las ventas por_cobrar: a dónde va el material, quién recibe, quién
+// paga (a veces un tercero) y el monto a cobrar al entregar. El módulo "Por
+// cobrar" las consulta y liquida (registra el pago en el corte del día que se
+// cobra). El backend las crea al registrar una venta contra entrega.
+
+export type EntregaStatus = "por_entregar" | "entregada" | "cancelada"
+
+export interface EntregaContacto {
+  nombre: string
+  telefono: string
+}
+
+export interface EntregaArticulo {
+  sku: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+}
+
+export interface EntregaPago {
+  monto: number
+  metodo: string
+  fecha: string
+  nota?: string
+}
+
+export interface EntregaFicha {
+  id: string
+  folio: string
+  fecha: string
+  direccion: string
+  recibe: EntregaContacto
+  paga: EntregaContacto
+  comentarios: string
+  total: number
+  status: EntregaStatus
+  pago: EntregaPago | null
+  articulos: EntregaArticulo[]
+  cliente_id?: string | null
+  historial: { fecha: string; de: EntregaStatus; a: EntregaStatus; nota?: string }[]
+}
+
+/** Lista las fichas de entrega (venta contra entrega). */
+export async function listarEntregas(status?: EntregaStatus): Promise<EntregaFicha[]> {
+  const qs = status ? `?status=${encodeURIComponent(status)}` : ""
+  return apiFetch<EntregaFicha[]>(`/caja/entregas${qs}`)
+}
+
+/** Detalle de una ficha de entrega por id. */
+export async function obtenerEntrega(id: string): Promise<EntregaFicha> {
+  return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}`)
+}
+
+/** Busca la ficha de entrega de un folio de venta (para imprimir tras cobrar). */
+export async function obtenerEntregaPorFolio(folio: string): Promise<EntregaFicha | null> {
+  const todas = await listarEntregas()
+  return todas.find((f) => f.folio === folio) ?? null
+}
+
+/**
+ * Liquida y entrega: registra el pago (que entra al corte del día que se cobra),
+ * marca la venta pagada y la entrega como entregada. Reutiliza el patrón de
+ * liquidación de encargos (movimiento de caja "Cobro de entrega" el día de hoy).
+ */
+export async function liquidarEntrega(
+  id: string,
+  ctx: { caja_id?: string | null; caja_name?: string | null; cajero_id?: string; cajero_name?: string; turno_id?: string; metodo?: string }
+): Promise<EntregaFicha> {
+  return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}/liquidar`, {
     method: "POST",
     body: JSON.stringify(ctx),
   })

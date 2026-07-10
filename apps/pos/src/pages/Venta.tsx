@@ -6,6 +6,7 @@ import { Carrito } from "../components/Carrito"
 import { ModalCobro } from "../components/ModalCobro"
 import { Ticket } from "../components/Ticket"
 import { ComprobanteEncargo } from "../components/ComprobanteEncargo"
+import { TicketsEntrega } from "../components/TicketsEntrega"
 import { BarraComandos } from "../components/BarraComandos"
 import { PedidosEnEspera } from "../components/PedidosEnEspera"
 import { CargarCotizacionPopup } from "../components/CargarCotizacionPopup"
@@ -16,7 +17,7 @@ import { usePedidosEnEspera, guardarEnEspera } from "../lib/pedidos-espera"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { useToasts } from "../hooks/useToasts"
-import { crearCotizacion, actualizarCotizacion, obtenerEncargoPorFolio, type VentaResponse, type Cotizacion, type EncargoFicha } from "../lib/client"
+import { crearCotizacion, actualizarCotizacion, obtenerEncargoPorFolio, obtenerEntregaPorFolio, type VentaResponse, type Cotizacion, type EncargoFicha, type EntregaFicha } from "../lib/client"
 
 // Ancho a partir del cual el carrito se muestra como columna fija a la derecha.
 // Por debajo, cae al drawer deslizable con FAB (terminales/pantallas angostas).
@@ -29,6 +30,9 @@ export function Venta() {
   const [ventaCompletada, setVentaCompletada] = useState<VentaResponse | null>(null)
   // Comprobante de encargo a mostrar tras el ticket (venta por encargo).
   const [comprobanteEncargo, setComprobanteEncargo] = useState<EncargoFicha | null>(null)
+  // Tickets de entrega (cliente + repartidor) tras una venta contra entrega, en
+  // vez del ticket normal (no hubo pago hoy).
+  const [ticketsEntrega, setTicketsEntrega] = useState<{ venta: VentaResponse; ficha: EntregaFicha } | null>(null)
   // El carrito es columna fija en pantallas anchas; drawer en las angostas.
   const [carritoFijo, setCarritoFijo] = useState(
     () => typeof window !== "undefined" && window.innerWidth >= ANCHO_CARRITO_FIJO
@@ -108,6 +112,17 @@ export function Venta() {
 
   function handleVentaCompletada(venta: VentaResponse) {
     setMostrarCobro(false)
+    // Venta contra entrega: en vez del ticket normal, cargar la ficha de entrega
+    // y mostrar los dos comprobantes (cliente + repartidor). No hubo pago hoy.
+    if (venta.estado === "por_cobrar" || venta.metodo_pago === "contra_entrega") {
+      obtenerEntregaPorFolio(venta.folio)
+        .then((ficha) => {
+          if (ficha) setTicketsEntrega({ venta, ficha })
+          else setVentaCompletada(venta) // fallback: ticket normal si no hay ficha
+        })
+        .catch(() => setVentaCompletada(venta))
+      return
+    }
     setVentaCompletada(venta)
   }
 
@@ -340,6 +355,15 @@ export function Venta() {
           ficha={comprobanteEncargo}
           negocio={state.ticketConfig?.encabezado?.nombre || "FERREMEX"}
           onCerrar={() => setComprobanteEncargo(null)}
+        />
+      )}
+
+      {/* ===== Tickets de entrega (cliente + repartidor) ===== */}
+      {ticketsEntrega && (
+        <TicketsEntrega
+          venta={ticketsEntrega.venta}
+          ficha={ticketsEntrega.ficha}
+          onCerrar={() => setTicketsEntrega(null)}
         />
       )}
 

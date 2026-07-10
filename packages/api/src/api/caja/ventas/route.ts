@@ -5,6 +5,7 @@ import * as crypto from "crypto"
 import { readJson, writeJsonAtomic, withFileLock } from "../../../lib/json-store"
 import { agregarEncargosAPedidos, type EncargoLinea } from "../../../lib/pedidos-encargo"
 import { crearEncargoFicha, type EncargoArticulo } from "../../../lib/encargos-store"
+import { crearEntregaFicha, type EntregaArticulo } from "../../../lib/entregas-store"
 import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
 import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
@@ -89,6 +90,16 @@ interface VentaBody {
     // (cliente esporádico o registrado sin crédito). Lo decide el frontend según
     // el cliente activo; el backend lo respeta solo si hay cliente_id.
     resta_a_cartera?: boolean
+  }
+  // Venta CONTRA ENTREGA (a domicilio, pago diferido): cuando viene esta ficha, la
+  // venta se registra y DESCUENTA inventario, pero NO se cobra hoy (queda
+  // `por_cobrar`). El pago se registra después al liquidar la entrega. Se persiste
+  // como EntregaFicha (entregas-pos.json) para el módulo "Por cobrar".
+  entrega_ficha?: {
+    direccion: string
+    recibe: { nombre: string; telefono: string }
+    paga: { nombre: string; telefono: string }
+    comentarios?: string
   }
 }
 
@@ -177,6 +188,20 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
   const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
 
+  // ── Venta CONTRA ENTREGA (a domicilio, pago diferido) ─────────────────────
+  // Si viene la ficha de entrega, la venta se registra y descuenta inventario,
+  // pero NO se cobra hoy (queda `por_cobrar`). El pago se registra al liquidar.
+  // Requiere los datos mínimos de la ficha (dirección + recibe + paga).
+  const esContraEntrega = !!body.entrega_ficha
+  if (esContraEntrega) {
+    const ef = body.entrega_ficha!
+    if (!ef.direccion?.trim() || !ef.recibe?.nombre?.trim() || !ef.recibe?.telefono?.trim() ||
+        !ef.paga?.nombre?.trim() || !ef.paga?.telefono?.trim()) {
+      res.status(400).json({ error: "La entrega requiere dirección, y nombre+teléfono de quién recibe y quién paga" })
+      return
+    }
+  }
+
   // ── Venta por encargo: pago parcial (anticipo) ────────────────────────────
   // Cuando hay líneas por encargo, el cliente puede dejar solo un ANTICIPO por
   // la parte ENCARGADA (el faltante); la parte con stock se paga completa hoy.
@@ -211,8 +236,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
   }
 
-  // Monto que DEBE cubrirse hoy: parte con stock completa + anticipo del encargo.
-  const pago_requerido = hayFaltante ? Math.round((total_stock + anticipoSolicitado) * 100) / 100 : total
+  // Monto que DEBE cubrirse hoy. Contra entrega: $0 (se cobra al liquidar). Encargo:
+  // parte con stock + anticipo. Venta normal: el total.
+  const pago_requerido = esContraEntrega ? 0
+    : hayFaltante ? Math.round((total_stock + anticipoSolicitado) * 100) / 100
+    : total
 
   if (total_pagado < pago_requerido - 0.01) {
     res.status(400).json({ error: hayFaltante ? "El pago no cubre la parte con existencia más el anticipo" : "El pago es menor al total" })
@@ -396,9 +424,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null, ...(i.no_descontar ? { no_descontar: true } : {}) } : {}),
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
-          // encargo es el total normal; con encargo es parte-con-stock + anticipo.
-          // La resta del encargo NO es parte de esta venta (vive en ficha/cartera).
+          // encargo es el total normal; con encargo es parte-con-stock + anticipo;
+          // contra entrega es 0 (se cobra al liquidar). La resta/pendiente NO es
+          // parte del efectivo de esta venta (vive en ficha/cartera/entrega).
           total: pago_requerido,
+          // Contra entrega: estado por_cobrar + el monto real que se cobrará al
+          // entregar (para el ticket del cliente, la hoja del repartidor y el corte).
+          ...(esContraEntrega ? {
+            estado: "por_cobrar",
+            metodo_pago: "contra_entrega",
+            entrega_total: Math.round(total * 100) / 100,
+          } : {}),
           // Trazabilidad del encargo: total real de lo encargado, anticipo cobrado
           // hoy y resta pendiente. Solo se persisten cuando hay faltante encargado.
           ...(hayFaltante ? {
@@ -572,6 +608,33 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         })
       } catch (e) {
         console.error("[caja/ventas] Venta OK pero falló crear la ficha de encargo:", e)
+      }
+    }
+
+    // Ficha de entrega (venta contra entrega): la venta ya quedó `por_cobrar` con
+    // inventario descontado; persistimos a dónde va y quién paga para el módulo
+    // "Por cobrar" y la hoja del repartidor. Best-effort (la venta ya está registrada).
+    if (esContraEntrega && body.entrega_ficha) {
+      try {
+        const ef = body.entrega_ficha
+        const articulosEntrega: EntregaArticulo[] = items.map((i) => ({
+          sku: i.sku,
+          descripcion: i.descripcion,
+          cantidad: i.cantidad,
+          precio_unitario: i.precio_unitario,
+        }))
+        await crearEntregaFicha({
+          folio: resultado.registro.folio,
+          direccion: ef.direccion,
+          recibe: { nombre: ef.recibe.nombre, telefono: ef.recibe.telefono },
+          paga: { nombre: ef.paga.nombre, telefono: ef.paga.telefono },
+          comentarios: ef.comentarios ?? "",
+          total: Math.round(total * 100) / 100,
+          articulos: articulosEntrega,
+          cliente_id: body.cliente_id ?? null,
+        })
+      } catch (e) {
+        console.error("[caja/ventas] Venta OK pero falló crear la ficha de entrega:", e)
       }
     }
 

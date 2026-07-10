@@ -134,6 +134,27 @@ export function FormatoConfig({ formatoKey, label }: { formatoKey: FormatoKey; l
               />
             </Campo>
           )}
+          {/* Opciones exclusivas de la hoja del repartidor (contra entrega). */}
+          {formatoKey === "entrega_repartidor" && (
+            <>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={!!doc.mostrar_casillas}
+                  onChange={(e) => setField("mostrar_casillas", e.target.checked)}
+                />
+                Casillas para marcar cada artículo entregado
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={!!doc.mostrar_ficha}
+                  onChange={(e) => setField("mostrar_ficha", e.target.checked)}
+                />
+                Incluir ficha de entrega (dirección, quién recibe, quién paga, comentarios)
+              </label>
+            </>
+          )}
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 4 }}>

@@ -736,6 +736,7 @@ export type Routes = {
                 liquidar: typeof import("../../src/api/caja/encargos/[id]/liquidar/route");
             };
         };
+        entregas: typeof import("../../src/api/caja/entregas/route");
         facturable: typeof import("../../src/api/caja/facturable/route") & {
             deptos: typeof import("../../src/api/caja/facturable/deptos/route");
         };

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import {
   Banknote, Smartphone, CreditCard, FileText, Coins, Sparkles,
-  Check, X, AlertCircle, Fingerprint, ScanLine, Lock, Wallet, RotateCcw, ClipboardList,
+  Check, X, AlertCircle, Fingerprint, ScanLine, Lock, Wallet, RotateCcw, ClipboardList, Truck,
   type LucideIcon,
 } from "lucide-react"
 import {
@@ -13,6 +13,7 @@ import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
 import HuellaAnimacion from "./HuellaAnimacion"
 import { FichaEncargoModal, type DatosFichaEncargo } from "./FichaEncargoModal"
+import { FichaEntregaModal, type DatosFichaEntrega } from "./FichaEntregaModal"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
@@ -83,6 +84,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [datosFicha, setDatosFicha] = useState<DatosFichaEncargo | null>(null)
   // La ficha se abre automáticamente al montar si hay encargo (antes de cobrar).
   const [fichaAbierta, setFichaAbierta] = useState(hayEncargo)
+  // ── Contra entrega (a domicilio, pago diferido) ───────────────────────────
+  // Disponible solo en venta normal (sin encargo). Al elegirlo se abre la ficha
+  // de entrega; al confirmarla se registra la venta por_cobrar (sin cobro hoy).
+  const [fichaEntregaAbierta, setFichaEntregaAbierta] = useState(false)
+  const datosEntregaRef = useRef<DatosFichaEntrega | null>(null)
   // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
   //   idle → esperando que el cajero pulse "Verificar huella"
   //   verificando → capturando+comparando en el servicio local
@@ -375,6 +381,14 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     onCerrar()
   }
 
+  // Contra entrega: al confirmar la ficha, se registra la venta (por_cobrar, sin
+  // cobro hoy). finalizarVenta() adjunta entrega_ficha; el backend no exige pago.
+  async function onFichaEntregaConfirmada(datos: DatosFichaEntrega) {
+    datosEntregaRef.current = datos
+    setFichaEntregaAbierta(false)
+    await finalizarVenta()
+  }
+
   async function finalizarVenta() {
     if (!state.cajero) return
     setProcesando(true)
@@ -459,6 +473,18 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 notas: datosFicha.notas ?? null,
                 anticipo: datosFicha.anticipo,
                 resta_a_cartera: datosFicha.resta_a_cartera,
+              },
+            }
+          : {}),
+        // Ficha de entrega (venta contra entrega): si viene, el backend registra la
+        // venta como por_cobrar (sin cobro hoy) y crea la EntregaFicha.
+        ...(datosEntregaRef.current
+          ? {
+              entrega_ficha: {
+                direccion: datosEntregaRef.current.direccion,
+                recibe: datosEntregaRef.current.recibe,
+                paga: datosEntregaRef.current.paga,
+                comentarios: datosEntregaRef.current.comentarios ?? "",
               },
             }
           : {}),
@@ -754,6 +780,17 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             </div>
           )}
 
+          {/* Cobrar contra entrega (a domicilio, pago diferido). Solo en venta
+              normal (sin encargo): registra la venta por_cobrar sin cobrar hoy. */}
+          {!hayEncargo && (
+            <button
+              onClick={() => setFichaEntregaAbierta(true)}
+              disabled={procesando || state.items.length === 0}
+              className="w-full inline-flex items-center justify-center gap-2 bg-white border-2 border-orange-300 text-orange-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed">
+              <Truck size={18} /> Cobrar contra entrega (a domicilio)
+            </button>
+          )}
+
           {/* Acciones */}
           <div className="flex gap-3 pt-1">
             <button
@@ -778,6 +815,16 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         <FichaEncargoModal
           onCancelar={onFichaCancelada}
           onConfirmar={onFichaConfirmada}
+        />
+      )}
+
+      {/* Ficha de entrega (venta contra entrega): al confirmarla se registra la
+          venta por_cobrar (sin cobro hoy). */}
+      {fichaEntregaAbierta && (
+        <FichaEntregaModal
+          total={total}
+          onCancelar={() => setFichaEntregaAbierta(false)}
+          onConfirmar={onFichaEntregaConfirmada}
         />
       )}
 
