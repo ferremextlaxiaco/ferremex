@@ -4,7 +4,7 @@
 > `MEMORIA_INSTALACIÓN.md` (estado por fases/infra, mantenido por el skill `actualizador`).
 > **Actualiza este archivo al cierre de cada sesión** (regla abajo). Convierte fechas relativas a absolutas.
 >
-> Última actualización: **2026-06-19**
+> Última actualización: **2026-07-10**
 
 ---
 
@@ -24,14 +24,13 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 - **POS:** React 18 + Vite, puerto 7002 (`base: /pos`). Montado como módulo `vendor-ui`.
 - **Servicios (PM2):** `ferremex-admin` (7000), `ferremex-pos` (7002), `ferremex-api` (9000). Redis (Docker) 6379, PostgreSQL 16 (5432).
 - **Últimos commits:**
+  - `93ddb05` feat(ventas): contra entrega visible en Consulta de ventas + iconos lucide (2026-07-10)
+  - `0d96190` feat(entrega): módulo "Por cobrar" + liquidación al corte (Entrega 2) (2026-07-10)
+  - `8363d5b` feat(entrega): venta contra entrega — pago diferido a domicilio (Entrega 1) (2026-07-10)
+  - `0a1a79e` feat(venta): separar 4 modos (Venta/Cotización/Encargo/Reposición) (2026-07-09)
+  - `fc79fda` feat(encargos): venta por encargo + módulo de fichas de pedido especial (2026-07-09)
   - `97d7e19` Facturación CFDI vía Facturama: centro de control, doble inventario fiscal, global del día, historial, cancelación reversible, VisorComprobante reutilizable (2026-06-19)
   - `a85b733` Precios: precisión factor 10000 (diezmilésimas) para exactitud con IVA; migración one-shot y lib/precio.ts centralizado (2026-06-19)
-  - `[SESIÓN 2026-06-12]` Sistema de TURNOS/CORTES refactorizado (Fases 1-3) + ModalCobro v2 (Tailwind/lucide, canje puntos, método Tarjeta) + monedero motor con taxonomía REAL (2026-06-12)
-  - `[TBD]` Monedero Electrónico: programa de lealtad por puntos (2026-06-08)
-  - `f2d8aac` Cartera: cancelar (anular) abonos con devolución a la deuda (2026-06-01)
-  - `44035bd` Clientes: quitar banner de migración a la nube (2026-06-01)
-  - `075d182` POS venta: modal de desglose de paquete + carrito como drawer + grid (2026-06-01)
-  - `6d97adf` Búsqueda de venta: relevancia literal + fusión SKU-parcial con nombre (2026-06-01)
 
 ---
 
@@ -84,6 +83,13 @@ El agente `doc-updater` puede ayudar a refrescar este archivo.
 ---
 
 ## Latest Execution Notes
+
+- **2026-07-10 (Feature: Encargos + Venta contra entrega):**
+  - **Encargos (pedidos especiales, venta sobre pedido):** Módulo nuevo `EncargosModule.tsx` en `/admin/encargos` (acceso: 3ª tarjeta en landing AdminClientes, icono lucide PackageCheck). Lista con KPIs (pendientes/recibidos/entregados/por_cobrar), filtros status+texto, drawer de detalle (ficha + abonos parciales, cambio status, botón "Liquidar y entregar"). Estados: pendiente→recibido→entregado→cancelado. Comprobante imprimible `ComprobanteEncargo.tsx`. Captura: `FichaEncargoModal.tsx` en ModalCobro (nombre/teléfono/tiempo_entrega/motivo OBLIGATORIO, anticipo). Backend: `/caja/encargos` (GET/POST lista+crear, `[id]` GET/PATCH), `/caja/encargos/[id]/liquidar` POST → registro movimiento de caja "Abono de cliente" (origin MOVIM_E) el día de cobro, entra al corte, marca entregado. Store: `lib/encargos-store.ts` con `encargos-pos.json` (lock propio). Opción B: cliente con crédito → anticipo va a cartera; cliente esporádico → anticipo solo en ficha (sin crear Customer). Tipos: `EncargoFicha`, `EncargoStatus`.
+  - **Venta contra entrega (a domicilio, pago diferido):** Inventario sale inmediato; cobro postergado hasta entrega. Captura: `FichaEntregaModal.tsx` en ModalCobro (dirección + quienRecibe {nombre/tel} + quienPaga {nombre/tel} + comentarios; botón "es el mismo"). Body `/caja/ventas` += `entrega_ficha`; persiste venta con `total: 0` (corte cuadra), `estado: "por_cobrar"`, `metodo_pago: "contra_entrega"`, `entrega_total` = monto real. Inventario descuenta inmediato. Dos tickets: cliente (`TicketsEntrega.tsx` tab "Cliente") + repartidor (casillas ☐ + monto + firmas). Editables: FormatoConfig.tsx tabs Entrega Cliente/Repartidor, toggles `mostrar_casillas`/`mostrar_ficha`. Módulo "Por cobrar": `EntregasModule.tsx` en `/admin/entregas-por-cobrar` (acceso: 4ª tarjeta AdminClientes, icono lucide Truck). Lista con semáforo antigüedad (verde <2d, ámbar 2–5d, rojo ≥5d), drawer detalle, acción "Registrar pago y entregar" (método selector: efectivo/transferencia/tarjeta). Backend: `/caja/entregas` (GET+filtros status, POST crear), `[id]` (GET/PATCH cancelar), `[id]/liquidar` POST → registra pago + movimiento "Cobro de entrega" (origin MOVIM_E) si efectivo, marca venta "cobrada" con `cobro_metodo`/`cobro_fecha`, marca entrega "entregada", idempotente (400 si ya). Store: `lib/entregas-store.ts` + `entregas-pos.json` (lock propio). Corte: `ventas_por_cobrar` (suma `entrega_total` de vtas por_cobrar del período) + tira informativa ámbar "Ventas por cobrar: $X" (NO infla efectivo esperado). Consulta de ventas: métodos "Contra entrega" → muestra "Contra entrega" (por_cobrar) / "Contra entrega · <método real>" (cobrada), barra naranja→verde, badge "Por cobrar", total = `entrega_total`, chip filtro "Contra entrega", drawer con auditoría + botón "Reimprimir tickets" → reabre TicketsEntrega.
+  - **4 modos de venta en ModalCobro:** selector visual (Venta/Cotización/Encargo/Reposición). pos-store += `modoEncargo`, `encargoReposicion`. Venta normal: bloquea agotados. Cotización: permite agotados (NO descuenta, no registra). Encargo: permite agotados + MIXTO (parte línea: lo que hay vende, faltante encarga). Reposición: no descuenta inventario (`no_descontar`). GridProductos muestra botón "Encargar" solo en modo. Items llevan `encargo?`, `no_descontar?`, `existencia?`. `/caja/ventas` parte líneas mixtas, excluye reintegro de no_descontar en cancelación.
+  - **UI / Acceso:** AdminClientes.tsx landing refactorizado: 3 tarjetas originales → 4 (Clientes/Cartera/Encargos/Por cobrar) con iconos lucide (Users/CreditCard/PackageCheck/Truck). Bloque sidebar "clientes" incluye /admin/encargos y /admin/entregas-por-cobrar. SalesHistory: método "Contra entrega" con badge, barra coloreada por cobro status, reimprimir. AdminFormatos: nuevos tabs Entrega Cliente/Repartidor con preview. Admin.tsx: botón "Cambiar usuario" ya existente; selector de modo venta ya funcional desde 0a1a79e.
+  - **Verificado:** tsc limpio backend+frontend (POS baseline 15 intacto). Smoke-test: crear encargo/encargo mixto/contra entrega, liquidar encargo al corte, registrar pago entrega, cancelación reversible, corte con ventas_por_cobrar OK. Impacto cruzado: `/caja/ventas`, `/caja/corte`, ModalCobro, SalesHistory, CashMovementsModule, Ticket, AdminFormatos, AdminClientes, client.ts. Persistencia: 🟡 `encargos-pos.json` + `entregas-pos.json` + movimientos de caja, 🟢 corte vía `/caja/corte`.
 
 - **2026-06-19 (Feature: Facturación CFDI + Precisión de precios):**
   - **Módulo de Facturación (CFDI vía Facturama):** 3 tabs (`FacturaGlobalPanel`, `ComprobantesPanel`, `FacturacionConfigPanel`). **Global:** factura diaria de público en general (CFDI 4.0) con preview que clasifica artículos por estado respecto al saldo facturable (depto facturable, desglose ENTRAN/EXCLUYEN/SIN_CLAVE SAT). Modal de confirmación con "switch" de forzado (sobregiro). Filtra por depto facturable. **Comprobantes:** historial de CFDIs desde Facturama (1 clic = selecciona, doble clic = abre), filtros fecha/tipo/estado/texto. Descarga lote a carpeta (File System Access API, PDF+XML individuales). Cancelación con motivo SAT 01-04 + reversa de saldo. Reenvío por email. **Config:** serie (nominativa/global), periodicidad global, correo contador. Ruta `/admin/facturacion` (module mount en sidebar). Backend: `/caja/facturama/*` (global/preview POST, global POST timbra, comprobantes GET+PATCH cancelar+POST reenviar, config GET/PUT, archivos GET).

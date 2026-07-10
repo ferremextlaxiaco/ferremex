@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-06-19.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-07-10.
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -46,7 +46,9 @@
 | Compras | `pages/AdminCompras.jsx`, `AdminComprasNueva.jsx`, `AdminConsultarCompras.jsx` | `components/ComprasModule.jsx`, `modules/ConsultarCompras.jsx` (+ `ComprasTable`, `ComprasDetailPanel`, `OC*`) | Alta + historial de compras, generación OC PDF | 🟢 módulo ferremex_compras |
 | Pedidos | `pages/AdminPedidos.jsx` | `components/PedidosModule.jsx` (+ `PedidosTabla`, `PedidosPreview`, `PedidosFiltros`, `ConfirmDialog`) | Pedidos a proveedor desde faltantes. **Backend en `/caja/pedidos`** (folio server-side); espera/draft 🔴 | 🟡 `pedidos-pos.json` + 🔴 espera/draft |
 | **Facturación CFDI** | **`pages/AdminFacturacion.tsx`** (`/admin/facturacion`) | **`components/FacturacionModule.jsx`** (3 tabs: Global/Comprobantes/Config; + `FacturaGlobalPanel`, `ComprobantesPanel`, `FacturacionConfigPanel`, `VisorComprobante`) | **NUEVO:** Centro de control CFDI vía Facturama. Factura global del día (pública) con preview de desglose (ENTRAN/EXCLUYEN/SIN CLAVE SAT por saldo facturable). Historial de CFDIs (filtros fecha/tipo/estado, descarga lote, cancelación, reenvío email). Config de serie/periodicidad. Backend en `/caja/facturama/*` | 🟢 módulo ferremex_facturable (BD) + 🟡 `globales-pos.json`, `facturacion-config.json` |
-| Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón) con preview en vivo | 🟡 `ticket-config.json` |
+| **Encargos** | **`pages/AdminEncargos.tsx`** (wrapper; bloque sidebar "clientes") | **`components/EncargosModule.tsx`** (+ `FichaEncargoModal`, `ComprobanteEncargo`) | **NUEVO:** Pedidos especiales/venta sobre pedido sin crear Customer. Lista con KPIs (pendientes/recibidos/entregados/por cobrar), status flow (pendiente→recibido→entregado→cancelado), abonos parciales, liquidación al corte. Acceso: 3ª tarjeta en landing AdminClientes (icono lucide PackageCheck). Ruta `/admin/encargos`. | 🟡 `encargos-pos.json` + 🟢 movimiento de caja |
+| **Por cobrar (Contra entrega)** | **`pages/AdminEntregas.tsx`** (wrapper; bloque sidebar "clientes") | **`components/EntregasModule.tsx`** (+ `TicketsEntrega`, `FichaEntregaModal`) | **NUEVO:** Ventas a domicilio pagadas contra entrega. Inventario sale inmediato. Lista con semáforo (antigüedad), KPIs, drawer de detalle, "Registrar pago y entregar". Acceso: 4ª tarjeta en landing AdminClientes (icono lucide Truck). Ruta `/admin/entregas-por-cobrar`. | 🟡 `entregas-pos.json` + 🟢 movimiento de caja |
+| Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón / **Entrega Cliente / Entrega Repartidor**) con preview en vivo. Nuevos toggles: `mostrar_casillas`, `mostrar_ficha` en formatos de entrega. | 🟡 `ticket-config.json` |
 | Periféricos | `pages/AdminPerifericos.tsx` | — | Config impresora/huella/escáner (Web Serial) + toggle confirmación de puntos + toggle monedero confirmación | navegador |
 | Generador | `pages/GeneradorTickets.tsx` (`/admin/generador`, fuera del layout) | — | Probador de tickets/periféricos | — |
 
@@ -63,9 +65,15 @@
 - **`lib/utils.ts`** — `uuid()` (id local para keys/borradores). Consumido por PedidosModule (y otros pendientes de migrar su `uuid` v4 local).
 - **`lib/format.ts`** — `formatMXN` / `formatMXNAbs`. Consumido por SalesHistory, CashMovementsModule, CarteraCredito, ModalCobro.
 - **`lib/precio.ts`** — **NUEVO:** `pesosAAmount(pesos)`, `amountAPesos(amount)` (factor 10000 = diezmilésimas para 4 decimales exactos). Consumido por rutas/componentes de precios (articulos, productos, promociones, scripts de migración).
+- **`lib/encargos-store.ts`** — **NUEVO:** helper de persistencia JSON (`encargos-pos.json`). Funciones: `cargarEncargos`, `crearEncargo`, `actualizarStatusEncargo`, `agregarAbono`, `liquidarEncargo`. Lock propio distinto de ventas. Tipos: `EncargoFicha`, `EncargoStatus`.
+- **`lib/entregas-store.ts`** — **NUEVO:** helper de persistencia JSON (`entregas-pos.json`). Funciones: `cargarEntregas`, `crearEntregaFicha`, `actualizarStatusEntrega`, `registrarPagoEntrega`. Lock propio. Tipos: `EntregaFicha`, `EntregaStatus`, `EntregaContacto`, `EntregaArticulo`, `EntregaPago`.
 - **`hooks/useToasts.ts`** — hook de toasts compartido `{ toasts, push }`. Consumido por SalesHistory, EmployeesModule, ArticlesModule.
 - **`components/ConfirmDialog.jsx`** — diálogo de confirmación reutilizable (reemplaza `window.confirm`). Consumido por PedidosModule.
 - **`components/VisorComprobante.jsx`** — **NUEVO:** previsualizador reutilizable de CFDI (PDF a pantalla completa + panel lateral de detalles, backdrop-filter blur). Consumido por ComprobantesPanel + FacturarBoton.
+- **`components/FichaEncargoModal.tsx`** — **NUEVO:** modal de captura de encargo al cobrar (nombre/teléfono/tiempo entrega/motivo obligatorios, anticipo). Consumido por ModalCobro en modo encargo.
+- **`components/FichaEntregaModal.tsx`** — **NUEVO:** modal de captura de entrega a domicilio (dirección, quién recibe {nombre/tel}, quién paga {nombre/tel}, comentarios). Consumido por ModalCobro en modo contra entrega.
+- **`components/ComprobanteEncargo.tsx`** — **NUEVO:** comprobante imprimible para encargos. Consumido por EncargosModule (drawer).
+- **`components/TicketsEntrega.tsx`** — **NUEVO:** tickets de entrega contra entrega (cliente + repartidor con casillas). Editables en FormatoConfig. Consumido por EntregasModule + SalesHistory (reimprimir).
 
 ### Backend — librerías compartidas (`packages/api/src/lib/`)
 - **`json-store.ts`** — `readJson` / `writeJsonAtomic` (tmp+rename) / `withFileLock` (mutex en-memoria por archivo) / `updateJson`. Consumido por rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `ventas/[folio]`.
@@ -76,6 +84,10 @@
 - **`ferremex_cartera`** — módulo custom de Medusa. Entidades: `CarteraCliente` (raíz única por customer_id), `MovimientoCartera` (compra/pago transaccional, `cancelado`, `motivo_cancelacion`, `fecha_cancelacion`), `NotaCartera` (registros textuales), `HistorialLimite` (auditoría de cambios de límite). Registrado en `medusa-config.ts` y migración aplicada. Consumido por rutas `/caja/cartera/*`.
 - **`ferremex_monedero`** — módulo custom de Medusa (Fase 3 continuación). Entidades: `ConfigMonedero` (singleton: `valor_punto`, `tasa_base`, `max_canje_pct`, `min_puntos_canje`, `vencimiento_meses`, `confirmar_huella`, `confirmar_codigo`, `redondeo`, `periodo_nivel_meses`), `ReglaPuntos` (ámbito marca/departamento/categoría + ref + tasa%; tasa 0 = excluido), `NivelMonedero` (tiers: nombre, orden, umbral_periodo, multiplicador, valor_punto_bonus, nivel_precio, color), `MovimientoMonedero` (customer_id, tipo ganado/canjeado/ajuste/vencido/reset, puntos, folio, soft-cancel auditable). Registrado en `medusa-config.ts` y migraciones aplicadas. **GOTCHA:** pluralizador runtime genera "…Monederos" (un -s), pero codegen sugiere "…Monederoes" (mismatch resuelto con interface merge en service.ts). El nivel del cliente se DERIVA (no almacena) del período de compras vía `/caja/monedero/_nivel.ts`. Consumido por rutas `/caja/monedero/*` y transaccional en `/caja/ventas` (devengo + canje).
 - **`ferremex_facturable`** — **NUEVO:** módulo custom de Medusa (doble inventario fiscal). Entidades: `SaldoFacturable` (saldo por SKU: piezas con respaldo fiscal, independiente del stock; puede ser negativo = sobregiro), `MovimientoFacturable` (bitácora auditable recarga/consumo/ajuste; `cfdi_ref` para reversa al cancelar global), `DeptoFacturable` (qué departamentos son facturables). El saldo sube al recibir compra "Con Factura" (`/caja/compras`), baja solo al FACTURAR (consumo en `/caja/facturama/global` y nominativas). Service: `obtenerSaldo`, `saldoDeSku`, `recargar`, `consumir`, `ajustarA`, `listarConsumosPorCfdi`, `mapaDeptos`, `marcarDepto`. **GOTCHA:** pluralización inglesa (`listSaldoFacturables`, `listMovimientoFacturables`, `listDeptoFacturables`). Consumido por rutas `/caja/facturable/*` (tab Saldo facturable de Artículos) y `/caja/facturama/*` (global).
+
+### Backend — JSON stores (`packages/api/data/`)
+- **`encargos-pos.json`** — Encargos persistidos (id, folio, cliente_nombre, cliente_tel, items, total, saldo_pendiente, status, abonos, fecha_creacion, etc.). Lock vía `withFileLock("encargos-pos.json")` propio. Consumido por rutas `/caja/encargos/*`.
+- **`entregas-pos.json`** — Entregas persistidas (id, folio_venta, direccion, quienRecibe, quienPaga, items, total, semáforo por antigüedad, status, pago_metodo, pago_fecha, fecha_creacion, etc.). Lock vía `withFileLock("entregas-pos.json")` propio. Consumido por rutas `/caja/entregas/*`.
 
 ---
 
@@ -113,6 +125,18 @@ Login ──obtenerConfigTurnos() + buildTurnoId(cfg)──► turno_id por modo
 **ComprobantesPanel** ──listarComprobantesAPI (filtros fecha/tipo/estado), cancelarComprobanteAPI (motivo SAT), reenviarComprobanteAPI (email)──► /caja/facturama/comprobantes (* CRUD + descarga lote)
 **Ticket / FacturarBoton** ──VisorComprobante (previsualización CFDI)──► componente reutilizable (PDF + detalles panel)
 **FacturacionModule** ──obtener/guardarConfigFacturacionAPI──► /caja/facturama/config (serie, periodicidad, correo contador)
+ModalCobro ──4 modos de venta: Venta/Cotización/Encargo/Reposición──► pos-store (modoEncargo, encargoReposicion, no_descontar)
+ModalCobro ──modo Encargo → abre FichaEncargoModal──► /caja/ventas (encargo_ficha) + crearEncargo() + liquidarEncargo() al cobro
+ModalCobro ──modo Contra entrega → abre FichaEntregaModal──► /caja/ventas (entrega_ficha, estado "por_cobrar", metodo_pago "contra_entrega")
+EncargosModule ──listarEncargos, obtenerEncargo, crearEncargo, actualizarStatusEncargo, agregarAbonoEncargo, liquidarEncargo──► /caja/encargos/*
+EntregasModule ──listarEntregas, obtenerEntrega, obtenerEntregaPorFolio, liquidarEntrega, cancelarEntrega──► /caja/entregas/*
+GridProductos ──modo encargo muestra botón "Encargar" en stock cero──► selector de cantidad + opciones encargo/normal/mixto
+Carrito ──línea encargo/no_descontar/existencia──► campos propagados a `/caja/ventas` POST (parte línea si mixto, excluye reintegro si no_descontar)
+SalesHistory ──metodo_pago "contra_entrega"+ estado ("por_cobrar"|"cobrada")──► barra naranja/verde, badge, drawer con auditoría + botón reimprimir TicketsEntrega
+CorteModule ──ventas_por_cobrar (suma entrega_total de vtas por_cobrar del período)──► tira informativa ámbar (NO infla efectivo esperado)
+AdminClientes.tsx ──3 tarjetas de landing (Clientes/Cartera/Encargos) → 4 con Entrega (Clientes/Cartera/Encargos/Por cobrar)──► iconos lucide (Users/CreditCard/PackageCheck/Truck)
+AdminFormatos.tsx ──tabs nuevos: Entrega Cliente / Entrega Repartidor──► FormatoConfig con toggles mostrar_casillas/mostrar_ficha
+Ticket ──SalesHistory drawer en entrada contra_entrega──► botón "Reimprimir tickets" reabre TicketsEntrega (cliente + repartidor)
 ```
 
 ---
