@@ -1237,6 +1237,14 @@ export async function liquidarEntrega(
   })
 }
 
+/** Cancela una entrega (solo cierra la ficha; no reintegra inventario ni cancela la venta). */
+export async function cancelarEntrega(id: string, nota?: string): Promise<EntregaFicha> {
+  return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ status: "cancelada", ...(nota ? { nota } : {}) }),
+  })
+}
+
 export type CatalogosOp =
   | { op: "create_marca"; nombre: string; cat_nombre: string; dep_nombre: string }
   | { op: "rename_dept";  nombre_actual: string; nombre_nuevo: string }

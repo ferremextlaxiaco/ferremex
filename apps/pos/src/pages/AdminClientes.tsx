@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { Users, CreditCard, PackageCheck } from "lucide-react"
+import { Users, CreditCard, PackageCheck, Truck } from "lucide-react"
 
 /** Una tarjeta del landing de Clientes (icono lucide + título + descripción). */
 function TarjetaCliente({
@@ -75,6 +75,12 @@ export function AdminClientes() {
           titulo="Encargos"
           descripcion="Pedidos especiales de clientes y su seguimiento"
           onClick={() => navigate("/admin/encargos")}
+        />
+        <TarjetaCliente
+          icon={<Truck size={30} strokeWidth={1.6} />}
+          titulo="Por cobrar"
+          descripcion="Ventas contra entrega a domicilio y su cobro"
+          onClick={() => navigate("/admin/entregas-por-cobrar")}
         />
       </div>
     </div>

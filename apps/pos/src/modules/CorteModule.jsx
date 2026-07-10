@@ -8,7 +8,7 @@ import ConfirmDialog from "../components/ConfirmDialog"
 import {
   ArrowLeft, Banknote, CreditCard, ArrowLeftRight, Wallet, FileText,
   TrendingUp, TrendingDown, Calculator, Eye, EyeOff, Printer,
-  CheckCircle2, AlertTriangle, Lock,
+  CheckCircle2, AlertTriangle, Lock, Truck,
 } from "lucide-react"
 
 // ─── CONSTANTES ────────────────────────────────────────────────────────────────
@@ -361,6 +361,23 @@ export default function CorteModule() {
                 <StatCard icon={<FileText size={20} />} label="Crédito" valor={formatMXN(corte.ventas_credito)} />
                 <StatCard icon={<Calculator size={20} />} label={`${corte.num_ventas} venta${corte.num_ventas !== 1 ? "s" : ""}`} valor={formatMXN(corte.total_ventas)} />
               </div>
+
+              {/* Ventas contra entrega aún sin cobrar (informativo, NO en caja) */}
+              {(corte.num_por_cobrar ?? 0) > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-center gap-3">
+                  <span className="w-9 h-9 inline-flex items-center justify-center rounded-lg bg-amber-100 text-amber-600 shrink-0">
+                    <Truck size={18} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-semibold text-amber-800">
+                      Ventas por cobrar (contra entrega): {formatMXN(corte.ventas_por_cobrar ?? 0)}
+                    </div>
+                    <div className="text-xs text-amber-700 mt-0.5">
+                      {corte.num_por_cobrar} entrega{corte.num_por_cobrar !== 1 ? "s" : ""} a domicilio pendiente{corte.num_por_cobrar !== 1 ? "s" : ""} de cobro — no está en la caja todavía.
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Desglose del efectivo esperado */}
               <div className="bg-white border border-gray-200 rounded-lg p-4">

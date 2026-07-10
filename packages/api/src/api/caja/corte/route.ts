@@ -34,6 +34,8 @@ interface VentaRegistro {
   pago_tarjeta?: number
   pago_credito?: number
   estado?: string
+  // Venta contra entrega (por_cobrar): monto real que se cobrará al liquidar.
+  entrega_total?: number
 }
 
 interface Movimiento {
@@ -158,11 +160,20 @@ function calcularResumen(caja_id?: string | null, desde?: string | null, filtroF
     return f?.id === filtroFranja.franjaId
   }
 
-  const ventas = cargarVentas()
+  const ventasCaja = cargarVentas()
     .filter((v) => normCaja(v.caja_id) === caja)
-    .filter((v) => !v.estado || v.estado === "Vigente")
     .filter((v) => enPeriodo(v.fecha))
     .filter((v) => enFranja(v.fecha))
+
+  const ventas = ventasCaja.filter((v) => !v.estado || v.estado === "Vigente")
+
+  // Ventas contra entrega aún NO cobradas del período (estado por_cobrar). Su
+  // dinero NO está en el cajón todavía (se cobra al liquidar, entra como
+  // movimiento "Cobro de entrega" el día del cobro). Solo informativo en el corte.
+  const ventas_por_cobrar = ventasCaja
+    .filter((v) => v.estado === "por_cobrar")
+    .reduce((s, v) => s + Number(v.entrega_total ?? 0), 0)
+  const num_por_cobrar = ventasCaja.filter((v) => v.estado === "por_cobrar").length
 
   const ventas_efectivo = ventas.reduce((s, v) => s + Number(v.pago_efectivo ?? 0), 0)
   const ventas_transferencia = ventas.reduce((s, v) => s + Number(v.pago_transferencia ?? 0), 0)
@@ -194,6 +205,9 @@ function calcularResumen(caja_id?: string | null, desde?: string | null, filtroF
     ventas_transferencia,
     ventas_tarjeta,
     ventas_credito,
+    // Informativo: ventas contra entrega del período aún sin cobrar (no en cajón).
+    ventas_por_cobrar,
+    num_por_cobrar,
     fondo_inicial,
     entradas_manuales,
     salidas_manuales,

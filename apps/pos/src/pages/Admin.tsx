@@ -28,7 +28,7 @@ export function Admin() {
     ? "formatos"
     : path.includes("/admin/perifericos")
     ? "perifericos"
-    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito") || path.includes("/admin/encargos")
+    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito") || path.includes("/admin/encargos") || path.includes("/admin/entregas-por-cobrar")
     ? "clientes"
     : path.includes("/admin/monedero")
     ? "monedero"

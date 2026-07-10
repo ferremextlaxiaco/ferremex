@@ -7,10 +7,15 @@ import {
   obtenerFolioContador,
   reiniciarFolioContador,
   type TicketConfig,
+  type FormatoDoc,
 } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
 
 type TipoTicket = keyof TicketConfig["tipos"]
+// El preview admite además los dos comprobantes de entrega (venta contra entrega),
+// que NO viven en config.tipos sino en config.formatos. Se editan en el módulo de
+// Formatos; aquí solo se previsualizan junto a los tickets normales.
+type PreviewTab = TipoTicket | "entrega_cliente" | "entrega_repartidor"
 
 const TIPOS: { key: TipoTicket; label: string }[] = [
   { key: "venta", label: "Venta" },
@@ -49,7 +54,7 @@ export function AdminTickets() {
   const { dispatch } = usePOS()
   const navigate = useNavigate()
   const [config, setConfig] = useState<TicketConfig>(DEFAULT_CONFIG)
-  const [tipoActivo, setTipoActivo] = useState<TipoTicket>("venta")
+  const [tipoActivo, setTipoActivo] = useState<PreviewTab>("venta")
   const [guardando, setGuardando] = useState(false)
   const [guardado, setGuardado] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -149,7 +154,12 @@ export function AdminTickets() {
   }
 
   const total = ITEMS_EJEMPLO.reduce((s, i) => s + i.subtotal, 0)
-  const tipo = config.tipos[tipoActivo]
+  const esEntrega = tipoActivo === "entrega_cliente" || tipoActivo === "entrega_repartidor"
+  const docEntrega = esEntrega ? config.formatos?.[tipoActivo] : undefined
+  // Título mostrado en el encabezado del preview (tipos normales vs. formatos de entrega).
+  const tituloPreview = esEntrega
+    ? (docEntrega?.titulo || (tipoActivo === "entrega_cliente" ? "PAGO CONTRA ENTREGA" : "HOJA DE ENTREGA"))
+    : config.tipos[tipoActivo as TipoTicket].titulo
   const enc = config.encabezado
   const fmt = config.formato_folio ?? DEFAULT_CONFIG.formato_folio!
   const previewFolio = fmt.modo === "secuencial"
@@ -399,11 +409,35 @@ export function AdminTickets() {
               {label}
             </button>
           ))}
+          {/* Comprobantes de venta contra entrega (se editan en el módulo Formatos) */}
+          {([
+            ["entrega_cliente", "Entrega · Cliente"],
+            ["entrega_repartidor", "Entrega · Repartidor"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              className={`at-preview-tab ${tipoActivo === key ? "at-tab-active" : ""}`}
+              onClick={() => setTipoActivo(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
 
-        <div className="at-ticket-doctype">{tipo.titulo}</div>
+        <div className="at-ticket-doctype">{tituloPreview}</div>
 
         <div className="at-preview-stage">
+          {esEntrega && docEntrega ? (
+            <PreviewEntrega
+              tab={tipoActivo as "entrega_cliente" | "entrega_repartidor"}
+              doc={docEntrega}
+              nombre={enc.nombre}
+              logo={enc.logo}
+              folio={previewFolio}
+              total={total}
+              items={ITEMS_EJEMPLO}
+            />
+          ) : (
           <div className="at-ticket">
             {/* Logo */}
             <div className="at-tk-logo">
@@ -419,7 +453,7 @@ export function AdminTickets() {
             {enc.rfc && <div className="at-tk-center at-tk-meta">RFC: {enc.rfc}</div>}
 
             <hr className="at-tk-sep" />
-            <div className="at-tk-center at-tk-bold">{tipo.titulo || tipoActivo.toUpperCase()}</div>
+            <div className="at-tk-center at-tk-bold">{tituloPreview || tipoActivo.toUpperCase()}</div>
             <hr className="at-tk-sep-thin" />
 
             <div className="at-tk-meta">Folio: {previewFolio}</div>
@@ -469,8 +503,132 @@ export function AdminTickets() {
               <div key={i} className="at-tk-footer">{linea}</div>
             ))}
           </div>
+          )}
+        </div>
+
+        {esEntrega && (
+          <p className="at-col-subtitle" style={{ marginTop: 10 }}>
+            Este formato se edita en <strong>Formatos → {tipoActivo === "entrega_cliente" ? "Entrega · Cliente" : "Entrega · Repartidor"}</strong>. Aquí solo se previsualiza.
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Preview de los comprobantes de venta contra entrega (cliente / repartidor).
+ * Refleja lo que imprime TicketsEntrega, con datos de ejemplo. El repartidor
+ * muestra la ficha de entrega (si mostrar_ficha) y casillas ☐ por artículo (si
+ * mostrar_casillas); el cliente muestra el detalle con total y el sello del pie.
+ */
+function PreviewEntrega({
+  tab, doc, nombre, logo, folio, total, items,
+}: {
+  tab: "entrega_cliente" | "entrega_repartidor"
+  doc: FormatoDoc
+  nombre: string
+  logo: string | null
+  folio: string
+  total: number
+  items: { descripcion: string; sku: string; cantidad: number; precio_unitario: number; subtotal: number }[]
+}) {
+  const esRepartidor = tab === "entrega_repartidor"
+  const extras = (doc.encabezado ?? []).slice(1) // la 1ª línea = nombre del negocio
+  const conFicha = esRepartidor && doc.mostrar_ficha !== false
+  const conCasillas = esRepartidor && doc.mostrar_casillas !== false
+
+  return (
+    <div className="at-ticket">
+      {/* Logo */}
+      <div className="at-tk-logo">
+        {logo
+          ? <img src={logo} alt="logo" style={{ maxWidth: 120, maxHeight: 60 }} />
+          : <div className="at-tk-logo-placeholder">[ LOGO ]</div>}
+      </div>
+
+      <div className="at-tk-center at-tk-bold at-tk-business">{nombre || "NEGOCIO"}</div>
+      {extras.map((l, i) => <div key={i} className="at-tk-center at-tk-meta">{l}</div>)}
+
+      <hr className="at-tk-sep" />
+      <div className="at-tk-center at-tk-bold">{doc.titulo || (esRepartidor ? "HOJA DE ENTREGA" : "PAGO CONTRA ENTREGA")}</div>
+      <hr className="at-tk-sep-thin" />
+
+      <div className="at-tk-meta">Folio: {folio}</div>
+      <div className="at-tk-meta">Fecha: 02/05/2026 10:32 a.m.</div>
+
+      {/* CLIENTE: quién paga. REPARTIDOR: ficha de entrega completa. */}
+      {!esRepartidor && <div className="at-tk-meta">Paga: El maistro</div>}
+      {conFicha && (
+        <>
+          <hr className="at-tk-sep" />
+          <div className="at-tk-bold">ENTREGA</div>
+          <div className="at-tk-meta">Dirección: Privada las golondrinas</div>
+          <div className="at-tk-meta">Recibe: El maistro · 953 123 4567</div>
+          <div className="at-tk-meta">Paga: El maistro · 953 123 4567</div>
+          <div className="at-tk-meta">Ref: Casa de un piso, portón azul</div>
+        </>
+      )}
+
+      <hr className="at-tk-sep" />
+
+      {esRepartidor ? (
+        /* Lista de artículos con casillas, sin precios */
+        <>
+          <div className="at-tk-bold" style={{ marginBottom: 4 }}>ARTÍCULOS A ENTREGAR</div>
+          {items.map((item, i) => (
+            <div key={i} className="at-tk-meta">
+              {conCasillas ? "☐ " : ""}{item.cantidad} × {item.descripcion}
+            </div>
+          ))}
+        </>
+      ) : (
+        /* Tabla de detalle con precios */
+        <table className="at-tk-table">
+          <thead>
+            <tr>
+              <th>Artículo</th>
+              <th className="num">Cant.</th>
+              <th className="num">Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, i) => (
+              <tr key={i}>
+                <td>{item.descripcion}</td>
+                <td className="num">{item.cantidad}</td>
+                <td className="num">${item.subtotal.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <hr className="at-tk-sep" />
+
+      <div className="at-tk-totales">
+        <div className="at-tk-row at-tk-total">
+          <span>{esRepartidor ? "COBRAR" : "TOTAL A PAGAR"}</span>
+          <span>${total.toFixed(2)}</span>
         </div>
       </div>
+
+      <hr className="at-tk-sep" />
+
+      {/* Firmas solo en la hoja del repartidor */}
+      {esRepartidor && (
+        <>
+          <div className="at-tk-meta">Recibí conforme:</div>
+          <div className="at-tk-meta">_______________________</div>
+          <div className="at-tk-meta" style={{ marginTop: 6 }}>Pagó:</div>
+          <div className="at-tk-meta">_______________________</div>
+          <hr className="at-tk-sep" />
+        </>
+      )}
+
+      {(doc.pie ?? []).filter(Boolean).map((linea, i) => (
+        <div key={i} className="at-tk-footer">{linea}</div>
+      ))}
     </div>
   )
 }

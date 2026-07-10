@@ -17,9 +17,9 @@ interface TicketsEntregaProps {
  *  2. Hoja del REPARTIDOR — ficha de entrega + artículos con casillas ☐ (sin
  *     precios) + TOTAL A COBRAR + espacio de firmas.
  *
- * Al montar se imprimen AMBOS automáticamente a la térmica (uno tras otro, con
- * corte de papel entre ellos). Quedan botones para reimprimir cada uno. Los
- * formatos (título/encabezado/pie/flags) se leen del ticketConfig → formatos
+ * La impresión es MANUAL: el cajero decide cuándo imprimir con los botones
+ * (cliente / repartidor / ambos). Nada se imprime al montar. Los formatos
+ * (título/encabezado/pie/flags) se leen del ticketConfig → formatos
  * (editables en el módulo de Formatos: entrega_cliente / entrega_repartidor).
  */
 export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) {
@@ -27,7 +27,7 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   const cfg = state.ticketConfig
   const fmtCliente = cfg?.formatos?.entrega_cliente
   const fmtReparto = cfg?.formatos?.entrega_repartidor
-  const [imprimiendo, setImprimiendo] = useState<null | "cliente" | "repartidor" | "ambos">("ambos")
+  const [imprimiendo, setImprimiendo] = useState<null | "cliente" | "repartidor" | "ambos">(null)
 
   const total = venta.entrega_total ?? ficha.total
 
@@ -37,36 +37,20 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
     return () => window.removeEventListener("keydown", fn)
   }, [onCerrar])
 
-  // Impresión automática de ambos al montar (best-effort). Si no hay servicio de
-  // impresión, no bloquea: el cajero puede reimprimir con los botones.
-  useEffect(() => {
-    let vivo = true
-    ;(async () => {
-      if (!impresoraElegida()) { if (vivo) setImprimiendo(null); return }
-      try {
-        await imprimirBytesLocal(construirTicketCliente(venta, ficha, cfg, fmtCliente))
-        await imprimirBytesLocal(construirHojaRepartidor(venta, ficha, cfg, fmtReparto))
-      } catch (e) {
-        console.warn("Impresión automática de tickets de entrega falló:", e)
-      } finally {
-        if (vivo) setImprimiendo(null)
-      }
-    })()
-    return () => { vivo = false }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  async function reimprimir(cual: "cliente" | "repartidor") {
+  async function imprimir(cual: "cliente" | "repartidor" | "ambos") {
     if (imprimiendo) return
     setImprimiendo(cual)
     try {
-      const bytes = cual === "cliente"
-        ? construirTicketCliente(venta, ficha, cfg, fmtCliente)
-        : construirHojaRepartidor(venta, ficha, cfg, fmtReparto)
-      if (impresoraElegida()) await imprimirBytesLocal(bytes)
-      else window.print()
+      const bytesCliente = () => construirTicketCliente(venta, ficha, cfg, fmtCliente)
+      const bytesReparto = () => construirHojaRepartidor(venta, ficha, cfg, fmtReparto)
+      if (impresoraElegida()) {
+        if (cual === "cliente" || cual === "ambos") await imprimirBytesLocal(bytesCliente())
+        if (cual === "repartidor" || cual === "ambos") await imprimirBytesLocal(bytesReparto())
+      } else {
+        window.print()
+      }
     } catch (e) {
-      console.warn("Reimpresión falló:", e)
+      console.warn("Impresión de tickets de entrega falló:", e)
     } finally {
       setImprimiendo(null)
     }
@@ -76,7 +60,7 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
     <div className="ticket-overlay">
       <div className="ticket-preview-box" style={{ maxWidth: 560 }}>
         <p className="ticket-preview-titulo">
-          {imprimiendo === "ambos" ? "Imprimiendo comprobantes…" : "Comprobantes de entrega"}
+          {imprimiendo ? "Imprimiendo…" : "Comprobantes de entrega"}
         </p>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
@@ -151,11 +135,14 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
 
         <div className="ticket-preview-acciones">
           <button className="btn-secondary" onClick={onCerrar}><X size={16} /> Cerrar</button>
-          <button className="btn-secondary" onClick={() => reimprimir("cliente")} disabled={!!imprimiendo}>
-            <User size={16} /> Reimprimir cliente
+          <button className="btn-secondary" onClick={() => imprimir("cliente")} disabled={!!imprimiendo}>
+            <User size={16} /> Imprimir cliente
           </button>
-          <button className="btn-confirmar" onClick={() => reimprimir("repartidor")} disabled={!!imprimiendo}>
-            <Truck size={16} /> Reimprimir repartidor
+          <button className="btn-secondary" onClick={() => imprimir("repartidor")} disabled={!!imprimiendo}>
+            <Truck size={16} /> Imprimir repartidor
+          </button>
+          <button className="btn-confirmar" onClick={() => imprimir("ambos")} disabled={!!imprimiendo}>
+            <Printer size={16} /> Imprimir ambos
           </button>
         </div>
       </div>
