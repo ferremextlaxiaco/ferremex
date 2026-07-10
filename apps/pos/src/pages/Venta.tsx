@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react"
-import { ShoppingCart, X, Settings, LogOut, RefreshCw, UserCircle, ChevronDown } from "lucide-react"
+import { ShoppingCart, X, Settings, LogOut, RefreshCw, UserCircle, ChevronDown, PanelRightClose, PanelRightOpen } from "lucide-react"
 import { Navigate, useSearchParams, useNavigate } from "react-router-dom"
 import { Buscador } from "../components/Buscador"
 import { Carrito } from "../components/Carrito"
@@ -38,6 +38,10 @@ export function Venta() {
     () => typeof window !== "undefined" && window.innerWidth >= ANCHO_CARRITO_FIJO
   )
   const [carritoAbierto, setCarritoAbierto] = useState(false)   // solo aplica en modo drawer
+  // Colapsar la columna fija del carrito (solo modo ancho). Se recuerda por terminal.
+  const [carritoColapsado, setCarritoColapsado] = useState(
+    () => typeof window !== "undefined" && localStorage.getItem("pos_carrito_colapsado") === "1"
+  )
   const [esperaAbierta, setEsperaAbierta] = useState(false)
   const [cargarCotAbierto, setCargarCotAbierto] = useState(false)
   const [cambiarUsuario, setCambiarUsuario] = useState(false)
@@ -77,6 +81,15 @@ export function Venta() {
     window.addEventListener("keydown", fn)
     return () => window.removeEventListener("keydown", fn)
   }, [carritoFijo, carritoAbierto])
+
+  // Mostrar/ocultar la columna del carrito (modo ancho), recordando la preferencia.
+  function toggleCarritoColapsado() {
+    setCarritoColapsado((prev) => {
+      const next = !prev
+      try { localStorage.setItem("pos_carrito_colapsado", next ? "1" : "0") } catch { /* noop */ }
+      return next
+    })
+  }
 
   // Cerrar el menú "Sesión" con Escape o clic fuera.
   useEffect(() => {
@@ -291,13 +304,31 @@ export function Venta() {
           <Buscador />
         </section>
 
-        {/* Carrito como columna fija (pantallas anchas) */}
-        {carritoFijo && (
+        {/* Carrito como columna fija (pantallas anchas). Se puede colapsar para
+            dar todo el ancho al buscador; la preferencia se recuerda. */}
+        {carritoFijo && !carritoColapsado && (
           <aside className="venta-derecha">
+            <button
+              className="carrito-colapsar-btn"
+              onClick={toggleCarritoColapsado}
+              title="Ocultar carrito"
+              aria-label="Ocultar carrito"
+            >
+              <PanelRightClose size={18} />
+            </button>
             <Carrito onCobrar={abrirCobro} onImprimirCotizacion={imprimirCotizacion} onPonerEnEspera={ponerEnEspera} />
           </aside>
         )}
       </main>
+
+      {/* Botón flotante para volver a mostrar el carrito cuando está colapsado */}
+      {carritoFijo && carritoColapsado && (
+        <button className="carrito-mostrar-fab" onClick={toggleCarritoColapsado} title="Mostrar carrito">
+          <PanelRightOpen size={20} />
+          <span className="carrito-mostrar-fab-texto">Carrito</span>
+          {numItems > 0 && <span className="carrito-fab-badge">{numItems}</span>}
+        </button>
+      )}
 
       {/* ===== Carrito como drawer (pantallas angostas) ===== */}
       {!carritoFijo && (

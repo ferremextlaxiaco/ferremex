@@ -8299,14 +8299,49 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 /* ---- Carrito como columna fija (pantallas anchas) ---- */
 .venta-page--carrito-fijo .venta-derecha { display: flex; }
 .venta-derecha {
-  width: 400px; flex-shrink: 0;
+  width: 460px; flex-shrink: 0;
   display: flex; flex-direction: column;
   background: var(--bg-panel);
   border-left: 1px solid var(--border);
   overflow: hidden;
+  position: relative;
 }
 /* En modo fijo, el carrito interior ocupa toda la columna. */
 .venta-derecha .carrito { height: 100%; border-radius: 0; }
+
+/* Botón para colapsar la columna del carrito (esquina superior izquierda del panel).
+   El header del carrito recibe padding-left extra para no solaparse con él. */
+.carrito-colapsar-btn {
+  position: absolute;
+  top: 12px; left: 12px;
+  z-index: 5;
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg); color: var(--text-soft);
+  border: 1px solid var(--border); border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.carrito-colapsar-btn:hover { background: var(--orange); color: #fff; border-color: var(--orange); }
+/* Deja espacio al botón de colapsar para que no tape el título "CARRITO (N)". */
+.venta-derecha .carrito-header { padding-left: 50px; }
+
+/* FAB para volver a mostrar el carrito cuando está colapsado. */
+.carrito-mostrar-fab {
+  position: fixed;
+  right: 20px; bottom: 24px;
+  z-index: 40;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 12px 18px;
+  background: var(--orange); color: #fff;
+  border: none; border-radius: 999px;
+  font-size: 14px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(249,99,2,0.35);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.carrito-mostrar-fab:hover { background: #d95500; box-shadow: 0 6px 22px rgba(249,99,2,0.45); }
+.carrito-mostrar-fab-texto { line-height: 1; }
 
 /* ---- Desglose fiscal del carrito (subtotal / IVA) ---- */
 .carrito-desglose {
