@@ -18,7 +18,7 @@ interface FiltroBarProps {
   onFiltroStockChange: (v: FiltroStock) => void
 }
 
-type ModoFiltro = "nombre" | "explorar" | "existencia"
+type ModoFiltro = "nombre" | "explorar"
 
 export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange }: FiltroBarProps) {
   const [modo, setModo] = useState<ModoFiltro>("nombre")
@@ -118,11 +118,21 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
         >
           <FolderTree size={16} /> Explorar{explorarActivo && <span className="filtro-tab-dot" />}
         </button>
+        {/* Filtro de existencia CÍCLICO: clic alterna todos → con existencia →
+            sin existencia → todos. La etiqueta refleja el estado actual. */}
         <button
-          className={`filtro-tab ${modo === "existencia" ? "filtro-tab-activo" : ""} ${filtroStock !== "todos" ? "filtro-tab-con-dato" : ""}`}
-          onClick={() => setModo("existencia")}
+          className={`filtro-tab ${filtroStock !== "todos" ? "filtro-tab-activo filtro-tab-con-dato" : ""}`}
+          onClick={() => onFiltroStockChange(
+            filtroStock === "todos" ? "con-stock" : filtroStock === "con-stock" ? "sin-stock" : "todos"
+          )}
+          title="Clic para alternar: Todos → Con existencia → Sin existencia"
         >
-          <Package size={16} /> Existencia{filtroStock !== "todos" && <span className="filtro-tab-dot" />}
+          <Package size={16} /> {
+            filtroStock === "con-stock" ? "Con existencia"
+            : filtroStock === "sin-stock" ? "Sin existencia"
+            : "Existencia"
+          }
+          {filtroStock !== "todos" && <span className="filtro-tab-dot" />}
         </button>
         {hayFiltroActivo && (
           <button
@@ -227,26 +237,6 @@ export function FiltroBar({ filtros, onChange, filtroStock, onFiltroStockChange 
         </>
       )}
 
-      {/* ── Existencia ── */}
-      {modo === "existencia" && (
-        <div className="filtro-chips">
-          {(
-            [
-              ["todos", "Todos los productos", null],
-              ["con-stock", "Con existencia", <Check key="c" size={14} />],
-              ["sin-stock", "Sin existencia", <X key="x" size={14} />],
-            ] as [FiltroStock, string, React.ReactNode][]
-          ).map(([val, label, icon]) => (
-            <button
-              key={val}
-              className={`filtro-chip ${filtroStock === val ? "filtro-chip-activo" : ""}`}
-              onClick={() => onFiltroStockChange(val)}
-            >
-              {icon}{label}
-            </button>
-          ))}
-        </div>
-      )}
     </div>
   )
 }
