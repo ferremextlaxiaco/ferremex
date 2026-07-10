@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { Search, X, Filter, ImageOff, Check, Plus } from "lucide-react"
+import { Search, X, Filter, ImageOff, Check, Plus, Package } from "lucide-react"
 import { listarArticulos, listarArticulosDeCatalogo } from "../lib/client"
 import { formatMXN } from "../lib/format"
 
@@ -56,6 +56,8 @@ export default function SelectorArticulosPopup({
   const [fDept, setFDept] = useState("")   // dep-id
   const [fCat, setFCat] = useState("")     // cat-id
   const [fMarca, setFMarca] = useState("") // mar-id
+  // Filtro de existencia CÍCLICO: "todos" → "con-stock" → "sin-stock" → "todos".
+  const [fStock, setFStock] = useState("todos")
   const [page, setPage] = useState(0)
   const inputRef = useRef(null)
   const gridRef = useRef(null)
@@ -99,11 +101,18 @@ export default function SelectorArticulosPopup({
     }
   }, [pushToast])
 
+  // Filtro de existencia sobre los resultados ya cargados (sin re-buscar).
+  const resultadosFiltrados = useMemo(() => {
+    if (fStock === "con-stock") return resultados.filter((a) => (a.existencia ?? 0) > 0)
+    if (fStock === "sin-stock") return resultados.filter((a) => (a.existencia ?? 0) <= 0)
+    return resultados
+  }, [resultados, fStock])
+
   // Paginación de resultados (mismo patrón useMemo + slice que ArticlesModule)
-  const totalPages = Math.max(1, Math.ceil(resultados.length / SEL_PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(resultadosFiltrados.length / SEL_PAGE_SIZE))
   const pageItems = useMemo(
-    () => resultados.slice(page * SEL_PAGE_SIZE, (page + 1) * SEL_PAGE_SIZE),
-    [resultados, page]
+    () => resultadosFiltrados.slice(page * SEL_PAGE_SIZE, (page + 1) * SEL_PAGE_SIZE),
+    [resultadosFiltrados, page]
   )
   function goPage(delta) {
     setPage((p) => {
@@ -166,17 +175,31 @@ export default function SelectorArticulosPopup({
           <option value="">Todas las marcas</option>
           {marcas.map((m) => <option key={m.id} value={m.id}>{m.nombre}</option>)}
         </select>
-        {hayFiltros && (
-          <button className="pk-filter-clear" onClick={() => { setFDept(""); setFCat(""); setFMarca(""); if (!busqueda.trim()) { setResultados([]); setHasBuscado(false) } }}>
+        {/* Filtro de existencia CÍCLICO: clic alterna todos → con → sin existencia. */}
+        <button
+          type="button"
+          className={`pk-sel-stock-btn${fStock !== "todos" ? " on" : ""}`}
+          onClick={() => { setFStock(fStock === "todos" ? "con-stock" : fStock === "con-stock" ? "sin-stock" : "todos"); setPage(0) }}
+          title="Clic para alternar: Todos → Con existencia → Sin existencia"
+        >
+          <Package size={14} /> {
+            fStock === "con-stock" ? "Con existencia"
+            : fStock === "sin-stock" ? "Sin existencia"
+            : "Existencia"
+          }
+        </button>
+        {(hayFiltros || fStock !== "todos") && (
+          <button className="pk-filter-clear" onClick={() => { setFDept(""); setFCat(""); setFMarca(""); setFStock("todos"); setPage(0); if (!busqueda.trim()) { setResultados([]); setHasBuscado(false) } }}>
             ✕
           </button>
         )}
       </div>
 
-      {/* Contador de resultados */}
-      {hasBuscado && !buscando && resultados.length > 0 && (
+      {/* Contador de resultados (ya filtrados por existencia) */}
+      {hasBuscado && !buscando && resultadosFiltrados.length > 0 && (
         <div className="pk-sel-count">
-          {resultados.length} artículo{resultados.length !== 1 ? "s" : ""}
+          {resultadosFiltrados.length} artículo{resultadosFiltrados.length !== 1 ? "s" : ""}
+          {fStock !== "todos" && <> ({fStock === "con-stock" ? "con existencia" : "sin existencia"})</>}
           {totalPages > 1 && <> · pág. {page + 1}/{totalPages}</>}
         </div>
       )}
@@ -189,6 +212,10 @@ export default function SelectorArticulosPopup({
           <p className="pk-sel-empty">Escribe o elige un filtro para buscar artículos.</p>
         ) : resultados.length === 0 ? (
           <p className="pk-sel-empty">Sin resultados.</p>
+        ) : resultadosFiltrados.length === 0 ? (
+          <p className="pk-sel-empty">
+            Ningún artículo {fStock === "con-stock" ? "con existencia" : "sin existencia"} en estos resultados.
+          </p>
         ) : (
           pageItems.map((a) => {
             const sku = a.clave || a.claveAlterna
