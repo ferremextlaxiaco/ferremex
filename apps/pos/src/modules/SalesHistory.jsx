@@ -1,8 +1,13 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
-import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta } from "../lib/client"
+import {
+  Clock, User, CreditCard, Receipt, UserRound, Printer, Ban, Truck,
+  Package, Search, AlertTriangle, Loader,
+} from "lucide-react"
+import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta, obtenerEntregaPorFolio } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import { formatMXNAbs as fmt } from "../lib/format"
 import { FacturarBoton } from "../components/FacturarBoton"
+import { TicketsEntrega } from "../components/TicketsEntrega"
 import SelectorClienteModal from "../components/SelectorClienteModal"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -343,7 +348,7 @@ function ArticuloPicker({ onSelect, onClose }) {
               }}>
                 {art.thumbnail
                   ? <img src={art.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                  : <span style={{ fontSize: 20 }}>📦</span>
+                  : <Package size={20} color="#a1a1aa" />
                 }
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
@@ -397,7 +402,7 @@ const PRESETS = [
   { label: "Mes", fn: () => ({ desde: isoToday().slice(0,7) + "-01", hasta: isoToday() }) },
 ]
 
-const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Mixto"]
+const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Mixto", "Contra entrega"]
 
 const FP_KEY = "pos_sales_filters"
 function loadFilters() {
@@ -503,7 +508,7 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
             <div style={{ width: 30, height: 30, flexShrink: 0, borderRadius: 5, overflow: "hidden", background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {artObj.thumbnail
                 ? <img src={artObj.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                : <span style={{ fontSize: 14 }}>📦</span>
+                : <Package size={14} color="#a1a1aa" />
               }
             </div>
             <span style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text)" }}>
@@ -516,7 +521,7 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
             ...inputStyle, textAlign: "left", cursor: "pointer",
             color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 6,
           }}>
-            <span style={{ fontSize: 13 }}>🔍</span>
+            <Search size={13} />
             <span>Seleccionar artículo…</span>
           </button>
         )}
@@ -563,7 +568,7 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
             display: "flex", alignItems: "center", justifyContent: "space-between",
           }}>
             Buscar cliente…
-            <span style={{ fontSize: 12 }}>🔍</span>
+            <Search size={12} />
           </button>
         )}
         <label style={{
@@ -664,6 +669,17 @@ function ActiveChips({ filters, applied, onRemove }) {
 // ── Estado badge ───────────────────────────────────────────────────────────────
 
 function EstadoBadge({ estado }) {
+  // Estado "por_cobrar" (venta contra entrega sin liquidar) → badge naranja.
+  if (estado === "por_cobrar") {
+    return (
+      <span style={{
+        background: "rgba(234,88,12,0.12)", color: "#ea580c",
+        borderRadius: 20, padding: "2px 8px", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+      }}>
+        Por cobrar
+      </span>
+    )
+  }
   const ok = estado !== "cancelada"
   return (
     <span style={{
@@ -678,7 +694,33 @@ function EstadoBadge({ estado }) {
 
 // ── Payment method label ───────────────────────────────────────────────────────
 
+/** True si la venta es contra entrega (a domicilio, pago diferido). */
+function esContraEntrega(v) {
+  return v.metodo_pago === "contra_entrega"
+}
+/** True si la contra entrega ya se cobró (liquidó). */
+function entregaCobrada(v) {
+  return esContraEntrega(v) && v.estado === "cobrada"
+}
+/** True si la contra entrega sigue pendiente de cobro. */
+function entregaPorCobrar(v) {
+  return esContraEntrega(v) && v.estado === "por_cobrar"
+}
+
+const METODO_LABEL = {
+  efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta",
+  credito: "Crédito", puntos: "Puntos",
+}
+
 function metodoVenta(v) {
+  // Contra entrega: mientras está por cobrar muestra "Contra entrega"; una vez
+  // liquidada muestra el método real con que se cobró (guardado en cobro_metodo).
+  if (esContraEntrega(v)) {
+    if (v.estado === "cobrada") {
+      return `Contra entrega · ${METODO_LABEL[v.cobro_metodo] ?? v.cobro_metodo ?? "cobrada"}`
+    }
+    return "Contra entrega"
+  }
   const pagos = [
     v.pago_efectivo > 0 && "Efectivo",
     v.pago_transferencia > 0 && "Transferencia",
@@ -707,7 +749,8 @@ function ClienteChip({ nombre }) {
       background: esNominativa ? "rgba(234,88,12,0.10)" : "var(--bg-hover, #f3f4f6)",
       color: esNominativa ? "#c2410c" : "var(--text-muted, #9ca3af)",
     }}>
-      {esNominativa ? `🧾 ${nombre}` : "🧍 Público en general"}
+      {esNominativa ? <Receipt size={12} /> : <UserRound size={12} />}
+      {esNominativa ? nombre : "Público en general"}
     </span>
   )
 }
@@ -716,7 +759,12 @@ function VentaCard({ v, onClick }) {
   const metodo = metodoVenta(v)
   const vigente = v.estado !== "cancelada"
 
-  const accentColor = vigente ? "#16a34a" : "#dc2626"
+  // Barra lateral: naranja mientras la contra entrega está por cobrar, verde una
+  // vez cobrada (o venta normal vigente), rojo si cancelada.
+  const accentColor = !vigente ? "#dc2626" : entregaPorCobrar(v) ? "#ea580c" : "#16a34a"
+  // Total mostrado: para contra entrega, el monto real a cobrar (entrega_total),
+  // no el `total` (que es 0 hoy para que el corte cuadre).
+  const totalMostrar = esContraEntrega(v) ? (v.entrega_total ?? v.total) : v.total
 
   return (
     <div onClick={() => onClick(v)} style={{
@@ -740,9 +788,15 @@ function VentaCard({ v, onClick }) {
         </div>
         {/* Row 2 */}
         <div style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 3, display: "flex", alignItems: "center", flexWrap: "wrap", gap: "2px 0" }}>
-          <span style={{ marginRight: 12 }}>🕐 {fmtTime(v.fecha)}</span>
-          <span style={{ marginRight: 12 }}>👤 {v.cajero}</span>
-          <span style={{ marginRight: 12 }}>💳 {metodo}</span>
+          <span style={{ marginRight: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><Clock size={13} /> {fmtTime(v.fecha)}</span>
+          <span style={{ marginRight: 12, display: "inline-flex", alignItems: "center", gap: 4 }}><User size={13} /> {v.cajero}</span>
+          <span style={{
+            marginRight: 12, display: "inline-flex", alignItems: "center", gap: 4,
+            color: entregaPorCobrar(v) ? "#ea580c" : "inherit",
+            fontWeight: esContraEntrega(v) ? 600 : 400,
+          }}>
+            {esContraEntrega(v) ? <Truck size={13} /> : <CreditCard size={13} />} {metodo}
+          </span>
           <ClienteChip nombre={v.cliente_nombre} />
         </div>
         {/* Row 3 — items preview */}
@@ -752,7 +806,7 @@ function VentaCard({ v, onClick }) {
       </div>
       {/* Total */}
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", minWidth: 80 }}>
-        <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text)" }}>{fmt(v.total)}</span>
+        <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text)" }}>{fmt(totalMostrar)}</span>
         <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{v.items.length} art.</span>
       </div>
     </div>
@@ -822,16 +876,34 @@ function CompactTable({ ventas, sort, onSort, onRowClick }) {
 // ── Sale detail drawer ─────────────────────────────────────────────────────────
 
 function SaleDrawer({ venta, onClose, onCancel }) {
+  // Reimpresión de los dos tickets de entrega (solo ventas contra entrega).
+  const [ticketsEntrega, setTicketsEntrega] = useState(null) // { venta, ficha } | null
+  const [cargandoFicha, setCargandoFicha] = useState(false)
+
   useEffect(() => {
     function esc(e) { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", esc)
     return () => window.removeEventListener("keydown", esc)
   }, [onClose])
 
+  async function reimprimirEntrega() {
+    if (!venta || cargandoFicha) return
+    setCargandoFicha(true)
+    try {
+      const ficha = await obtenerEntregaPorFolio(venta.folio)
+      if (ficha) setTicketsEntrega({ venta, ficha })
+    } catch { /* noop — best-effort */ } finally {
+      setCargandoFicha(false)
+    }
+  }
+
   if (!venta) return null
 
   const vigente = venta.estado !== "cancelada"
+  const contraEntrega = esContraEntrega(venta)
   const metodo = metodoVenta(venta)
+  // Total real de la venta (para contra entrega, el monto a cobrar, no el 0 de hoy).
+  const totalReal = contraEntrega ? (venta.entrega_total ?? venta.total) : venta.total
 
   const rowStyle = { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }
   const labelC = { color: "var(--text-muted)", flex: 1 }
@@ -871,7 +943,18 @@ function SaleDrawer({ venta, onClose, onCancel }) {
               </span>
             </div>
             <div style={rowStyle}><span style={labelC}>Turno</span><span style={valueC}>{venta.turno_id}</span></div>
-            <div style={rowStyle}><span style={labelC}>Método de pago</span><span style={valueC}>{metodo}</span></div>
+            <div style={rowStyle}>
+              <span style={labelC}>Método de pago</span>
+              <span style={{ ...valueC, color: entregaPorCobrar(venta) ? "#ea580c" : "var(--text)", fontWeight: contraEntrega ? 600 : 500 }}>{metodo}</span>
+            </div>
+            {contraEntrega && (
+              <div style={rowStyle}>
+                <span style={labelC}>Entrega</span>
+                <span style={{ ...valueC, color: entregaCobrada(venta) ? "#16a34a" : "#ea580c", fontWeight: 600 }}>
+                  {entregaCobrada(venta) ? "Cobrada y entregada" : "Por cobrar (a domicilio)"}
+                </span>
+              </div>
+            )}
             {venta.motivo_cancelacion && (
               <div style={rowStyle}><span style={labelC}>Motivo cancelación</span><span style={{ ...valueC, color: "#dc2626" }}>{venta.motivo_cancelacion}</span></div>
             )}
@@ -915,9 +998,16 @@ function SaleDrawer({ venta, onClose, onCancel }) {
               </div>
             )}
             {venta.cambio > 0 && <div style={rowStyle}><span style={labelC}>Cambio</span><span style={valueC}>{fmt(venta.cambio)}</span></div>}
+            {/* Contra entrega: no hubo cobro hoy; el monto se cobra al entregar. */}
+            {contraEntrega && (
+              <div style={rowStyle}>
+                <span style={labelC}>{entregaCobrada(venta) ? `Cobrado (${METODO_LABEL[venta.cobro_metodo] ?? venta.cobro_metodo ?? "—"})` : "Por cobrar al entregar"}</span>
+                <span style={{ ...valueC, color: entregaCobrada(venta) ? "#16a34a" : "#ea580c", fontWeight: 600 }}>{fmt(totalReal)}</span>
+              </div>
+            )}
             <div style={{ ...rowStyle, borderBottom: "none", paddingTop: 8 }}>
               <span style={{ ...labelC, fontWeight: 700, fontSize: 13, color: "var(--text)" }}>Total</span>
-              <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{fmt(venta.total)}</span>
+              <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{fmt(totalReal)}</span>
             </div>
           </div>
 
@@ -932,6 +1022,27 @@ function SaleDrawer({ venta, onClose, onCancel }) {
                   <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{fmtDateTime(venta.fecha)} · {venta.cajero}</div>
                 </div>
               </div>
+              {entregaPorCobrar(venta) && (
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#ea580c", marginTop: 3, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>Por cobrar (contra entrega)</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>El material salió; el pago se registra al entregar a domicilio.</div>
+                  </div>
+                </div>
+              )}
+              {entregaCobrada(venta) && (
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#16a34a", marginTop: 3, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>Cobrada y entregada</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                      {fmt(totalReal)} · {METODO_LABEL[venta.cobro_metodo] ?? venta.cobro_metodo ?? "—"}
+                      {venta.cobro_fecha ? ` · ${fmtDateTime(venta.cobro_fecha)}` : ""}
+                    </div>
+                  </div>
+                </div>
+              )}
               {venta.estado === "cancelada" && (
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#dc2626", marginTop: 3, flexShrink: 0 }} />
@@ -946,11 +1057,23 @@ function SaleDrawer({ venta, onClose, onCancel }) {
         </div>
 
         {/* Footer actions */}
-        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
-          <button onClick={() => window.print()} style={{
-            flex: 1, background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
-            padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",
-          }}>🖨️ Reimprimir</button>
+        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {/* Contra entrega: reimprime los DOS comprobantes (cliente + repartidor). */}
+          {contraEntrega ? (
+            <button onClick={reimprimirEntrega} disabled={cargandoFicha} style={{
+              flex: "1 1 100%", background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 6,
+              padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: cargandoFicha ? "default" : "pointer", color: "#ea580c",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: cargandoFicha ? 0.6 : 1,
+            }}>
+              <Truck size={14} /> {cargandoFicha ? "Cargando…" : "Reimprimir tickets de entrega"}
+            </button>
+          ) : (
+            <button onClick={() => window.print()} style={{
+              flex: 1, background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
+              padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}><Printer size={14} /> Reimprimir</button>
+          )}
           {/* Facturar SIEMPRE disponible. Para ventas a público en general, el
               FacturarBoton pide elegir cliente y reasigna la venta antes de timbrar.
               Si ya está facturada, muestra "Ver factura". */}
@@ -964,10 +1087,20 @@ function SaleDrawer({ venta, onClose, onCancel }) {
             <button onClick={() => onCancel(venta)} style={{
               flex: 1, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.3)", borderRadius: 6,
               padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#dc2626",
-            }}>🚫 Cancelar</button>
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}><Ban size={14} /> Cancelar</button>
           )}
         </div>
       </div>
+
+      {/* Reimpresión de los dos comprobantes de entrega (cliente + repartidor). */}
+      {ticketsEntrega && (
+        <TicketsEntrega
+          venta={ticketsEntrega.venta}
+          ficha={ticketsEntrega.ficha}
+          onCerrar={() => setTicketsEntrega(null)}
+        />
+      )}
     </>
   )
 }
@@ -1215,6 +1348,9 @@ export default function SalesHistory() {
       if (applied.cajero) list = list.filter(v => v.cajero === applied.cajero)
       if (applied.metodo) {
         list = list.filter(v => {
+          // "Contra entrega" agrupa todas las ventas contra entrega (por cobrar y
+          // cobradas), sin importar el método real con que se liquidaron.
+          if (applied.metodo === "Contra entrega") return esContraEntrega(v)
           const met = metodoVenta(v)
           return met === applied.metodo
         })
@@ -1343,7 +1479,7 @@ export default function SalesHistory() {
               boxSizing: "border-box", background: "#fafafa",
             }}
           />
-          <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "var(--text-muted)" }}>🔍</span>
+          <Search size={13} style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
           {searchFolio && (
             <button onClick={() => { setSearchFolio(""); setPage(1) }} style={{
               position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
@@ -1424,17 +1560,17 @@ export default function SalesHistory() {
           <div style={{ flex: 1, overflowY: "auto", padding: view === "detallada" ? 16 : 0 }}>
             {loading ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60%", color: "var(--text-muted)", gap: 8 }}>
-                <span style={{ fontSize: 24 }}>⏳</span>
+                <Loader size={26} className="spin" />
                 <span style={{ fontSize: 14 }}>Cargando ventas…</span>
               </div>
             ) : fetchError ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60%", color: "#dc2626", gap: 8 }}>
-                <span style={{ fontSize: 24 }}>⚠️</span>
+                <AlertTriangle size={26} />
                 <span style={{ fontSize: 14 }}>{fetchError}</span>
               </div>
             ) : filtered.length === 0 ? (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "60%", color: "var(--text-muted)", gap: 8 }}>
-                <span style={{ fontSize: 32 }}>🔍</span>
+                <Search size={32} />
                 <span style={{ fontSize: 14 }}>Sin resultados con los filtros actuales</span>
                 <button onClick={handleClear} style={{ fontSize: 12, color: "var(--orange)", background: "none", border: "none", cursor: "pointer" }}>Limpiar filtros</button>
               </div>
