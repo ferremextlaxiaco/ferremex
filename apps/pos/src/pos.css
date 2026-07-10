@@ -1308,6 +1308,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   align-items: flex-end;
   line-height: 1.2;
 }
+/* Granel: el importe vive en el campo de monto (columna de controles), así que
+   el subtotal no reserva ancho salvo que muestre un precio tachado (promo/mayoreo). */
+.carrito-item-subtotal--granel {
+  min-width: 0;
+}
 
 .btn-eliminar {
   background: transparent;

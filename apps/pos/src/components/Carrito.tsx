@@ -422,13 +422,15 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                     </label>
                   )}
                 </div>
-                <div className="carrito-item-subtotal">
+                <div className={esGranel ? "carrito-item-subtotal carrito-item-subtotal--granel" : "carrito-item-subtotal"}>
                   {tienePromo ? (
                     <span className="carrito-precio-tachado">${importeSinPromo.toFixed(2)}</span>
                   ) : esMayoreo ? (
                     <span className="carrito-precio-tachado">${(item.precio * item.cantidad).toFixed(2)}</span>
                   ) : null}
-                  ${importeLinea.toFixed(2)}
+                  {/* En granel el importe ya se muestra (y edita) en el campo de
+                      monto: no repetimos el subtotal para evitar el doble precio. */}
+                  {!esGranel && `$${importeLinea.toFixed(2)}`}
                 </div>
                 <button
                   className="btn-eliminar"
