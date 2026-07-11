@@ -706,6 +706,23 @@ function entregaCobrada(v) {
 function entregaPorCobrar(v) {
   return esContraEntrega(v) && v.estado === "por_cobrar"
 }
+/** True si la venta es un envío a domicilio con pago en tienda (total o abono). */
+function esEntregaPagada(v) {
+  return v.entrega_domicilio === "pagada"
+}
+/** True si la venta tiene una entrega a domicilio (pagada o contra entrega). */
+function tieneEntrega(v) {
+  return esContraEntrega(v) || esEntregaPagada(v)
+}
+/** Resta a cobrar al entregar (0 si no hay entrega o ya se pagó todo). */
+function restaEntrega(v) {
+  if (!tieneEntrega(v)) return 0
+  return Number(v.entrega_total) || 0
+}
+/** True si un envío pagado dejó resta por cobrar al entregar (abono parcial). */
+function entregaPagadaConResta(v) {
+  return esEntregaPagada(v) && restaEntrega(v) > 0.005 && v.estado === "por_cobrar"
+}
 
 const METODO_LABEL = {
   efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta",
@@ -955,6 +972,14 @@ function SaleDrawer({ venta, onClose, onCancel }) {
                 </span>
               </div>
             )}
+            {esEntregaPagada(venta) && (
+              <div style={rowStyle}>
+                <span style={labelC}>Entrega</span>
+                <span style={{ ...valueC, color: entregaPagadaConResta(venta) ? "#ea580c" : "#16a34a", fontWeight: 600 }}>
+                  {entregaPagadaConResta(venta) ? "Abono · resta al entregar" : "Pagada · a domicilio"}
+                </span>
+              </div>
+            )}
             {venta.motivo_cancelacion && (
               <div style={rowStyle}><span style={labelC}>Motivo cancelación</span><span style={{ ...valueC, color: "#dc2626" }}>{venta.motivo_cancelacion}</span></div>
             )}
@@ -1005,6 +1030,13 @@ function SaleDrawer({ venta, onClose, onCancel }) {
                 <span style={{ ...valueC, color: entregaCobrada(venta) ? "#16a34a" : "#ea580c", fontWeight: 600 }}>{fmt(totalReal)}</span>
               </div>
             )}
+            {/* Envío pagado con abono parcial: resta que cobra el repartidor. */}
+            {entregaPagadaConResta(venta) && (
+              <div style={rowStyle}>
+                <span style={labelC}>Resta a cobrar al entregar</span>
+                <span style={{ ...valueC, color: "#ea580c", fontWeight: 600 }}>{fmt(restaEntrega(venta))}</span>
+              </div>
+            )}
             <div style={{ ...rowStyle, borderBottom: "none", paddingTop: 8 }}>
               <span style={{ ...labelC, fontWeight: 700, fontSize: 13, color: "var(--text)" }}>Total</span>
               <span style={{ fontSize: 16, fontWeight: 700, color: "var(--text)" }}>{fmt(totalReal)}</span>
@@ -1043,6 +1075,21 @@ function SaleDrawer({ venta, onClose, onCancel }) {
                   </div>
                 </div>
               )}
+              {esEntregaPagada(venta) && (
+                <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                  <div style={{ width: 8, height: 8, borderRadius: "50%", background: entregaPagadaConResta(venta) ? "#ea580c" : "#16a34a", marginTop: 3, flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 12, color: "var(--text)", fontWeight: 500 }}>
+                      {entregaPagadaConResta(venta) ? "Abono — envío a domicilio" : "Pagada — envío a domicilio"}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                      {entregaPagadaConResta(venta)
+                        ? `Abonó en tienda; resta ${fmt(restaEntrega(venta))} a cobrar al entregar. Seguimiento en "Entregas a domicilio".`
+                        : `El material se pagó en tienda y se envía a domicilio. Seguimiento en "Entregas a domicilio".`}
+                    </div>
+                  </div>
+                </div>
+              )}
               {venta.estado === "cancelada" && (
                 <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#dc2626", marginTop: 3, flexShrink: 0 }} />
@@ -1058,8 +1105,9 @@ function SaleDrawer({ venta, onClose, onCancel }) {
 
         {/* Footer actions */}
         <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {/* Contra entrega: reimprime los DOS comprobantes (cliente + repartidor). */}
-          {contraEntrega ? (
+          {/* Entrega a domicilio (contra entrega o pagada): reimprime los DOS
+              comprobantes (cliente + repartidor). */}
+          {tieneEntrega(venta) ? (
             <button onClick={reimprimirEntrega} disabled={cargandoFicha} style={{
               flex: "1 1 100%", background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 6,
               padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: cargandoFicha ? "default" : "pointer", color: "#ea580c",

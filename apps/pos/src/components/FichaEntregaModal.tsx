@@ -1,42 +1,62 @@
 import { useEffect, useRef, useState } from "react"
-import { Truck, X, MapPin, User, Phone, Wallet, MessageSquare, AlertCircle, Copy } from "lucide-react"
+import { Truck, X, MapPin, User, Phone, Wallet, MessageSquare, AlertCircle, Banknote, Coins } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 import { formatMXN as fmt } from "../lib/format"
 
-/** Datos que el cajero llena al cobrar contra entrega (venta a domicilio). */
+/** Datos que el cajero llena al registrar una entrega a domicilio. */
 export interface DatosFichaEntrega {
+  // `true` = la venta ya se pagó en tienda; solo hay que enviarla. En ese caso
+  // `paga` va vacío (pagó el cliente en caja). false/omitido = contra entrega.
+  pagada?: boolean
   direccion: string
   recibe: { nombre: string; telefono: string }
   paga: { nombre: string; telefono: string }
   comentarios?: string
+  // Con cuánto pagará el cliente al recibir (contra entrega) → cambio del repartidor.
+  // Opcional; si se deja vacío, el repartidor cobra el monto exacto.
+  paga_con?: number
 }
 
 interface FichaEntregaModalProps {
-  /** Total de la venta (se cobrará al entregar). */
+  /** Total de la venta. */
   total: number
+  /**
+   * `true` = envío con pago en tienda (pagada). Oculta "quién paga". Con `abonado`
+   * < total, la resta la cobra el repartidor. false/omitido = contra entrega.
+   */
+  pagada?: boolean
+  /** Abono ya capturado en tienda (solo pagada). La resta = total − abonado. */
+  abonado?: number
   onCancelar: () => void
   onConfirmar: (datos: DatosFichaEntrega) => void
 }
 
 /**
- * Ficha de entrega — formulario previo al registro de una venta CONTRA ENTREGA
- * (a domicilio, pago diferido). Se inyecta como GATE en ModalCobro cuando el
- * cajero elige el método "Contra entrega": la venta se registra y descuenta
- * inventario, pero NO se cobra hoy. El pago se registra al liquidar la entrega.
+ * Ficha de entrega — formulario previo al registro de una venta a domicilio.
+ * Se inyecta como GATE en ModalCobro. Dos naturalezas según `pagada`:
  *
- * Obligatorios: dirección, quién recibe (nombre+tel), quién paga (nombre+tel).
- * Comentarios/referencias del lugar es opcional pero recomendado. El que paga
- * puede ser un tercero (el "jefe"); botón para copiarlo de quién recibe.
+ *  - CONTRA ENTREGA (`pagada` false): la venta se registra y descuenta inventario,
+ *    pero NO se cobra hoy. Obligatorio "quién paga" (puede ser un tercero, el
+ *    "jefe"; botón para copiarlo de quién recibe). El pago se registra al liquidar.
+ *  - YA PAGADA (`pagada` true): el cliente pagó en caja; solo se captura a dónde
+ *    va y quién recibe. Sin "quién paga". La venta se cobra hoy normal.
+ *
+ * Obligatorios siempre: dirección, quién recibe (nombre+tel). Comentarios opcional.
  */
-export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntregaModalProps) {
+export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancelar, onConfirmar }: FichaEntregaModalProps) {
   const { state } = usePOS()
   const cli = state.clienteActivo
+  // Resta a cobrar al entregar. Pagada = total − abono; contra entrega = total.
+  const restaEntrega = pagada
+    ? Math.max(0, Math.round((total - abonado) * 100) / 100)
+    : total
 
   const [direccion, setDireccion] = useState("")
   const [recibeNombre, setRecibeNombre] = useState(cli?.nombre ?? "")
   const [recibeTel, setRecibeTel] = useState(cli?.telefono ?? "")
-  const [pagaNombre, setPagaNombre] = useState("")
-  const [pagaTel, setPagaTel] = useState("")
+  // "Paga con $" (solo contra entrega): con cuánto pagará al recibir, para calcular
+  // el cambio que lleva el repartidor. Texto libre; se saneal a número al confirmar.
+  const [pagaCon, setPagaCon] = useState("")
   const [comentarios, setComentarios] = useState("")
   const [tocado, setTocado] = useState(false)
   const dirRef = useRef<HTMLTextAreaElement>(null)
@@ -48,26 +68,35 @@ export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntre
     return () => window.removeEventListener("keydown", onKey)
   }, [onCancelar])
 
+  // Solo se pide dirección + quién recibe (en AMBOS modos). "Quién paga" ya no se
+  // captura por separado: en contra entrega el que recibe es el mismo que paga
+  // (se copia de "recibe" al confirmar); en la pagada ya se pagó en caja.
   const faltaDir = !direccion.trim()
   const faltaRecibeN = !recibeNombre.trim()
   const faltaRecibeT = !recibeTel.trim()
-  const faltaPagaN = !pagaNombre.trim()
-  const faltaPagaT = !pagaTel.trim()
-  const invalido = faltaDir || faltaRecibeN || faltaRecibeT || faltaPagaN || faltaPagaT
+  const invalido = faltaDir || faltaRecibeN || faltaRecibeT
 
-  function copiarDeRecibe() {
-    setPagaNombre(recibeNombre)
-    setPagaTel(recibeTel)
-  }
+  // "Paga con": monto parseado y cambio a llevar (cuando hay resta por cobrar). Si
+  // el monto es 0/inválido, no se muestra cambio (el repartidor cobra exacto). El
+  // cambio se calcula contra la RESTA a cobrar, no el total.
+  const pagaConNum = parseFloat(pagaCon.replace(",", "."))
+  const pagaConValido = restaEntrega > 0.005 && Number.isFinite(pagaConNum) && pagaConNum > 0
+  const cambio = pagaConValido ? Math.round((pagaConNum - restaEntrega) * 100) / 100 : null
 
   function confirmar() {
     setTocado(true)
     if (invalido) return
+    const recibe = { nombre: recibeNombre.trim(), telefono: recibeTel.trim() }
     onConfirmar({
+      pagada,
       direccion: direccion.trim(),
-      recibe: { nombre: recibeNombre.trim(), telefono: recibeTel.trim() },
-      paga: { nombre: pagaNombre.trim(), telefono: pagaTel.trim() },
+      recibe,
+      // Ya pagada: sin "quién paga" (pagó el cliente en caja). Contra entrega: el
+      // que recibe es el mismo que paga → se copia de "recibe".
+      paga: pagada ? { nombre: "", telefono: "" } : recibe,
       comentarios: comentarios.trim() || undefined,
+      // Solo contra entrega y si es un monto válido > 0.
+      ...(pagaConValido ? { paga_con: pagaConNum } : {}),
     })
   }
 
@@ -84,7 +113,13 @@ export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntre
             </span>
             <div>
               <h2 className="text-lg font-bold text-gray-900 leading-tight">Entrega a domicilio</h2>
-              <p className="text-xs text-gray-500">Se cobra al entregar (pago contra entrega)</p>
+              <p className="text-xs text-gray-500">
+                {!pagada
+                  ? "Se cobra al entregar (pago contra entrega)"
+                  : restaEntrega <= 0.005
+                    ? "Pagada en tienda — solo enviar"
+                    : "Abono en tienda — el resto se cobra al entregar"}
+              </p>
             </div>
           </div>
           <button onClick={onCancelar}
@@ -94,13 +129,72 @@ export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntre
         </div>
 
         <div className="px-6 pb-6 flex flex-col gap-4">
-          {/* Monto a cobrar */}
-          <div className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3 flex items-center justify-between">
-            <span className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
-              <Wallet size={16} /> Monto a cobrar al entregar
-            </span>
-            <span className="text-lg font-black text-orange-700 tabular-nums">{fmt(total)}</span>
-          </div>
+          {/* Monto. Contra entrega = a cobrar al entregar (naranja). Pagada = ya
+              cobrado en tienda (verde: es solo informativo, no se cobra al llegar). */}
+          {pagada ? (
+            // Envío con pago en tienda. Si el abono cubre el total → "Ya pagado"
+            // (verde). Si es parcial → desglose total / abono / resta a cobrar.
+            restaEntrega <= 0.005 ? (
+              <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 flex items-center justify-between">
+                <span className="inline-flex items-center gap-2 text-sm font-semibold text-green-700">
+                  <Wallet size={16} /> Ya pagado en tienda
+                </span>
+                <span className="text-lg font-black text-green-700 tabular-nums">{fmt(total)}</span>
+              </div>
+            ) : (
+              <div className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3 flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-sm text-gray-600">
+                  <span>Total de la venta</span><span className="tabular-nums">{fmt(total)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-green-700">
+                  <span className="inline-flex items-center gap-1.5"><Wallet size={14} /> Abonado en tienda</span>
+                  <span className="tabular-nums font-semibold">{fmt(abonado)}</span>
+                </div>
+                <div className="border-t border-orange-200 my-0.5" />
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-orange-700">Resta a cobrar al entregar</span>
+                  <span className="text-lg font-black text-orange-700 tabular-nums">{fmt(restaEntrega)}</span>
+                </div>
+              </div>
+            )
+          ) : (
+            <div className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3 flex items-center justify-between">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
+                <Wallet size={16} /> Monto a cobrar al entregar
+              </span>
+              <span className="text-lg font-black text-orange-700 tabular-nums">{fmt(total)}</span>
+            </div>
+          )}
+
+          {/* Paga con / cambio — cuando hay algo por cobrar al entregar (contra
+              entrega, o pagada con resta > 0). El repartidor lleva el cambio. */}
+          {restaEntrega > 0.005 && (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex flex-col gap-2">
+              <Campo label="¿Con cuánto pagará el resto? (opcional — para el cambio del repartidor)" icon={Banknote}>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                  <input value={pagaCon} onChange={(e) => setPagaCon(e.target.value.replace(/[^0-9.,]/g, ""))}
+                    inputMode="decimal" className={`${inputCls(false)} pl-7`} placeholder="0.00" />
+                </div>
+              </Campo>
+              {/* Preview del cambio a llevar. Rojo si el monto es menor a la resta. */}
+              {pagaConValido && (
+                cambio! >= 0 ? (
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="inline-flex items-center gap-1.5 font-medium text-gray-600">
+                      <Coins size={15} className="text-green-600" /> Cambio a llevar
+                    </span>
+                    <span className="font-black tabular-nums text-green-700">{fmt(cambio!)}</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-xs text-red-600">
+                    <AlertCircle size={14} className="shrink-0" />
+                    Es menor a la resta ({fmt(restaEntrega)}). Faltarían {fmt(Math.abs(cambio!))}.
+                  </div>
+                )
+              )}
+            </div>
+          )}
 
           {/* Dirección */}
           <Campo label="Dirección de entrega" icon={MapPin} requerido error={tocado && faltaDir}>
@@ -123,26 +217,14 @@ export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntre
             </div>
           </div>
 
-          {/* Quién paga */}
-          <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Quién paga</div>
-              <button type="button" onClick={copiarDeRecibe}
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-orange-700 border border-orange-200 rounded-lg px-2.5 py-1 hover:bg-orange-50">
-                <Copy size={12} /> Es el mismo
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <Campo label="Nombre" icon={User} requerido error={tocado && faltaPagaN}>
-                <input value={pagaNombre} onChange={(e) => setPagaNombre(e.target.value)}
-                  className={inputCls(tocado && faltaPagaN)} placeholder="Quién liquidará (puede ser otra persona)" />
-              </Campo>
-              <Campo label="Teléfono" icon={Phone} requerido error={tocado && faltaPagaT}>
-                <input value={pagaTel} onChange={(e) => setPagaTel(e.target.value)} inputMode="tel"
-                  className={inputCls(tocado && faltaPagaT)} placeholder="953 000 0000" />
-              </Campo>
-            </div>
-          </div>
+          {/* Nota: en contra entrega el que recibe es el mismo que paga, así que no
+              se pide "quién paga" por separado (se copia de "recibe" al confirmar). */}
+          {!pagada && (
+            <p className="text-[11px] text-gray-400 -mt-1 leading-snug flex items-center gap-1.5">
+              <Wallet size={13} className="shrink-0 text-gray-400" />
+              El cobro se hace a quien recibe al momento de entregar.
+            </p>
+          )}
 
           {/* Comentarios */}
           <Campo label="Comentarios / referencias del lugar (opcional)" icon={MessageSquare}>
@@ -164,8 +246,10 @@ export function FichaEntregaModal({ total, onCancelar, onConfirmar }: FichaEntre
               Cancelar
             </button>
             <button onClick={confirmar}
-              className="flex-[2] inline-flex items-center justify-center gap-2 bg-orange-600 text-white px-4 py-3 rounded-xl text-sm font-bold hover:bg-orange-700">
-              <Truck size={17} /> Registrar entrega
+              className={`flex-[2] inline-flex items-center justify-center gap-2 text-white px-4 py-3 rounded-xl text-sm font-bold ${
+                pagada ? "bg-green-600 hover:bg-green-700" : "bg-orange-600 hover:bg-orange-700"
+              }`}>
+              <Truck size={17} /> {!pagada ? "Registrar entrega" : restaEntrega <= 0.005 ? "Pagar y enviar" : "Abonar y enviar"}
             </button>
           </div>
         </div>

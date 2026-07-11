@@ -2041,7 +2041,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  z-index: 200;
+  /* Alto para salir SIEMPRE por encima de drawers/paneles (p. ej. el drawer de
+     detalle de venta en Consulta de ventas, z-index ~1501, y su modal de
+     cancelación ~2001). Por debajo de los toasts (3000). */
+  z-index: 2600;
   padding: 32px 16px;
   overflow-y: auto;
 }
@@ -2078,6 +2081,26 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   flex: 1;
 }
 
+/* Aviso de estado de impresión (error de servicio / info del navegador). */
+.ticket-preview-aviso {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  border: 1px solid transparent;
+}
+.ticket-preview-aviso--error {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.ticket-preview-aviso--info {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+}
+
 /* El ticket en sí — mismo estilo en pantalla y en papel */
 .ticket {
   width: 76mm;
@@ -2112,6 +2135,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .ticket-col-desc { width: 45%; }
 .ticket-col-num  { width: 18.3%; text-align: right; }
 .ticket-encargo { font-weight: bold; font-size: 8pt; }
+/* Casilla ☐ para palomear artículos en la hoja del repartidor — grande y visible. */
+.ticket-casilla {
+  display: inline-block;
+  font-size: 1.7em;
+  line-height: 0.8;
+  vertical-align: -0.15em;
+  margin-right: 3px;
+  font-weight: 700;
+}
 
 .ticket-tabla th {
   font-weight: bold;
@@ -2152,6 +2184,44 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   }
 
   .ticket * { visibility: visible; }
+
+  /* Comprobantes de entrega: hay DOS .ticket (cliente + repartidor). Cuando se
+     imprime por el navegador (sin térmica), solo deben salir los marcados con
+     .ticket--print, y en FLUJO NORMAL (uno tras otro), no ambos apilados en 0,0.
+     TODO scoped a `:has(.ticket--print)` para NO afectar el ticket de venta /
+     encargo (que usan .ticket-overlay pero nunca .ticket--print). */
+  .ticket-overlay:has(.ticket--print) .ticket:not(.ticket--print) { display: none !important; }
+
+  .ticket-overlay:has(.ticket--print) {
+    position: static;
+    background: none;
+    padding: 0;
+    overflow: visible;
+  }
+  .ticket-overlay:has(.ticket--print) .ticket-preview-box {
+    border: none;
+    padding: 0;
+    max-width: none;
+    gap: 0;
+  }
+  /* Oculta título, avisos y botones al imprimir por navegador. */
+  .ticket-overlay:has(.ticket--print) .ticket-preview-titulo,
+  .ticket-overlay:has(.ticket--print) .ticket-preview-aviso,
+  .ticket-overlay:has(.ticket--print) .ticket-preview-acciones { display: none !important; }
+
+  .ticket-overlay .ticket--print {
+    visibility: visible;
+    position: static;
+    width: 76mm;
+    border: none;
+    padding: 2mm;
+    page-break-after: always;
+    break-after: page;
+  }
+  .ticket-overlay .ticket--print:last-of-type {
+    page-break-after: auto;
+    break-after: auto;
+  }
 }
 
 /* ============================================================
@@ -8810,6 +8880,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .ticket-tipo-doc {
   margin-top: 4px; font-weight: 900; letter-spacing: 2px; font-size: 13px;
   border: 1.5px solid currentColor; display: inline-block; padding: 1px 8px; border-radius: 4px;
+}
+/* Etiqueta de a quién pertenece la copia del comprobante (CLIENTE / REPARTIDOR). */
+.ticket-copia-tag {
+  margin-top: 4px; font-weight: 800; letter-spacing: 3px; font-size: 11px;
 }
 
 /* ---- Toasts de la pantalla de venta ---- */

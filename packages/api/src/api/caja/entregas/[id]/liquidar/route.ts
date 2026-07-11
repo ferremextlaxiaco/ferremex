@@ -83,14 +83,34 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  const metodo = body.metodo || "efectivo"
-  const monto = Number(ficha.total) || 0
+  // Lo que se cobra AL ENTREGAR es la RESTA, no el total. Contra entrega = todo el
+  // total; envío con pago en tienda (pagada) = total − abono (0 si pagó completo).
+  // `ficha.resta` ya viene calculada al crear la ficha; fallback al total por si es
+  // una ficha vieja sin el campo.
+  const resta = ficha.resta != null ? Number(ficha.resta) : (Number(ficha.total) || 0)
 
-  // 1) Registrar el pago en la ficha.
+  // ── Sin nada por cobrar (pagó todo en tienda) ──────────────────────────────
+  // Solo se confirma que el material llegó. Sin movimiento de caja, sin tocar la
+  // venta (ya se cobró completa el día que se hizo).
+  if (resta <= 0.005) {
+    const entregada = await actualizarStatusEntrega(id, "entregada", "Entregada (pagada en tienda)")
+    if (!entregada) {
+      res.status(404).json({ error: "Entrega no encontrada" })
+      return
+    }
+    res.json(entregada)
+    return
+  }
+
+  // ── Hay resta por cobrar al entregar (contra entrega, o pagada parcial) ─────
+  const metodo = body.metodo || "efectivo"
+  const monto = Math.round(resta * 100) / 100
+
+  // 1) Registrar el pago (de la resta) en la ficha.
   ficha = await registrarPagoEntrega(id, {
     monto,
     metodo,
-    nota: "Cobro contra entrega",
+    nota: ficha.pagada ? "Cobro de resta al entregar" : "Cobro contra entrega",
   })
 
   // 2) Movimiento de caja (entrada) → entra al corte de HOY. Solo efectivo (el
@@ -98,6 +118,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   if (metodo === "efectivo" && monto > 0.01) {
     const now = new Date()
     const isoNow = now.toISOString()
+    // En envío pagado no hay "paga.nombre" (es el que recibe); usa el que aplique.
+    const quien = ficha!.paga?.nombre?.trim() || ficha!.recibe?.nombre?.trim() || ""
     await updateJson<Movimiento[]>(MOVIMIENTOS_FILE, [], (movs) => {
       const mov: Movimiento = {
         id: crypto.randomBytes(6).toString("hex"),
@@ -105,9 +127,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
         fecha: isoNow,
         origin: "MOVIM_E",
-        desc: `Cobro de entrega ${ficha!.folio} — ${ficha!.paga.nombre}`,
+        desc: `Cobro de entrega ${ficha!.folio}${quien ? ` — ${quien}` : ""}`,
         method: "efectivo",
-        amount: Math.round(monto * 100) / 100,
+        amount: monto,
         category: "Cobro de entrega",
         cajaId: body.caja_id ?? null,
         cajaName: body.caja_name ?? null,
@@ -120,8 +142,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   // 3) Marcar la venta como cobrada en ventas-pos.json (deja de estar por_cobrar).
-  //    Registra el método/fecha de cobro para trazabilidad. No toca `total` (sigue
-  //    en 0 para el corte del día de la venta): el dinero entró como movimiento hoy.
+  //    Registra el método/fecha de cobro de la resta. No toca `total` (el abono ya
+  //    entró al corte de su día; la resta entró como movimiento hoy).
   await updateJson<VentaRegistro[]>(VENTAS_FILE, [], (ventas) => {
     const idx = ventas.findIndex((v) => v.folio === ficha!.folio)
     if (idx === -1) return ventas
@@ -136,7 +158,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   })
 
   // 4) Marcar la entrega como entregada.
-  ficha = await actualizarStatusEntrega(id, "entregada", `Cobrada (${metodo}) y entregada`)
+  ficha = await actualizarStatusEntrega(id, "entregada", `Cobrada resta ${monto.toFixed(2)} (${metodo}) y entregada`)
   if (!ficha) {
     res.status(404).json({ error: "Entrega no encontrada" })
     return

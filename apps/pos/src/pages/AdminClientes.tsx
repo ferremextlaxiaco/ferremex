@@ -78,8 +78,8 @@ export function AdminClientes() {
         />
         <TarjetaCliente
           icon={<Truck size={30} strokeWidth={1.6} />}
-          titulo="Por cobrar"
-          descripcion="Ventas contra entrega a domicilio y su cobro"
+          titulo="Entregas a domicilio"
+          descripcion="Por cobrar (contra entrega) y ya pagadas (solo enviar)"
           onClick={() => navigate("/admin/entregas-por-cobrar")}
         />
       </div>

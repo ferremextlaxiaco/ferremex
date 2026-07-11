@@ -101,13 +101,18 @@ export interface VentaRequest {
     anticipo?: number
     resta_a_cartera?: boolean
   }
-  // Venta CONTRA ENTREGA (a domicilio, pago diferido). Si viene, la venta se
-  // registra y descuenta inventario pero NO se cobra hoy (queda por_cobrar).
+  // Entrega A DOMICILIO. Dos naturalezas según `pagada`:
+  //  - omitido/false = CONTRA ENTREGA (pago diferido): descuenta inventario pero
+  //    NO se cobra hoy (queda por_cobrar). Requiere `paga`.
+  //  - true = YA PAGADA en tienda: se cobra HOY normal, la ficha es solo logística.
   entrega_ficha?: {
+    pagada?: boolean
     direccion: string
     recibe: { nombre: string; telefono: string }
-    paga: { nombre: string; telefono: string }
+    paga?: { nombre: string; telefono: string }
     comentarios?: string
+    // Con cuánto pagará el cliente al recibir (contra entrega) → cambio del repartidor.
+    paga_con?: number
   }
 }
 
@@ -133,6 +138,10 @@ export interface VentaResponse {
   estado?: string
   metodo_pago?: string
   entrega_total?: number
+  // Entrega a domicilio YA PAGADA (solo enviar): la venta se cobró normal, pero
+  // tiene una entrega asociada. `"pagada"` la distingue en el historial para poder
+  // reimprimir sus comprobantes. (La contra entrega se detecta por metodo_pago.)
+  entrega_domicilio?: string
   // Cliente al que se hizo la venta (si lo hubo). Lo devuelve el backend desde
   // el registro; es la fuente de verdad para facturar (no el clienteActivo del
   // estado, que se resetea al terminar la venta).
@@ -1198,11 +1207,22 @@ export interface EntregaFicha {
   id: string
   folio: string
   fecha: string
+  // `true` = ya pagada en tienda (solo enviar). false/omitido = contra entrega.
+  pagada?: boolean
   direccion: string
   recibe: EntregaContacto
+  // Vacío en una entrega ya pagada (pagó el cliente en caja).
   paga: EntregaContacto
   comentarios: string
   total: number
+  // Abono pagado en tienda hoy (solo pagada). 0 = no abonó / no aplica.
+  abonado?: number
+  // Lo que cobra el repartidor al entregar (total − abono; contra entrega = total).
+  resta?: number
+  // Desglose de métodos del abono en tienda (para el ticket del repartidor).
+  pagos_tienda?: { efectivo?: number; transferencia?: number; tarjeta?: number }
+  // Con cuánto pagará el resto al recibir → cambio del repartidor.
+  paga_con?: number
   status: EntregaStatus
   pago: EntregaPago | null
   articulos: EntregaArticulo[]
@@ -1239,6 +1259,18 @@ export async function liquidarEntrega(
   return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}/liquidar`, {
     method: "POST",
     body: JSON.stringify(ctx),
+  })
+}
+
+/**
+ * Marca como ENTREGADA una entrega YA PAGADA (solo enviar): no cobra nada ni toca
+ * caja (el dinero entró en la venta), solo confirma que el material llegó. El
+ * backend lo detecta por `ficha.pagada` en el mismo endpoint de liquidación.
+ */
+export async function marcarEntregada(id: string): Promise<EntregaFicha> {
+  return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}/liquidar`, {
+    method: "POST",
+    body: JSON.stringify({}),
   })
 }
 

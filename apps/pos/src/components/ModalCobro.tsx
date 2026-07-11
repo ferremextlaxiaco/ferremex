@@ -84,10 +84,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [datosFicha, setDatosFicha] = useState<DatosFichaEncargo | null>(null)
   // La ficha se abre automáticamente al montar si hay encargo (antes de cobrar).
   const [fichaAbierta, setFichaAbierta] = useState(hayEncargo)
-  // ── Contra entrega (a domicilio, pago diferido) ───────────────────────────
-  // Disponible solo en venta normal (sin encargo). Al elegirlo se abre la ficha
-  // de entrega; al confirmarla se registra la venta por_cobrar (sin cobro hoy).
+  // ── Entrega a domicilio ───────────────────────────────────────────────────
+  // Disponible solo en venta normal (sin encargo). Dos naturalezas:
+  //   - CONTRA ENTREGA: la venta se registra por_cobrar (sin cobro hoy); al
+  //     confirmar la ficha se cobra al liquidar. No exige pago cubierto.
+  //   - YA PAGADA: el cliente pagó en tienda (métodos normales) y solo hay que
+  //     enviarla. Exige que el pago esté cubierto ANTES de capturar la entrega.
+  // `entregaPagada` distingue cuál ficha se está abriendo.
   const [fichaEntregaAbierta, setFichaEntregaAbierta] = useState(false)
+  const [entregaPagada, setEntregaPagada] = useState(false)
   const datosEntregaRef = useRef<DatosFichaEntrega | null>(null)
   // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
   //   idle → esperando que el cajero pulse "Verificar huella"
@@ -381,8 +386,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     onCerrar()
   }
 
-  // Contra entrega: al confirmar la ficha, se registra la venta (por_cobrar, sin
-  // cobro hoy). finalizarVenta() adjunta entrega_ficha; el backend no exige pago.
+  // Entrega confirmada. finalizarVenta() adjunta entrega_ficha con la bandera
+  // `pagada`. Contra entrega → el backend registra por_cobrar (no exige pago).
+  // Pagada → la venta se cobra hoy (los métodos ya cubren el total; el botón que
+  // abre esta ficha solo se habilita con el pago cubierto).
   async function onFichaEntregaConfirmada(datos: DatosFichaEntrega) {
     datosEntregaRef.current = datos
     setFichaEntregaAbierta(false)
@@ -476,15 +483,21 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               },
             }
           : {}),
-        // Ficha de entrega (venta contra entrega): si viene, el backend registra la
-        // venta como por_cobrar (sin cobro hoy) y crea la EntregaFicha.
+        // Ficha de entrega a domicilio. Si `pagada`, la venta se cobra hoy normal
+        // (los métodos de pago ya cubren el total) y la ficha es solo logística.
+        // Si no, es contra entrega: el backend la registra por_cobrar (sin cobro hoy).
         ...(datosEntregaRef.current
           ? {
               entrega_ficha: {
+                pagada: datosEntregaRef.current.pagada ?? false,
                 direccion: datosEntregaRef.current.direccion,
                 recibe: datosEntregaRef.current.recibe,
                 paga: datosEntregaRef.current.paga,
                 comentarios: datosEntregaRef.current.comentarios ?? "",
+                // Con cuánto pagará al recibir (contra entrega) → cambio del repartidor.
+                ...(datosEntregaRef.current.paga_con != null
+                  ? { paga_con: datosEntregaRef.current.paga_con }
+                  : {}),
               },
             }
           : {}),
@@ -780,15 +793,27 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             </div>
           )}
 
-          {/* Cobrar contra entrega (a domicilio, pago diferido). Solo en venta
-              normal (sin encargo): registra la venta por_cobrar sin cobrar hoy. */}
+          {/* Entrega a domicilio (solo en venta normal, sin encargo). Dos opciones:
+              — "Pagar y enviar": el cliente paga AHORA (total o un ABONO parcial) y
+                se envía; la resta la cobra el repartidor. Habilitado con cualquier
+                pago capturado (> $0); no exige cubrir el total.
+              — "Cobrar contra entrega": nada hoy, todo se cobra al entregar. */}
           {!hayEncargo && (
-            <button
-              onClick={() => setFichaEntregaAbierta(true)}
-              disabled={procesando || state.items.length === 0}
-              className="w-full inline-flex items-center justify-center gap-2 bg-white border-2 border-orange-300 text-orange-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed">
-              <Truck size={18} /> Cobrar contra entrega (a domicilio)
-            </button>
+            <div className="flex flex-col gap-2">
+              <button
+                onClick={() => { setEntregaPagada(true); setFichaEntregaAbierta(true) }}
+                disabled={procesando || state.items.length === 0 || asignado <= 0}
+                title={asignado <= 0 ? "Captura el pago o abono con un método antes de enviar" : undefined}
+                className="w-full inline-flex items-center justify-center gap-2 bg-white border-2 border-green-300 text-green-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-green-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                <Truck size={18} /> {cubierto ? "Pagar y enviar a domicilio" : "Abonar y enviar (resta al entregar)"}
+              </button>
+              <button
+                onClick={() => { setEntregaPagada(false); setFichaEntregaAbierta(true) }}
+                disabled={procesando || state.items.length === 0}
+                className="w-full inline-flex items-center justify-center gap-2 bg-white border-2 border-orange-300 text-orange-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                <Truck size={18} /> Cobrar contra entrega (a domicilio)
+              </button>
+            </div>
           )}
 
           {/* Acciones */}
@@ -818,11 +843,16 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         />
       )}
 
-      {/* Ficha de entrega (venta contra entrega): al confirmarla se registra la
-          venta por_cobrar (sin cobro hoy). */}
+      {/* Ficha de entrega a domicilio. Pagada → la venta se cobra hoy (total o
+          abono); la resta la cobra el repartidor. Contra entrega → por_cobrar.
+          `totalACobrar` (no `total`) es el monto de referencia; hoy coinciden
+          porque las entregas están gateadas por `!hayEncargo`. `abonado` = lo ya
+          capturado (para calcular la resta a mostrar). */}
       {fichaEntregaAbierta && (
         <FichaEntregaModal
-          total={total}
+          total={totalACobrar}
+          pagada={entregaPagada}
+          abonado={entregaPagada ? asignado : 0}
           onCancelar={() => setFichaEntregaAbierta(false)}
           onConfirmar={onFichaEntregaConfirmada}
         />

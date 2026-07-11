@@ -4,7 +4,7 @@ import {
   Clock, Ban, Wallet, User, MessageSquare, Package, AlertTriangle,
 } from "lucide-react"
 import {
-  listarEntregas, liquidarEntrega, cancelarEntrega,
+  listarEntregas, liquidarEntrega, marcarEntregada, cancelarEntrega,
   type EntregaFicha, type EntregaStatus,
 } from "../lib/client"
 import { TicketsEntrega } from "./TicketsEntrega"
@@ -15,6 +15,9 @@ import { formatMXN as fmt } from "../lib/format"
 import type { VentaResponse } from "../lib/client"
 
 // ── Metadatos de status (etiqueta, color, icono) ──────────────────────────────
+// El status "por_entregar" se lee distinto según la naturaleza: en contra entrega
+// falta cobrar ("Por cobrar", ámbar); en una entrega ya pagada solo falta enviar
+// ("Por enviar", verde). `statusInfo()` resuelve la etiqueta correcta.
 const STATUS: Record<EntregaStatus, { label: string; cls: string; icon: typeof Clock }> = {
   por_entregar: { label: "Por cobrar", cls: "bg-amber-50 text-amber-700 border-amber-200", icon: Clock },
   entregada:    { label: "Cobrada y entregada", cls: "bg-green-50 text-green-700 border-green-200", icon: CheckCircle2 },
@@ -22,23 +25,56 @@ const STATUS: Record<EntregaStatus, { label: string; cls: string; icon: typeof C
 }
 const ORDEN_STATUS: EntregaStatus[] = ["por_entregar", "entregada", "cancelada"]
 
-/**
- * Días transcurridos desde el cobro/creación de la ficha, para el semáforo de
- * "cuánto lleva sin cobrarse". Colores: verde <2d, ámbar 2–5d, rojo ≥5d.
- */
+/** ¿Queda resta por cobrar al entregar? (contra entrega siempre; pagada si parcial). */
+function tieneResta(f: EntregaFicha): boolean {
+  const resta = f.resta != null ? Number(f.resta) : (Number(f.total) || 0)
+  return resta > 0.005
+}
+
+/** Etiqueta + color + icono del status, tomando en cuenta pagada y si queda resta. */
+function statusInfo(f: EntregaFicha): { label: string; cls: string; icon: typeof Clock } {
+  if (f.pagada) {
+    if (f.status === "por_entregar") {
+      // Pagó completo → "Por enviar" (verde). Abono parcial → "Por cobrar resta" (ámbar).
+      return tieneResta(f)
+        ? { label: "Por cobrar resta", cls: "bg-amber-50 text-amber-700 border-amber-200", icon: Clock }
+        : { label: "Por enviar", cls: "bg-green-50 text-green-700 border-green-200", icon: Truck }
+    }
+    if (f.status === "entregada") return { label: "Entregada", cls: "bg-green-50 text-green-700 border-green-200", icon: CheckCircle2 }
+  }
+  return STATUS[f.status]
+}
+
+/** Chips de naturaleza: todas, contra entrega (por cobrar) o ya pagadas (solo enviar). */
+type FiltroNaturaleza = "todas" | "por_cobrar" | "solo_enviar"
+
+/** Días transcurridos desde el cobro/creación de la ficha (antigüedad de la entrega). */
 function diasDesde(fechaISO: string): number {
   const ms = Date.now() - new Date(fechaISO).getTime()
   return Math.max(0, Math.floor(ms / 86400000))
 }
-function semaforo(dias: number): { cls: string; label: string } {
-  if (dias >= 5) return { cls: "text-red-600 bg-red-50 border-red-200", label: `${dias} días` }
-  if (dias >= 2) return { cls: "text-amber-600 bg-amber-50 border-amber-200", label: `${dias} días` }
-  return { cls: "text-green-600 bg-green-50 border-green-200", label: dias === 0 ? "hoy" : `${dias} día${dias > 1 ? "s" : ""}` }
+/**
+ * Semáforo de antigüedad. La escalada de color depende de la naturaleza:
+ *   - Contra entrega (pago pendiente): presión de COBRO. Rojo a los 5+ días (hay
+ *     dinero sin recuperar), ámbar 2–5d, verde <2d.
+ *   - Ya pagada (solo enviar): NO hay dinero en riesgo, solo logística. Tono azul
+ *     neutro; a los 5+ días avisa "lleva X días sin enviarse" en ámbar suave, sin
+ *     el rojo de deuda que confundiría al cajero.
+ */
+function semaforo(dias: number, pagada = false): { cls: string; label: string } {
+  const etiqueta = dias === 0 ? "hoy" : `${dias} día${dias > 1 ? "s" : ""}`
+  if (pagada) {
+    if (dias >= 5) return { cls: "text-amber-600 bg-amber-50 border-amber-200", label: etiqueta }
+    return { cls: "text-sky-600 bg-sky-50 border-sky-200", label: etiqueta }
+  }
+  if (dias >= 5) return { cls: "text-red-600 bg-red-50 border-red-200", label: etiqueta }
+  if (dias >= 2) return { cls: "text-amber-600 bg-amber-50 border-amber-200", label: etiqueta }
+  return { cls: "text-green-600 bg-green-50 border-green-200", label: etiqueta }
 }
 
-/** Badge de status reutilizable. */
-function StatusBadge({ status }: { status: EntregaStatus }) {
-  const s = STATUS[status]
+/** Badge de status reutilizable (resuelve la etiqueta según naturaleza pagada/no). */
+function StatusBadge({ ficha }: { ficha: EntregaFicha }) {
+  const s = statusInfo(ficha)
   const Icon = s.icon
   return (
     <span className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-1 text-xs font-medium ${s.cls}`}>
@@ -53,8 +89,17 @@ export default function EntregasModule() {
   const [cargando, setCargando] = useState(true)
   const [q, setQ] = useState("")
   const [filtroStatus, setFiltroStatus] = useState<EntregaStatus | "todos">("por_entregar")
+  // Naturaleza: contra entrega (por cobrar) vs. ya pagada (solo enviar) vs. todas.
+  const [filtroNat, setFiltroNat] = useState<FiltroNaturaleza>("todas")
   const [sel, setSel] = useState<EntregaFicha | null>(null)
   const [comprobantes, setComprobantes] = useState<EntregaFicha | null>(null)
+
+  // ¿La ficha casa con el filtro de naturaleza? pagada=solo_enviar, !pagada=por_cobrar.
+  function casaNaturaleza(f: EntregaFicha): boolean {
+    if (filtroNat === "solo_enviar") return !!f.pagada
+    if (filtroNat === "por_cobrar") return !f.pagada
+    return true
+  }
 
   async function cargar() {
     setCargando(true)
@@ -69,10 +114,11 @@ export default function EntregasModule() {
   }
   useEffect(() => { cargar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Filtrado por texto (paga/recibe/dirección/folio) y por status.
+  // Filtrado por naturaleza, por status y por texto (paga/recibe/dirección/folio).
   const filtradas = useMemo(() => {
     const t = q.trim().toLowerCase()
     return fichas.filter((f) => {
+      if (!casaNaturaleza(f)) return false
       if (filtroStatus !== "todos" && f.status !== filtroStatus) return false
       if (!t) return true
       return (
@@ -84,9 +130,10 @@ export default function EntregasModule() {
         f.folio.toLowerCase().includes(t)
       )
     })
-  }, [fichas, q, filtroStatus])
+  }, [fichas, q, filtroStatus, filtroNat]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // KPIs (sobre el set filtrado por texto, no por status — para ver el desglose).
+  // Separa las pendientes en "por cobrar" (contra entrega) y "por enviar" (pagadas).
   const kpis = useMemo(() => {
     const base = fichas.filter((f) => {
       const t = q.trim().toLowerCase()
@@ -94,14 +141,17 @@ export default function EntregasModule() {
       return f.paga.nombre.toLowerCase().includes(t) || f.recibe.nombre.toLowerCase().includes(t) ||
         f.direccion.toLowerCase().includes(t) || f.folio.toLowerCase().includes(t)
     })
-    const porCobrar = base
-      .filter((f) => f.status === "por_entregar")
-      .reduce((s, f) => s + (Number(f.total) || 0), 0)
+    const pendientes = base.filter((f) => f.status === "por_entregar")
+    const restaDe = (f) => (f.resta != null ? Number(f.resta) : (Number(f.total) || 0))
+    // "Por cobrar" = pendientes con resta (contra entrega + pagada parcial).
+    // "Por enviar" = pendientes ya pagadas completas (sin resta).
+    const conResta = pendientes.filter((f) => restaDe(f) > 0.005)
+    const montoPorCobrar = conResta.reduce((s, f) => s + restaDe(f), 0)
     return {
-      porEntregar: base.filter((f) => f.status === "por_entregar").length,
+      porCobrar: conResta.length,
+      porEnviar: pendientes.filter((f) => restaDe(f) <= 0.005).length,
       entregadas: base.filter((f) => f.status === "entregada").length,
-      canceladas: base.filter((f) => f.status === "cancelada").length,
-      porCobrar,
+      montoPorCobrar,
     }
   }, [fichas, q])
 
@@ -121,8 +171,8 @@ export default function EntregasModule() {
               <Truck size={19} />
             </span>
             <div>
-              <h1 className="text-lg font-bold text-gray-900 leading-tight">Por cobrar</h1>
-              <p className="text-xs text-gray-500">Ventas contra entrega (a domicilio, pago diferido)</p>
+              <h1 className="text-lg font-bold text-gray-900 leading-tight">Entregas a domicilio</h1>
+              <p className="text-xs text-gray-500">Por cobrar (contra entrega) y ya pagadas (solo enviar)</p>
             </div>
           </div>
           <button onClick={cargar}
@@ -133,13 +183,13 @@ export default function EntregasModule() {
 
         {/* KPIs */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
-          <Kpi label="Por cobrar" value={String(kpis.porEntregar)} icon={Clock} tone="amber" />
-          <Kpi label="Cobradas" value={String(kpis.entregadas)} icon={CheckCircle2} tone="green" />
-          <Kpi label="Canceladas" value={String(kpis.canceladas)} icon={Ban} tone="gray" />
-          <Kpi label="Monto por cobrar" value={fmt(kpis.porCobrar)} icon={Wallet} tone="orange" />
+          <Kpi label="Por cobrar" value={String(kpis.porCobrar)} icon={Clock} tone="amber" />
+          <Kpi label="Por enviar (pagadas)" value={String(kpis.porEnviar)} icon={Truck} tone="green" />
+          <Kpi label="Entregadas" value={String(kpis.entregadas)} icon={CheckCircle2} tone="green" />
+          <Kpi label="Monto por cobrar" value={fmt(kpis.montoPorCobrar)} icon={Wallet} tone="orange" />
         </div>
 
-        {/* Filtros */}
+        {/* Filtros: naturaleza + status + búsqueda */}
         <div className="flex flex-wrap items-center gap-2 mt-4">
           <div className="relative flex-1 min-w-[220px]">
             <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -148,13 +198,20 @@ export default function EntregasModule() {
               className="w-full border border-gray-300 rounded-lg pl-9 pr-3 py-2.5 text-sm focus:outline-none focus:border-orange-500" />
           </div>
           <div className="flex items-center gap-1.5">
-            <FiltroChip activo={filtroStatus === "todos"} onClick={() => setFiltroStatus("todos")}>Todas</FiltroChip>
-            {ORDEN_STATUS.map((s) => (
-              <FiltroChip key={s} activo={filtroStatus === s} onClick={() => setFiltroStatus(s)}>
-                {STATUS[s].label}
-              </FiltroChip>
-            ))}
+            <FiltroChip activo={filtroNat === "todas"} onClick={() => setFiltroNat("todas")}>Todas</FiltroChip>
+            <FiltroChip activo={filtroNat === "por_cobrar"} onClick={() => setFiltroNat("por_cobrar")}>Por cobrar</FiltroChip>
+            <FiltroChip activo={filtroNat === "solo_enviar"} onClick={() => setFiltroNat("solo_enviar")}>Solo enviar</FiltroChip>
           </div>
+        </div>
+        {/* Segunda fila: filtro por status */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+          <span className="text-xs text-gray-400 mr-1">Estado:</span>
+          <FiltroChip activo={filtroStatus === "todos"} onClick={() => setFiltroStatus("todos")}>Todos</FiltroChip>
+          {ORDEN_STATUS.map((s) => (
+            <FiltroChip key={s} activo={filtroStatus === s} onClick={() => setFiltroStatus(s)}>
+              {s === "por_entregar" ? "Pendientes" : STATUS[s].label}
+            </FiltroChip>
+          ))}
         </div>
       </div>
 
@@ -167,8 +224,8 @@ export default function EntregasModule() {
             <span className="w-14 h-14 p-0 inline-flex items-center justify-center rounded-2xl bg-gray-100 text-gray-300 mb-3">
               <Truck size={28} />
             </span>
-            <p className="text-sm font-medium text-gray-500">No hay entregas {filtroStatus !== "todos" ? `en "${STATUS[filtroStatus as EntregaStatus].label}"` : ""}</p>
-            <p className="text-xs text-gray-400 mt-1">Se crean al cobrar una venta con el método "Contra entrega".</p>
+            <p className="text-sm font-medium text-gray-500">No hay entregas con estos filtros</p>
+            <p className="text-xs text-gray-400 mt-1">Se crean al elegir "Pagar y enviar" o "Cobrar contra entrega" en el cobro.</p>
           </div>
         ) : (
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -176,9 +233,9 @@ export default function EntregasModule() {
               <thead>
                 <tr className="text-left text-xs text-gray-500 uppercase tracking-wide bg-gray-50 border-b border-gray-200">
                   <th className="px-4 py-3 font-medium">Folio</th>
-                  <th className="px-4 py-3 font-medium">Paga / Recibe</th>
+                  <th className="px-4 py-3 font-medium">Recibe / Paga</th>
                   <th className="px-4 py-3 font-medium">Dirección</th>
-                  <th className="px-4 py-3 font-medium text-right">A cobrar</th>
+                  <th className="px-4 py-3 font-medium text-right">Monto</th>
                   <th className="px-4 py-3 font-medium">Antigüedad</th>
                   <th className="px-4 py-3 font-medium">Status</th>
                 </tr>
@@ -186,25 +243,39 @@ export default function EntregasModule() {
               <tbody className="divide-y divide-gray-100">
                 {filtradas.map((f) => {
                   const dias = diasDesde(f.fecha)
-                  const sem = semaforo(dias)
+                  const sem = semaforo(dias, f.pagada)
                   return (
                     <tr key={f.id} onClick={() => setSel(f)}
                       className="cursor-pointer hover:bg-orange-50/40 transition-colors">
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{f.folio}</td>
                       <td className="px-4 py-3">
-                        <div className="font-medium text-gray-900">{f.paga.nombre}</div>
-                        <div className="text-xs text-gray-400 flex items-center gap-1">
-                          <User size={11} /> Recibe: {f.recibe.nombre}
-                        </div>
+                        <div className="font-medium text-gray-900">{f.recibe.nombre}</div>
+                        {/* Sin resta = ya pagado; con resta = falta cobrar (parcial o total). */}
+                        {!tieneResta(f) ? (
+                          <div className="text-xs text-green-600 flex items-center gap-1">
+                            <CheckCircle2 size={11} /> Ya pagado
+                          </div>
+                        ) : f.pagada ? (
+                          <div className="text-xs text-amber-600 flex items-center gap-1">
+                            <Wallet size={11} /> Abonó {fmt(Number(f.abonado) || 0)} · resta
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-400 flex items-center gap-1">
+                            <Wallet size={11} /> Cobra al entregar
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-gray-600 text-xs max-w-[220px] truncate">{f.direccion}</td>
-                      <td className="px-4 py-3 text-right tabular-nums font-semibold text-orange-600">{fmt(f.total)}</td>
+                      {/* Monto = lo que se cobra al entregar (la resta). Verde si nada. */}
+                      <td className={`px-4 py-3 text-right tabular-nums font-semibold ${tieneResta(f) ? "text-orange-600" : "text-green-600"}`}>
+                        {fmt(tieneResta(f) ? (f.resta != null ? Number(f.resta) : f.total) : f.total)}
+                      </td>
                       <td className="px-4 py-3">
                         {f.status === "por_entregar" ? (
                           <span className={`inline-flex items-center border rounded-full px-2 py-0.5 text-xs font-medium ${sem.cls}`}>{sem.label}</span>
                         ) : <span className="text-gray-300 text-xs">—</span>}
                       </td>
-                      <td className="px-4 py-3"><StatusBadge status={f.status} /></td>
+                      <td className="px-4 py-3"><StatusBadge ficha={f} /></td>
                     </tr>
                   )
                 })}
@@ -252,13 +323,16 @@ export default function EntregasModule() {
 
 /** Reconstruye un VentaResponse mínimo desde la ficha para reimprimir tickets. */
 function ventaDesdeFicha(f: EntregaFicha): VentaResponse {
+  const resta = f.resta != null ? Number(f.resta) : f.total
   return {
     folio: f.folio,
     fecha: f.fecha,
     total: f.total,
-    entrega_total: f.total,
-    metodo_pago: "contra_entrega",
-    estado: f.status === "entregada" ? "cobrada" : "por_cobrar",
+    // Lo que cobra el repartidor (la resta). TicketsEntrega prefiere ficha.resta,
+    // pero lo dejamos consistente aquí también.
+    entrega_total: resta,
+    metodo_pago: f.pagada ? "entrega_pagada" : "contra_entrega",
+    estado: f.pagada ? "cobrada" : f.status === "entregada" ? "cobrada" : "por_cobrar",
     items: f.articulos.map((a) => ({
       sku: a.sku,
       descripcion: a.descripcion,
@@ -284,6 +358,12 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmCobrar, setConfirmCobrar] = useState(false)
   const cerrada = ficha.status === "entregada" || ficha.status === "cancelada"
+  const pagada = !!ficha.pagada
+  // Lo que se cobra al entregar (la resta). Contra entrega = total; pagada = total −
+  // abono (0 si pagó completo). Decide si al entregar se cobra o solo se confirma.
+  const resta = ficha.resta != null ? Number(ficha.resta) : (Number(ficha.total) || 0)
+  const abonado = Number(ficha.abonado) || 0
+  const hayResta = resta > 0.005
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onCerrar() }
@@ -291,24 +371,28 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
     return () => window.removeEventListener("keydown", fn)
   }, [onCerrar])
 
-  // Cobrar y entregar: registra el pago (con el método real), crea el movimiento
-  // de caja del día si es efectivo, marca la venta cobrada y la entrega entregada.
+  // Confirmar la entrega. Decide según la RESTA por cobrar:
+  //   - Hay resta (contra entrega, o pagada parcial): cobra la resta (método real) +
+  //     movimiento de caja del día si efectivo + marca venta cobrada + entregada.
+  //   - Sin resta (pagó todo en tienda): solo marca entregada (sin tocar caja).
   async function cobrarYEntregar() {
     setConfirmCobrar(false)
     setGuardando(true)
     try {
-      const f = await liquidarEntrega(ficha.id, {
-        caja_id: state.cajero?.caja_id ?? null,
-        caja_name: state.cajero?.caja_nombre ?? null,
-        cajero_id: state.cajero?.id,
-        cajero_name: state.cajero?.nombre,
-        turno_id: state.cajero?.turno_id,
-        metodo,
-      })
+      const f = !hayResta
+        ? await marcarEntregada(ficha.id)
+        : await liquidarEntrega(ficha.id, {
+            caja_id: state.cajero?.caja_id ?? null,
+            caja_name: state.cajero?.caja_nombre ?? null,
+            cajero_id: state.cajero?.id,
+            cajero_name: state.cajero?.nombre,
+            turno_id: state.cajero?.turno_id,
+            metodo,
+          })
       onCambiado(f)
-      push(`Entrega cobrada (${fmt(ficha.total)}) y marcada entregada`)
+      push(!hayResta ? "Entrega marcada como entregada" : `Entrega cobrada (resta ${fmt(resta)}) y marcada entregada`)
     } catch (e) {
-      push(e instanceof Error ? e.message : "No se pudo cobrar la entrega", "error")
+      push(e instanceof Error ? e.message : "No se pudo completar la entrega", "error")
     } finally {
       setGuardando(false)
     }
@@ -335,8 +419,8 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
         <div className="px-5 pt-5 pb-4 border-b border-gray-200 flex items-start justify-between gap-3">
           <div>
             <div className="font-mono text-xs text-gray-400 mb-1">{ficha.folio}</div>
-            <h2 className="text-lg font-bold text-gray-900 leading-tight">{ficha.paga.nombre}</h2>
-            <div className="mt-2"><StatusBadge status={ficha.status} /></div>
+            <h2 className="text-lg font-bold text-gray-900 leading-tight">{ficha.recibe.nombre}</h2>
+            <div className="mt-2"><StatusBadge ficha={ficha} /></div>
           </div>
           <button onClick={onCerrar} className="w-9 h-9 p-0 inline-flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100">
             <X size={20} />
@@ -352,11 +436,9 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
             {ficha.comentarios && <Dato icon={MessageSquare} label="Referencias" valor={ficha.comentarios} />}
           </Bloque>
 
-          {/* Quién paga (a veces un tercero) */}
-          <Bloque titulo="Quién paga">
-            <Dato icon={User} label="Nombre" valor={ficha.paga.nombre} />
-            <Dato icon={Phone} label="Teléfono" valor={ficha.paga.telefono} />
-          </Bloque>
+          {/* En contra entrega el que recibe es el mismo que paga (se cobra al
+              entregar); en la pagada ya se pagó en caja. En ambos casos basta con
+              los datos de "Recibe" — no hay un bloque "Quién paga" separado. */}
 
           {/* Artículos */}
           <Bloque titulo="Artículos">
@@ -370,22 +452,46 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
             </ul>
           </Bloque>
 
-          {/* Monto a cobrar */}
-          <Bloque titulo="Cobro">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-semibold text-gray-700">Total a cobrar</span>
-              <span className="text-lg font-black tabular-nums text-orange-600">{fmt(ficha.total)}</span>
-            </div>
+          {/* Monto. Sin resta = ya pagado (verde). Con resta = total / abono / resta. */}
+          <Bloque titulo={hayResta ? "Cobro" : "Pago"}>
+            {pagada && abonado > 0.005 && hayResta ? (
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-center justify-between text-sm text-gray-600">
+                  <span>Total de la venta</span><span className="tabular-nums">{fmt(ficha.total)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm text-green-700">
+                  <span>Abonado en tienda</span><span className="tabular-nums font-semibold">{fmt(abonado)}</span>
+                </div>
+                <div className="border-t border-gray-200 my-0.5" />
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-700">Resta a cobrar al entregar</span>
+                  <span className="text-lg font-black tabular-nums text-orange-600">{fmt(resta)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-700">{hayResta ? "Total a cobrar" : "Ya pagado en tienda"}</span>
+                <span className={`text-lg font-black tabular-nums ${hayResta ? "text-orange-600" : "text-green-600"}`}>{fmt(ficha.total)}</span>
+              </div>
+            )}
             {ficha.pago && (
               <p className="text-[11px] text-green-700 mt-2">
                 Cobrado el {new Date(ficha.pago.fecha).toLocaleString("es-MX")} — {ficha.pago.metodo} · {fmt(ficha.pago.monto)}
               </p>
             )}
 
-            {/* Selector de método real de cobro (solo si sigue por cobrar) */}
-            {ficha.status === "por_entregar" && (
+            {/* Cambio a llevar (si hay resta y se capturó con cuánto paga). */}
+            {hayResta && ficha.paga_con != null && ficha.paga_con > 0 && (
+              <div className="mt-3 flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
+                <span className="text-xs text-gray-500">Paga con {fmt(ficha.paga_con)} → cambio</span>
+                <span className="text-sm font-bold tabular-nums text-green-700">{fmt(Math.max(0, ficha.paga_con - resta))}</span>
+              </div>
+            )}
+
+            {/* Selector de método de cobro de la RESTA: solo si hay resta pendiente. */}
+            {hayResta && ficha.status === "por_entregar" && (
               <div className="mt-3">
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Método de cobro</label>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Método de cobro (resta)</label>
                 <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
                   className="mt-1.5 w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-500">
                   <option value="efectivo">Efectivo</option>
@@ -407,7 +513,7 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
                   icon={CheckCircle2}
                   onClick={() => setConfirmCobrar(true)}
                   disabled={guardando}
-                  label={`Registrar pago ${fmt(ficha.total)} y entregar`}
+                  label={!hayResta ? "Marcar como entregada" : `Cobrar resta ${fmt(resta)} y entregar`}
                   tono="green" />
                 <BotonStatus icon={Ban} onClick={() => setConfirmCancel(true)} disabled={guardando}
                   label="Cancelar entrega" tono="red" />
@@ -435,9 +541,11 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
 
       <ConfirmDialog
         open={confirmCobrar}
-        title="Registrar pago y entregar"
-        message={`Se cobrará ${fmt(ficha.total)} (${metodo}) y la entrega se marcará como entregada. ${metodo === "efectivo" ? "El efectivo entrará al corte de hoy." : "El pago se registrará sin tocar el cajón."} ¿Continuar?`}
-        confirmLabel="Cobrar y entregar"
+        title={!hayResta ? "Marcar como entregada" : "Cobrar resta y entregar"}
+        message={!hayResta
+          ? `La venta ${ficha.folio} ya está pagada. Se marcará la entrega como entregada. No se cobra nada. ¿Continuar?`
+          : `Se cobrará la resta ${fmt(resta)} (${metodo}) y la entrega se marcará como entregada. ${metodo === "efectivo" ? "El efectivo entrará al corte de hoy." : "El pago se registrará sin tocar el cajón."} ¿Continuar?`}
+        confirmLabel={!hayResta ? "Marcar entregada" : "Cobrar y entregar"}
         onConfirm={cobrarYEntregar}
         onClose={() => setConfirmCobrar(false)}
       />

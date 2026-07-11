@@ -552,6 +552,8 @@ function PreviewEntrega({
 
       <hr className="at-tk-sep" />
       <div className="at-tk-center at-tk-bold">{doc.titulo || (esRepartidor ? "HOJA DE ENTREGA" : "PAGO CONTRA ENTREGA")}</div>
+      {/* Etiqueta de a quién pertenece la copia. */}
+      <div className="at-tk-center at-tk-meta">{esRepartidor ? "REPARTIDOR" : "CLIENTE"}</div>
       <hr className="at-tk-sep-thin" />
 
       <div className="at-tk-meta">Folio: {folio}</div>

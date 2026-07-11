@@ -91,15 +91,22 @@ interface VentaBody {
     // el cliente activo; el backend lo respeta solo si hay cliente_id.
     resta_a_cartera?: boolean
   }
-  // Venta CONTRA ENTREGA (a domicilio, pago diferido): cuando viene esta ficha, la
-  // venta se registra y DESCUENTA inventario, pero NO se cobra hoy (queda
-  // `por_cobrar`). El pago se registra después al liquidar la entrega. Se persiste
-  // como EntregaFicha (entregas-pos.json) para el módulo "Por cobrar".
+  // Entrega A DOMICILIO. Dos naturalezas según `pagada`:
+  //  - `pagada` omitido/false = CONTRA ENTREGA (pago diferido): la venta se registra
+  //    y DESCUENTA inventario, pero NO se cobra hoy (queda `por_cobrar`). El pago se
+  //    registra al liquidar. Requiere `paga` (a veces un tercero).
+  //  - `pagada: true` = ENVÍO CON PAGO EN TIENDA: la venta se cobra HOY (total o un
+  //    ABONO parcial; el pago capturado entra al corte). Si el abono no cubre el
+  //    total, la RESTA la cobra el repartidor al entregar. `paga` no aplica.
+  // En ambos casos se persiste una EntregaFicha para el módulo "Entregas a domicilio".
   entrega_ficha?: {
+    pagada?: boolean
     direccion: string
     recibe: { nombre: string; telefono: string }
-    paga: { nombre: string; telefono: string }
+    paga?: { nombre: string; telefono: string }
     comentarios?: string
+    // Con cuánto pagará el cliente el resto al recibir → cambio del repartidor.
+    paga_con?: number
   }
 }
 
@@ -188,17 +195,24 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
   const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
 
-  // ── Venta CONTRA ENTREGA (a domicilio, pago diferido) ─────────────────────
-  // Si viene la ficha de entrega, la venta se registra y descuenta inventario,
-  // pero NO se cobra hoy (queda `por_cobrar`). El pago se registra al liquidar.
-  // Requiere los datos mínimos de la ficha (dirección + recibe + paga).
-  const esContraEntrega = !!body.entrega_ficha
-  if (esContraEntrega) {
+  // ── Entrega A DOMICILIO ────────────────────────────────────────────────────
+  // `hayEntrega`      → viene ficha de entrega (pagada o contra entrega).
+  // `entregaPagada`   → el cliente ya pagó en tienda; se cobra HOY normal.
+  // `esContraEntrega` → pago diferido; NO se cobra hoy (queda `por_cobrar`).
+  const hayEntrega = !!body.entrega_ficha
+  const entregaPagada = hayEntrega && !!body.entrega_ficha!.pagada
+  const esContraEntrega = hayEntrega && !entregaPagada
+  if (hayEntrega) {
     const ef = body.entrega_ficha!
-    if (!ef.direccion?.trim() || !ef.recibe?.nombre?.trim() || !ef.recibe?.telefono?.trim() ||
-        !ef.paga?.nombre?.trim() || !ef.paga?.telefono?.trim()) {
-      res.status(400).json({ error: "La entrega requiere dirección, y nombre+teléfono de quién recibe y quién paga" })
+    // Dirección + quién recibe son obligatorios siempre (en ambos modos).
+    if (!ef.direccion?.trim() || !ef.recibe?.nombre?.trim() || !ef.recibe?.telefono?.trim()) {
+      res.status(400).json({ error: "La entrega requiere dirección y nombre+teléfono de quién recibe" })
       return
+    }
+    // "Quién paga" ya no se captura por separado: en contra entrega el que recibe
+    // es el mismo que paga. Si el front no envía `paga`, se copia de `recibe`.
+    if (esContraEntrega && (!ef.paga?.nombre?.trim() || !ef.paga?.telefono?.trim())) {
+      ef.paga = { nombre: ef.recibe.nombre, telefono: ef.recibe.telefono }
     }
   }
 
@@ -236,15 +250,30 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
   }
 
-  // Monto que DEBE cubrirse hoy. Contra entrega: $0 (se cobra al liquidar). Encargo:
-  // parte con stock + anticipo. Venta normal: el total.
-  const pago_requerido = esContraEntrega ? 0
+  // Monto que DEBE cubrirse hoy.
+  //  - Contra entrega: $0 (se cobra al liquidar).
+  //  - Envío con pago en tienda (entregaPagada): $0 obligatorio → el cajero puede
+  //    dejar un ABONO parcial; la resta la cobra el repartidor. Lo que capture se
+  //    cobra hoy y entra al corte.
+  //  - Encargo: parte con stock + anticipo.
+  //  - Venta normal: el total.
+  const pago_requerido = (esContraEntrega || entregaPagada) ? 0
     : hayFaltante ? Math.round((total_stock + anticipoSolicitado) * 100) / 100
     : total
 
   if (total_pagado < pago_requerido - 0.01) {
     res.status(400).json({ error: hayFaltante ? "El pago no cubre la parte con existencia más el anticipo" : "El pago es menor al total" })
     return
+  }
+  // Envío con pago en tienda: el abono efectivo puede exceder el total (se devuelve
+  // cambio), pero los métodos SIN cambio (transferencia/tarjeta/crédito/puntos) no
+  // pueden exceder el total — sería cobrar de más sin forma de devolverlo.
+  if (entregaPagada) {
+    const sinCambio = pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
+    if (sinCambio > total + 0.01) {
+      res.status(400).json({ error: "El pago sin efectivo no puede exceder el total de la venta" })
+      return
+    }
   }
 
   // Serializamos toda la venta bajo el lock del archivo de ventas. Esto convierte
@@ -425,9 +454,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
           // encargo es el total normal; con encargo es parte-con-stock + anticipo;
-          // contra entrega es 0 (se cobra al liquidar). La resta/pendiente NO es
-          // parte del efectivo de esta venta (vive en ficha/cartera/entrega).
-          total: pago_requerido,
+          // contra entrega es 0 (se cobra al liquidar); envío con pago en tienda es
+          // el ABONO capturado, ACOTADO al total (un sobrepago en efectivo devuelve
+          // cambio, no infla el corte). La resta se cobra al entregar.
+          total: entregaPagada ? Math.min(Math.round(total_pagado * 100) / 100, total) : pago_requerido,
           // Contra entrega: estado por_cobrar + el monto real que se cobrará al
           // entregar (para el ticket del cliente, la hoja del repartidor y el corte).
           ...(esContraEntrega ? {
@@ -435,6 +465,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             metodo_pago: "contra_entrega",
             entrega_total: Math.round(total * 100) / 100,
           } : {}),
+          // Envío con pago en tienda: la venta se cobró (total o abono). Se marca la
+          // entrega para el historial; si quedó resta, `entrega_total` = lo que cobra
+          // el repartidor (total − abono), y el estado es por_cobrar hasta liquidar.
+          ...(entregaPagada ? (() => {
+            const resta = Math.max(0, Math.round((total - total_pagado) * 100) / 100)
+            return {
+              entrega_domicilio: "pagada",
+              entrega_total: resta,           // lo que cobra el repartidor (0 si pagó todo)
+              ...(resta > 0.005 ? { estado: "por_cobrar" } : {}),
+            }
+          })() : {}),
           // Trazabilidad del encargo: total real de lo encargado, anticipo cobrado
           // hoy y resta pendiente. Solo se persisten cuando hay faltante encargado.
           ...(hayFaltante ? {
@@ -456,9 +497,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           cliente_id: body.cliente_id ?? null,
           cliente_nombre: body.cliente_nombre ?? null,
           // El cambio solo se devuelve sobre el excedente de EFECTIVO, restando
-          // lo cubierto por otros métodos. Se calcula sobre lo COBRADO HOY
-          // (pago_requerido), no sobre el total teórico del encargo.
-          cambio: Math.max(0, pago_efectivo - Math.max(0, pago_requerido - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
+          // lo cubierto por otros métodos. Se calcula sobre lo COBRADO HOY. En envío
+          // con pago en tienda (entregaPagada) la base es min(abono, total): un abono
+          // parcial no genera cambio, pero un sobrepago en efectivo sí lo devuelve.
+          cambio: Math.max(0, pago_efectivo - Math.max(0, (entregaPagada ? Math.min(Math.round(total_pagado * 100) / 100, total) : pago_requerido) - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
         }
 
         // Cargo a crédito: registrar el movimiento en la cartera del cliente.
@@ -611,10 +653,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       }
     }
 
-    // Ficha de entrega (venta contra entrega): la venta ya quedó `por_cobrar` con
-    // inventario descontado; persistimos a dónde va y quién paga para el módulo
-    // "Por cobrar" y la hoja del repartidor. Best-effort (la venta ya está registrada).
-    if (esContraEntrega && body.entrega_ficha) {
+    // Ficha de entrega a domicilio (pagada o contra entrega). Persistimos a dónde
+    // va, quién recibe y (en contra entrega) quién paga, para el módulo "Entregas a
+    // domicilio" y la hoja del repartidor. En la pagada, la venta ya se cobró hoy;
+    // en contra entrega quedó `por_cobrar`. Best-effort (la venta ya está registrada).
+    if (hayEntrega && body.entrega_ficha) {
       try {
         const ef = body.entrega_ficha
         const articulosEntrega: EntregaArticulo[] = items.map((i) => ({
@@ -625,11 +668,26 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         }))
         await crearEntregaFicha({
           folio: resultado.registro.folio,
+          pagada: entregaPagada,
           direccion: ef.direccion,
           recibe: { nombre: ef.recibe.nombre, telefono: ef.recibe.telefono },
-          paga: { nombre: ef.paga.nombre, telefono: ef.paga.telefono },
+          // En la entrega pagada no hay "quién paga" (pagó el cliente en caja).
+          paga: entregaPagada
+            ? undefined
+            : { nombre: ef.paga!.nombre, telefono: ef.paga!.telefono },
           comentarios: ef.comentarios ?? "",
           total: Math.round(total * 100) / 100,
+          // Envío con pago en tienda: el abono capturado y su desglose de métodos.
+          // El store calcula la resta (total − abono) que cobra el repartidor.
+          ...(entregaPagada ? {
+            pagos_tienda: {
+              ...(pago_efectivo > 0 ? { efectivo: pago_efectivo } : {}),
+              ...(pago_transferencia > 0 ? { transferencia: pago_transferencia } : {}),
+              ...(pago_tarjeta > 0 ? { tarjeta: pago_tarjeta } : {}),
+            },
+          } : {}),
+          // Con cuánto pagará el resto al recibir → cambio del repartidor.
+          ...(ef.paga_con != null ? { paga_con: Number(ef.paga_con) } : {}),
           articulos: articulosEntrega,
           cliente_id: body.cliente_id ?? null,
         })

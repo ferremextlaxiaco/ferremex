@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react"
+import { createPortal } from "react-dom"
 import { Printer, X, User, Truck } from "lucide-react"
 import type { VentaResponse, EntregaFicha, TicketConfig, FormatoDoc } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
@@ -11,11 +12,24 @@ interface TicketsEntregaProps {
   onCerrar: () => void
 }
 
+/** Desglose del abono en tienda (método → monto) para el ticket del repartidor. */
+function desglosePagosTienda(ficha: EntregaFicha): { label: string; monto: number }[] {
+  const pt = ficha.pagos_tienda
+  if (!pt) return []
+  const out: { label: string; monto: number }[] = []
+  if (pt.efectivo && pt.efectivo > 0) out.push({ label: "Efectivo", monto: pt.efectivo })
+  if (pt.transferencia && pt.transferencia > 0) out.push({ label: "Transferencia", monto: pt.transferencia })
+  if (pt.tarjeta && pt.tarjeta > 0) out.push({ label: "Tarjeta", monto: pt.tarjeta })
+  return out
+}
+
 /**
- * Los DOS comprobantes de una venta contra entrega:
- *  1. Ticket del CLIENTE — detalle de compra + sello "PAGO CONTRA ENTREGA".
+ * Los DOS comprobantes de una entrega a domicilio:
+ *  1. Ticket del CLIENTE — detalle de compra + sello según naturaleza:
+ *     "PAGO CONTRA ENTREGA" (a cobrar) o "PAGADO — ENVÍO A DOMICILIO" (ya pagada).
  *  2. Hoja del REPARTIDOR — ficha de entrega + artículos con casillas ☐ (sin
- *     precios) + TOTAL A COBRAR + espacio de firmas.
+ *     precios) + "COBRAR $X" (contra entrega) o "PAGADO ✓ SOLO ENTREGAR" (pagada)
+ *     + espacio de firmas.
  *
  * La impresión es MANUAL: el cajero decide cuándo imprimir con los botones
  * (cliente / repartidor / ambos). Nada se imprime al montar. Los formatos
@@ -28,8 +42,28 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   const fmtCliente = cfg?.formatos?.entrega_cliente
   const fmtReparto = cfg?.formatos?.entrega_repartidor
   const [imprimiendo, setImprimiendo] = useState<null | "cliente" | "repartidor" | "ambos">(null)
+  // Mensaje de estado bajo los botones (error de servicio/impresora o aviso de
+  // impresión del navegador). Antes los errores se tragaban en silencio y el
+  // cajero no sabía por qué "no imprimía".
+  const [aviso, setAviso] = useState<{ tipo: "error" | "info"; texto: string } | null>(null)
+  // Qué ticket(s) marcar para el diálogo de impresión del navegador (fallback sin
+  // impresora térmica). Controla la clase `.ticket--print` que el CSS @media print
+  // usa para imprimir SOLO esos y no toda la pantalla.
+  const [porImprimir, setPorImprimir] = useState<null | "cliente" | "repartidor" | "ambos">(null)
+  const printCliente = porImprimir === "cliente" || porImprimir === "ambos"
+  const printReparto = porImprimir === "repartidor" || porImprimir === "ambos"
 
-  const total = venta.entrega_total ?? ficha.total
+  // Envío con pago en tienda (pagada) vs. contra entrega (se cobra todo al recibir).
+  const pagada = !!ficha.pagada
+  // Total de la venta, abono en tienda y RESTA a cobrar al entregar.
+  const totalVenta = ficha.total
+  const abonado = Number(ficha.abonado) || 0
+  const restaCobrar = ficha.resta != null ? Number(ficha.resta) : (venta.entrega_total ?? ficha.total)
+  // `total` legacy usado en varios lugares = lo que se cobra al entregar (la resta).
+  const total = restaCobrar
+  // ¿Queda algo por cobrar al entregar? (contra entrega siempre; pagada solo si
+  // el abono no cubrió el total).
+  const hayResta = restaCobrar > 0.005
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onCerrar() }
@@ -40,41 +74,67 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   async function imprimir(cual: "cliente" | "repartidor" | "ambos") {
     if (imprimiendo) return
     setImprimiendo(cual)
+    setAviso(null)
     try {
       const bytesCliente = () => construirTicketCliente(venta, ficha, cfg, fmtCliente)
       const bytesReparto = () => construirHojaRepartidor(venta, ficha, cfg, fmtReparto)
       if (impresoraElegida()) {
+        // Impresora térmica vía servicio local. Si falla (servicio caído, nombre
+        // erróneo), el error se muestra al cajero en vez de tragarse.
         if (cual === "cliente" || cual === "ambos") await imprimirBytesLocal(bytesCliente())
         if (cual === "repartidor" || cual === "ambos") await imprimirBytesLocal(bytesReparto())
+        setAviso({ tipo: "info", texto: "Enviado a la impresora." })
       } else {
+        // Sin impresora térmica configurada (p. ej. desde la PC de administración):
+        // se usa el diálogo de impresión del navegador. Marcamos qué ticket(s)
+        // imprimir con `data-print` para que el CSS @media print aísle solo esos
+        // (y no salga toda la pantalla ni ambos tickets cuando pediste uno).
+        setAviso({ tipo: "info", texto: "No hay impresora térmica configurada en esta terminal; se abrió el diálogo del navegador." })
+        setPorImprimir(cual)
+        // Deja que React pinte el marcador antes de abrir el diálogo del navegador.
+        await new Promise((r) => setTimeout(r, 30))
         window.print()
+        setPorImprimir(null)
       }
     } catch (e) {
       console.warn("Impresión de tickets de entrega falló:", e)
+      setAviso({ tipo: "error", texto: e instanceof Error ? e.message : "No se pudo imprimir. Revisa el servicio de impresión." })
     } finally {
       setImprimiendo(null)
     }
   }
 
-  return (
+  // Se renderiza con createPortal a document.body para que el modal salga SIEMPRE
+  // por encima de cualquier panel/drawer (p. ej. el drawer de detalle de venta en
+  // Consulta de ventas, con z-index alto). Si se montara en el árbol del drawer,
+  // quedaría atrapado en su stacking context y aparecería por detrás.
+  return createPortal(
     <div className="ticket-overlay">
       <div className="ticket-preview-box" style={{ maxWidth: 560 }}>
         <p className="ticket-preview-titulo">
           {imprimiendo ? "Imprimiendo…" : "Comprobantes de entrega"}
         </p>
 
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
+        <div className="ticket-preview-tickets" style={{ display: "flex", gap: 12, flexWrap: "wrap", justifyContent: "center" }}>
           {/* Vista del ticket del cliente */}
-          <div className="ticket" style={{ flex: "1 1 240px" }}>
+          <div className={`ticket ${printCliente ? "ticket--print" : ""}`} style={{ flex: "1 1 240px" }}>
             <div className="ticket-header">
               <p className="ticket-negocio">{cfg?.encabezado?.nombre || "FERREMEX"}</p>
               {(fmtCliente?.encabezado ?? []).slice(1).map((l, i) => <p key={i} className="ticket-sub">{l}</p>)}
-              <p className="ticket-tipo-doc">{fmtCliente?.titulo || "PAGO CONTRA ENTREGA"}</p>
+              <p className="ticket-tipo-doc">
+                {!pagada
+                  ? (fmtCliente?.titulo || "PAGO CONTRA ENTREGA")
+                  : "ENVIO A DOMICILIO"}
+              </p>
+              {/* Distingue cuál copia es (la del cliente). */}
+              <p className="ticket-copia-tag">CLIENTE</p>
             </div>
             <div className="ticket-separador">————————————————</div>
             <p className="ticket-meta">Folio: {venta.folio}</p>
             <p className="ticket-meta">Fecha: {new Date(venta.fecha).toLocaleString("es-MX")}</p>
-            <p className="ticket-meta">Paga: {ficha.paga.nombre}</p>
+            {/* En ambos modos el que recibe es la persona relevante (en contra
+                entrega es también quien paga al recibir). */}
+            <p className="ticket-meta">Recibe: {ficha.recibe.nombre}</p>
             <div className="ticket-separador">————————————————</div>
             <table className="ticket-tabla">
               <thead><tr><th className="ticket-col-desc">Artículo</th><th className="ticket-col-num">Cant</th><th className="ticket-col-num">Total</th></tr></thead>
@@ -89,24 +149,42 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
               </tbody>
             </table>
             <div className="ticket-separador">————————————————</div>
-            <div className="ticket-fila-resumen ticket-cambio"><span>TOTAL A PAGAR</span><span>{fmt(total)}</span></div>
+            {/* Totales. Pagada parcial → total, abono y resta. Pagada total →
+                "TOTAL PAGADO". Contra entrega → "TOTAL A PAGAR". */}
+            {pagada && hayResta ? (
+              <>
+                <div className="ticket-fila-resumen"><span>Total</span><span>{fmt(totalVenta)}</span></div>
+                <div className="ticket-fila-resumen"><span>Abonado</span><span>{fmt(abonado)}</span></div>
+                <div className="ticket-fila-resumen ticket-cambio"><span>RESTA A PAGAR</span><span>{fmt(restaCobrar)}</span></div>
+              </>
+            ) : (
+              <div className="ticket-fila-resumen ticket-cambio">
+                <span>{pagada ? "TOTAL PAGADO" : "TOTAL A PAGAR"}</span><span>{fmt(pagada ? totalVenta : total)}</span>
+              </div>
+            )}
             <div className="ticket-separador">————————————————</div>
-            {(fmtCliente?.pie ?? ["Pago contra entrega"]).map((l, i) => <p key={i} className="ticket-gracias">{l}</p>)}
+            {(pagada
+              ? (hayResta ? ["Abono recibido — el resto se paga al recibir"] : ["Material pagado — se entrega a domicilio"])
+              : (fmtCliente?.pie ?? ["Pago contra entrega"])
+            ).map((l, i) => <p key={i} className="ticket-gracias">{l}</p>)}
           </div>
 
           {/* Vista de la hoja del repartidor */}
-          <div className="ticket" style={{ flex: "1 1 240px" }}>
+          <div className={`ticket ${printReparto ? "ticket--print" : ""}`} style={{ flex: "1 1 240px" }}>
             <div className="ticket-header">
               <p className="ticket-negocio">{cfg?.encabezado?.nombre || "FERREMEX"}</p>
               <p className="ticket-tipo-doc">{fmtReparto?.titulo || "HOJA DE ENTREGA"}</p>
+              {/* Distingue cuál copia es (la del repartidor). */}
+              <p className="ticket-copia-tag">REPARTIDOR</p>
             </div>
             <div className="ticket-separador">————————————————</div>
             <p className="ticket-meta">Folio: {venta.folio}</p>
             {fmtReparto?.mostrar_ficha !== false && (
               <>
                 <p className="ticket-meta">Dirección: {ficha.direccion}</p>
+                {/* El que recibe es también quien paga en contra entrega, así que
+                    con una sola línea basta. */}
                 <p className="ticket-meta">Recibe: {ficha.recibe.nombre} · {ficha.recibe.telefono}</p>
-                <p className="ticket-meta">Paga: {ficha.paga.nombre} · {ficha.paga.telefono}</p>
                 {ficha.comentarios && <p className="ticket-meta">Ref: {ficha.comentarios}</p>}
               </>
             )}
@@ -116,7 +194,7 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
                 {venta.items.map((it, i) => (
                   <tr key={i}>
                     <td className="ticket-col-desc">
-                      {fmtReparto?.mostrar_casillas !== false && "☐ "}{it.descripcion}
+                      {fmtReparto?.mostrar_casillas !== false && <span className="ticket-casilla">☐</span>}{it.descripcion}
                     </td>
                     <td className="ticket-col-num">x{it.cantidad}</td>
                   </tr>
@@ -124,14 +202,41 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
               </tbody>
             </table>
             <div className="ticket-separador">————————————————</div>
-            <div className="ticket-fila-resumen ticket-cambio"><span>COBRAR</span><span>{fmt(total)}</span></div>
-            <div className="ticket-separador">————————————————</div>
-            <p className="ticket-meta">Recibí conforme:</p>
-            <p className="ticket-meta">_______________________</p>
-            <p className="ticket-meta">Pagó:</p>
-            <p className="ticket-meta">_______________________</p>
+            {pagada && !hayResta ? (
+              // Pagó todo en tienda → solo entregar.
+              <div className="ticket-fila-resumen ticket-cambio"><span>PAGADO ✓</span><span>SOLO ENTREGAR</span></div>
+            ) : (
+              <>
+                {/* Desglose del abono en tienda (solo pagada parcial). */}
+                {pagada && hayResta && (
+                  <>
+                    <div className="ticket-fila-resumen"><span>Total</span><span>{fmt(totalVenta)}</span></div>
+                    {desglosePagosTienda(ficha).map((p, i) => (
+                      <div key={i} className="ticket-fila-resumen"><span>Abonó ({p.label})</span><span>{fmt(p.monto)}</span></div>
+                    ))}
+                  </>
+                )}
+                <div className="ticket-fila-resumen ticket-cambio"><span>COBRAR</span><span>{fmt(restaCobrar)}</span></div>
+                {/* Cambio a llevar: solo si el cajero capturó con cuánto paga el resto. */}
+                {ficha.paga_con != null && ficha.paga_con > 0 && (
+                  <>
+                    <div className="ticket-fila-resumen"><span>Paga con</span><span>{fmt(ficha.paga_con)}</span></div>
+                    <div className="ticket-fila-resumen ticket-cambio">
+                      <span>CAMBIO</span><span>{fmt(Math.max(0, ficha.paga_con - restaCobrar))}</span>
+                    </div>
+                  </>
+                )}
+              </>
+            )}
           </div>
         </div>
+
+        {/* Aviso de estado de impresión (error o info). No se traga en silencio. */}
+        {aviso && (
+          <div className={`ticket-preview-aviso ${aviso.tipo === "error" ? "ticket-preview-aviso--error" : "ticket-preview-aviso--info"}`}>
+            {aviso.texto}
+          </div>
+        )}
 
         <div className="ticket-preview-acciones">
           <button className="btn-secondary" onClick={onCerrar}><X size={16} /> Cerrar</button>
@@ -146,7 +251,8 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
@@ -178,11 +284,13 @@ function envolver(txt: string): string[] {
   if (l) out.push(l)
   return out.length ? out : [""]
 }
-function encabezadoComun(b: number[], negocio: string, extras: string[], titulo: string) {
+function encabezadoComun(b: number[], negocio: string, extras: string[], titulo: string, copia?: string) {
   b.push(ESC, 0x40, ESC, 0x61, 0x01) // init + center
   b.push(ESC, 0x21, 0x30, ...linea(negocio), ESC, 0x21, 0x00) // doble + negocio
   for (const e of extras) b.push(...linea(e))
   b.push(ESC, 0x45, 0x01, ...linea(titulo), ESC, 0x45, 0x00) // bold título
+  // Etiqueta de a quién pertenece la copia (CLIENTE / REPARTIDOR).
+  if (copia) b.push(...linea(copia))
   b.push(ESC, 0x61, 0x00) // left
 }
 
@@ -193,25 +301,45 @@ export function construirTicketCliente(
   const b: number[] = []
   const sep = "-".repeat(COLS)
   const negocio = cfg?.encabezado?.nombre || "FERREMEX"
-  const total = venta.entrega_total ?? ficha.total
-  encabezadoComun(b, negocio, (doc?.encabezado ?? ["Tlaxiaco, Oaxaca"]).slice(1), doc?.titulo || "PAGO CONTRA ENTREGA")
+  const pagada = !!ficha.pagada
+  const totalVenta = ficha.total
+  const abonado = Number(ficha.abonado) || 0
+  const restaCobrar = ficha.resta != null ? Number(ficha.resta) : (venta.entrega_total ?? ficha.total)
+  const hayResta = restaCobrar > 0.005
+  const titulo = !pagada
+    ? (doc?.titulo || "PAGO CONTRA ENTREGA")
+    : "ENVIO A DOMICILIO"
+  encabezadoComun(b, negocio, (doc?.encabezado ?? ["Tlaxiaco, Oaxaca"]).slice(1), titulo, "CLIENTE")
 
   b.push(...linea(sep))
   b.push(...linea(`Folio: ${venta.folio}`))
   b.push(...linea(`Fecha: ${new Date(venta.fecha).toLocaleString("es-MX")}`))
-  b.push(...linea(`Paga: ${ficha.paga.nombre}`))
+  // El que recibe es también quien paga en contra entrega → una sola línea.
+  b.push(...linea(`Recibe: ${ficha.recibe.nombre}`))
   b.push(...linea(sep))
   for (const it of venta.items) {
     b.push(...linea(it.descripcion.slice(0, COLS)))
     b.push(...linea(filaLR(`  ${it.cantidad} x $${it.precio_unitario.toFixed(2)}`, `$${it.subtotal.toFixed(2)}`)))
   }
   b.push(...linea(sep))
-  b.push(ESC, 0x21, 0x20) // doble ancho
-  b.push(...linea(filaLR("TOTAL", `$${total.toFixed(2)}`)))
-  b.push(ESC, 0x21, 0x00)
+  if (pagada && hayResta) {
+    // Abono parcial: total, abonado y resta a pagar.
+    b.push(...linea(filaLR("Total:", `$${totalVenta.toFixed(2)}`)))
+    b.push(...linea(filaLR("Abonado:", `$${abonado.toFixed(2)}`)))
+    b.push(ESC, 0x21, 0x20) // doble ancho
+    b.push(...linea(filaLR("RESTA:", `$${restaCobrar.toFixed(2)}`)))
+    b.push(ESC, 0x21, 0x00)
+  } else {
+    b.push(ESC, 0x21, 0x20) // doble ancho
+    b.push(...linea(filaLR(pagada ? "PAGADO" : "TOTAL", `$${(pagada ? totalVenta : restaCobrar).toFixed(2)}`)))
+    b.push(ESC, 0x21, 0x00)
+  }
   b.push(...linea(sep))
   b.push(ESC, 0x61, 0x01) // center
-  for (const l of (doc?.pie ?? ["El pago se realiza al recibir el material"])) b.push(...linea(l))
+  const pie = pagada
+    ? (hayResta ? ["Abono recibido - el resto se paga al recibir"] : (doc?.pie && doc.pie.length ? doc.pie : ["Material pagado - se entrega a domicilio"]))
+    : (doc?.pie ?? ["El pago se realiza al recibir el material"])
+  for (const l of pie) b.push(...linea(l))
   b.push(LF, LF, LF, LF, GS, 0x56, 0x42, 0x00) // corte
   return b
 }
@@ -223,10 +351,14 @@ export function construirHojaRepartidor(
   const b: number[] = []
   const sep = "-".repeat(COLS)
   const negocio = cfg?.encabezado?.nombre || "FERREMEX"
-  const total = venta.entrega_total ?? ficha.total
   const casillas = doc?.mostrar_casillas !== false
   const conFicha = doc?.mostrar_ficha !== false
-  encabezadoComun(b, negocio, (doc?.encabezado ?? ["Copia del repartidor"]).slice(1), doc?.titulo || "HOJA DE ENTREGA")
+  const pagada = !!ficha.pagada
+  const totalVenta = ficha.total
+  const abonado = Number(ficha.abonado) || 0
+  const restaCobrar = ficha.resta != null ? Number(ficha.resta) : (venta.entrega_total ?? ficha.total)
+  const hayResta = restaCobrar > 0.005
+  encabezadoComun(b, negocio, (doc?.encabezado ?? ["Copia del repartidor"]).slice(1), doc?.titulo || "HOJA DE ENTREGA", "REPARTIDOR")
 
   b.push(...linea(sep))
   b.push(...linea(`Folio: ${venta.folio}`))
@@ -236,10 +368,9 @@ export function construirHojaRepartidor(
     b.push(ESC, 0x45, 0x01, ...linea("ENTREGA"), ESC, 0x45, 0x00)
     b.push(...linea("Direccion:"))
     for (const l of envolver(ficha.direccion)) b.push(...linea(`  ${l}`))
+    // El que recibe es también quien paga en contra entrega → una sola línea.
     b.push(...linea(`Recibe: ${ficha.recibe.nombre}`))
     b.push(...linea(`  Tel: ${ficha.recibe.telefono}`))
-    b.push(...linea(`Paga: ${ficha.paga.nombre}`))
-    b.push(...linea(`  Tel: ${ficha.paga.telefono}`))
     if (ficha.comentarios) {
       b.push(...linea("Referencias:"))
       for (const l of envolver(ficha.comentarios)) b.push(...linea(`  ${l}`))
@@ -248,20 +379,48 @@ export function construirHojaRepartidor(
   b.push(...linea(sep))
   b.push(ESC, 0x45, 0x01, ...linea("ARTICULOS A ENTREGAR"), ESC, 0x45, 0x00)
   for (const it of venta.items) {
-    const marca = casillas ? "[ ] " : ""
-    b.push(...linea(`${marca}${it.cantidad} x ${it.descripcion}`.slice(0, COLS)))
+    // Casilla grande para palomear: se imprime "[  ]" en doble alto/ancho y el
+    // texto del artículo debajo, para que sea fácil marcar en el reparto.
+    if (casillas) {
+      b.push(ESC, 0x21, 0x30) // doble alto/ancho
+      b.push(...linea("[  ]"))
+      b.push(ESC, 0x21, 0x00)
+      b.push(...linea(`  ${it.cantidad} x ${it.descripcion}`.slice(0, COLS)))
+    } else {
+      b.push(...linea(`${it.cantidad} x ${it.descripcion}`.slice(0, COLS)))
+    }
   }
   b.push(...linea(sep))
-  b.push(ESC, 0x21, 0x30) // doble alto/ancho
-  b.push(ESC, 0x61, 0x01, ...linea(`COBRAR $${total.toFixed(2)}`), ESC, 0x61, 0x00)
-  b.push(ESC, 0x21, 0x00)
+  if (pagada && !hayResta) {
+    // Pagó todo en tienda → solo entregar.
+    b.push(ESC, 0x21, 0x30) // doble alto/ancho
+    b.push(ESC, 0x61, 0x01, ...linea("PAGADO"), ...linea("SOLO ENTREGAR"), ESC, 0x61, 0x00)
+    b.push(ESC, 0x21, 0x00)
+  } else {
+    // Desglose del abono en tienda (solo pagada parcial).
+    if (pagada && hayResta) {
+      b.push(...linea(filaLR("Total:", `$${totalVenta.toFixed(2)}`)))
+      for (const p of desglosePagosTienda(ficha)) {
+        b.push(...linea(filaLR(`Abono ${p.label}:`, `$${p.monto.toFixed(2)}`)))
+      }
+      if (desglosePagosTienda(ficha).length === 0 && abonado > 0) {
+        b.push(...linea(filaLR("Abonado:", `$${abonado.toFixed(2)}`)))
+      }
+    }
+    // COBRAR la resta (grande).
+    b.push(ESC, 0x21, 0x30) // doble alto/ancho
+    b.push(ESC, 0x61, 0x01, ...linea(`COBRAR $${restaCobrar.toFixed(2)}`), ESC, 0x61, 0x00)
+    b.push(ESC, 0x21, 0x00)
+    // Cambio a llevar (si el cajero capturó con cuánto paga el resto).
+    if (ficha.paga_con != null && ficha.paga_con > 0) {
+      const cambio = Math.max(0, ficha.paga_con - restaCobrar)
+      b.push(...linea(filaLR("Paga con:", `$${ficha.paga_con.toFixed(2)}`)))
+      b.push(ESC, 0x21, 0x10) // doble alto
+      b.push(...linea(filaLR("CAMBIO:", `$${cambio.toFixed(2)}`)))
+      b.push(ESC, 0x21, 0x00)
+    }
+  }
   b.push(...linea(sep))
-  b.push(...linea("Recibi conforme:"))
-  b.push(...linea(""))
-  b.push(...linea("_______________________________"))
-  b.push(...linea("Pago:"))
-  b.push(...linea(""))
-  b.push(...linea("_______________________________"))
   for (const l of (doc?.pie ?? [])) b.push(ESC, 0x61, 0x01, ...linea(l), ESC, 0x61, 0x00)
   b.push(LF, LF, LF, LF, GS, 0x56, 0x42, 0x00) // corte
   return b
