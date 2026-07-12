@@ -71,6 +71,11 @@ export interface CartItem {
   paquete_id?: string
   paquete_nombre?: string
   paqueteCantidad?: number
+  // Artículo "libre": capturado a mano en venta porque no existe en el catálogo
+  // (ej. una caja de cartón, un servicio puntual). Su `sku` es generado
+  // (LIBRE-<timestamp>) y NUNCA corresponde a un producto real de Medusa — no es
+  // reportable ni reutilizable. Se marca para que ticket/carrito lo distingan.
+  libre?: boolean
 }
 
 /** Los 4 modos de la pantalla de venta (derivados de los flags del estado). */

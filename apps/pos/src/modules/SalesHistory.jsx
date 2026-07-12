@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   Clock, User, CreditCard, Receipt, UserRound, Printer, Ban, Truck,
-  Package, Search, AlertTriangle, Loader,
+  Package, Search, AlertTriangle, Loader, ArrowRightLeft,
 } from "lucide-react"
 import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta, obtenerEntregaPorFolio } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
@@ -9,6 +9,7 @@ import { formatMXNAbs as fmt } from "../lib/format"
 import { FacturarBoton } from "../components/FacturarBoton"
 import { TicketsEntrega } from "../components/TicketsEntrega"
 import SelectorClienteModal from "../components/SelectorClienteModal"
+import { CambioWizard } from "../components/CambioWizard"
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -402,7 +403,7 @@ const PRESETS = [
   { label: "Mes", fn: () => ({ desde: isoToday().slice(0,7) + "-01", hasta: isoToday() }) },
 ]
 
-const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Mixto", "Contra entrega"]
+const METODOS_PAGO = ["Efectivo", "Transferencia", "Tarjeta", "Crédito", "Puntos", "Saldo a favor", "Mixto", "Contra entrega"]
 
 const FP_KEY = "pos_sales_filters"
 function loadFilters() {
@@ -744,6 +745,7 @@ function metodoVenta(v) {
     (v.pago_tarjeta ?? 0) > 0 && "Tarjeta",
     v.pago_credito > 0 && "Crédito",
     (v.pago_puntos ?? 0) > 0 && "Puntos",
+    (v.pago_saldo_cambio ?? 0) > 0 && "Saldo a favor",
   ].filter(Boolean)
   if (pagos.length === 0) return "—"
   if (pagos.length === 1) return pagos[0]
@@ -892,7 +894,7 @@ function CompactTable({ ventas, sort, onSort, onRowClick }) {
 
 // ── Sale detail drawer ─────────────────────────────────────────────────────────
 
-function SaleDrawer({ venta, onClose, onCancel }) {
+function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
   // Reimpresión de los dos tickets de entrega (solo ventas contra entrega).
   const [ticketsEntrega, setTicketsEntrega] = useState(null) // { venta, ficha } | null
   const [cargandoFicha, setCargandoFicha] = useState(false)
@@ -1022,6 +1024,12 @@ function SaleDrawer({ venta, onClose, onCancel }) {
                 <span style={valueC}>{fmt(venta.pago_puntos)}</span>
               </div>
             )}
+            {(venta.pago_saldo_cambio ?? 0) > 0 && (
+              <div style={rowStyle}>
+                <span style={labelC}>Saldo a favor</span>
+                <span style={valueC}>{fmt(venta.pago_saldo_cambio)}</span>
+              </div>
+            )}
             {venta.cambio > 0 && <div style={rowStyle}><span style={labelC}>Cambio</span><span style={valueC}>{fmt(venta.cambio)}</span></div>}
             {/* Contra entrega: no hubo cobro hoy; el monto se cobra al entregar. */}
             {contraEntrega && (
@@ -1131,6 +1139,13 @@ function SaleDrawer({ venta, onClose, onCancel }) {
             facturaInicial={venta.factura ?? null}
             variant="compact"
           />
+          {vigente && (
+            <button onClick={() => onCambio(venta)} style={{
+              flex: 1, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.3)", borderRadius: 6,
+              padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#2563eb",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}><ArrowRightLeft size={14} /> Cambiar artículo</button>
+          )}
           {vigente && (
             <button onClick={() => onCancel(venta)} style={{
               flex: 1, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.3)", borderRadius: 6,
@@ -1355,6 +1370,7 @@ export default function SalesHistory() {
   const [searchFolio, setSearchFolio] = useState("")
   const [drawer, setDrawer] = useState(null) // venta | null
   const [cancelTarget, setCancelTarget] = useState(null)
+  const [cambioTarget, setCambioTarget] = useState(null) // venta | null — abre CambioWizard
   const { toasts, push: pushToast } = useToasts()
 
   // Persist filters
@@ -1662,6 +1678,7 @@ export default function SalesHistory() {
         venta={drawer}
         onClose={() => setDrawer(null)}
         onCancel={v => { setCancelTarget(v); setDrawer(null) }}
+        onCambio={v => { setCambioTarget(v); setDrawer(null) }}
       />
 
       {/* Cancel modal */}
@@ -1670,6 +1687,19 @@ export default function SalesHistory() {
           venta={cancelTarget}
           onClose={() => setCancelTarget(null)}
           onConfirm={handleCancelConfirm}
+        />
+      )}
+
+      {/* Cambio de artículo */}
+      {cambioTarget && (
+        <CambioWizard
+          folioInicial={cambioTarget.folio}
+          onClose={() => setCambioTarget(null)}
+          onCompletado={(cambio) => {
+            setCambioTarget(null)
+            pushToast(`Cambio ${cambio.folio_cambio} procesado correctamente`, "success")
+            recargar()
+          }}
         />
       )}
 

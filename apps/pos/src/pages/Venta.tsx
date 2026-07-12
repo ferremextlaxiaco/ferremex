@@ -13,6 +13,7 @@ import { CargarCotizacionPopup } from "../components/CargarCotizacionPopup"
 import { SelectorVendedor } from "../components/SelectorVendedor"
 import { CambiarUsuarioModal } from "../components/CambiarUsuarioModal"
 import { SelectorCajaModal } from "../components/SelectorCajaModal"
+import { ArticuloLibreModal } from "../components/ArticuloLibreModal"
 import { usePedidosEnEspera, guardarEnEspera } from "../lib/pedidos-espera"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
@@ -51,6 +52,7 @@ export function Venta() {
   // Selector de caja. `obligatorio` = se abrió porque intentó cobrar sin caja
   // (al elegir caja se reanuda el cobro). false = cambio voluntario desde el chip.
   const [selectorCaja, setSelectorCaja] = useState<null | { obligatorio: boolean }>(null)
+  const [articuloLibreAbierto, setArticuloLibreAbierto] = useState(false)
   // Folio a auto-cargar cuando se llega con ?cotizacion=… desde el módulo admin.
   const [folioCotInicial, setFolioCotInicial] = useState<string | null>(null)
   // Cotización recién impresa (para reusar el Ticket como documento imprimible).
@@ -296,6 +298,7 @@ export function Venta() {
         pedidosEnEspera={pedidos.length}
         onAbrirEspera={() => setEsperaAbierta(true)}
         onCargarCotizacion={() => setCargarCotAbierto(true)}
+        onArticuloLibre={() => setArticuloLibreAbierto(true)}
       />
 
       {/* ===== Cuerpo: buscador (izq) + carrito (der, fijo o drawer) ===== */}
@@ -408,6 +411,9 @@ export function Venta() {
 
       {/* ===== Cambiar usuario sin cerrar caja ===== */}
       {cambiarUsuario && <CambiarUsuarioModal onClose={() => setCambiarUsuario(false)} />}
+
+      {/* ===== Artículo libre (fuera de catálogo) ===== */}
+      {articuloLibreAbierto && <ArticuloLibreModal onClose={() => setArticuloLibreAbierto(false)} />}
 
       {/* ===== Selector de caja (al cobrar sin caja, o cambio voluntario) ===== */}
       {selectorCaja && (

@@ -82,6 +82,19 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-biometria",
     },
     {
+      // Cambio de artículo (devolución con cambio, NO reembolso). Registro
+      // auditable de venta_origen → líneas devueltas/nuevas + diferencia. Ver
+      // src/modules/ferremex-cambios.
+      resolve: "./src/modules/ferremex-cambios",
+    },
+    {
+      // Saldo a favor por cambio de mercancía (independiente del Monedero de
+      // lealtad). Se genera cuando el artículo nuevo vale menos que el
+      // devuelto; se consume como método de pago en una compra futura. Ver
+      // src/modules/ferremex-saldo-cambio.
+      resolve: "./src/modules/ferremex-saldo-cambio",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

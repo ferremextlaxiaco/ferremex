@@ -10,6 +10,8 @@ import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
 import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
 import type FerremexMonederoService from "../../../modules/ferremex-monedero/service"
+import { FERREMEX_SALDO_CAMBIO } from "../../../modules/ferremex-saldo-cambio"
+import type FerremexSaldoCambioService from "../../../modules/ferremex-saldo-cambio/service"
 
 interface ItemVenta {
   sku: string
@@ -63,6 +65,12 @@ interface VentaBody {
   // (lib/monedero.ts) que tiene la taxonomía y la config cargadas. El backend
   // los persiste como movimiento "ganado" transaccional. 0/omitido = sin puntos.
   puntos_ganados?: number
+  // Pago con "saldo a favor por cambio" (módulo ferremex_saldo_cambio, en MXN,
+  // 1:1 con pesos — sin tasa de conversión, a diferencia de los puntos). El
+  // backend valida saldo y registra el consumo transaccionalmente. Requiere
+  // cliente_id (es el saldo del cliente el que se descuenta). Concepto de
+  // negocio DISTINTO al Monedero de lealtad — no se mezclan.
+  pago_saldo_cambio?: number
   // Cliente a crédito: si pago_credito > 0, el cargo se registra en su cartera
   // de forma transaccional (dentro del lock de la venta). `cliente_id` es el id
   // del Customer nativo de Medusa.
@@ -168,6 +176,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const pago_credito = Number(body.pago_credito ?? 0)
   const pago_puntos = Number(body.pago_puntos ?? 0)
   const puntos_ganados = Math.max(0, Math.round(Number(body.puntos_ganados ?? 0)))
+  const pago_saldo_cambio = Number(body.pago_saldo_cambio ?? 0)
 
   if (!cajero || !turno_id || !items?.length) {
     res.status(400).json({ error: "Faltan campos requeridos: cajero, turno_id, items" })
@@ -177,7 +186,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(400).json({ error: "Cada item requiere sku y cantidad > 0" })
     return
   }
-  if (![pago_efectivo, pago_transferencia, pago_tarjeta, pago_credito, pago_puntos].every((n) => Number.isFinite(n))) {
+  if (![pago_efectivo, pago_transferencia, pago_tarjeta, pago_credito, pago_puntos, pago_saldo_cambio].every((n) => Number.isFinite(n))) {
     res.status(400).json({ error: "Montos de pago inválidos" })
     return
   }
@@ -191,9 +200,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     res.status(400).json({ error: "El pago con puntos requiere cliente_id" })
     return
   }
+  // El pago con saldo a favor requiere un cliente (es su saldo el que se descuenta).
+  if (pago_saldo_cambio > 0 && !body.cliente_id) {
+    res.status(400).json({ error: "El pago con saldo a favor requiere cliente_id" })
+    return
+  }
 
   const total = items.reduce((sum, i) => sum + i.precio_unitario * i.cantidad, 0)
-  const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
+  const total_pagado = pago_efectivo + pago_transferencia + pago_tarjeta + pago_credito + pago_puntos + pago_saldo_cambio
 
   // ── Entrega A DOMICILIO ────────────────────────────────────────────────────
   // `hayEntrega`      → viene ficha de entrega (pagada o contra entrega).
@@ -269,7 +283,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // cambio), pero los métodos SIN cambio (transferencia/tarjeta/crédito/puntos) no
   // pueden exceder el total — sería cobrar de más sin forma de devolverlo.
   if (entregaPagada) {
-    const sinCambio = pago_transferencia + pago_tarjeta + pago_credito + pago_puntos
+    const sinCambio = pago_transferencia + pago_tarjeta + pago_credito + pago_puntos + pago_saldo_cambio
     if (sinCambio > total + 0.01) {
       res.status(400).json({ error: "El pago sin efectivo no puede exceder el total de la venta" })
       return
@@ -344,6 +358,29 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
   }
 
+  // Saldo a favor por cambio (ferremex_saldo_cambio): 1:1 con pesos, sin tasa de
+  // conversión (a diferencia de los puntos). La validación de saldo se hace ANTES
+  // del lock para fallar barato; el registro del consumo ocurre DENTRO del lock
+  // (transaccional con la venta).
+  const saldoCambioService: FerremexSaldoCambioService | null =
+    pago_saldo_cambio > 0 && body.cliente_id
+      ? req.scope.resolve(FERREMEX_SALDO_CAMBIO)
+      : null
+
+  if (saldoCambioService && body.cliente_id) {
+    try {
+      const saldoDisponible = await saldoCambioService.saldoCliente(body.cliente_id)
+      if (pago_saldo_cambio > saldoDisponible + 0.01) {
+        res.status(400).json({
+          error: `Saldo a favor insuficiente: requiere $${pago_saldo_cambio.toFixed(2)}, disponible $${saldoDisponible.toFixed(2)}`,
+        }); return
+      }
+    } catch (e: any) {
+      console.error("[caja/ventas] Validación de saldo a favor falló:", e?.message ?? e)
+      res.status(500).json({ error: "No se pudo validar el saldo a favor" }); return
+    }
+  }
+
   try {
     const resultado = await withFileLock(VENTAS_FILE, async () => {
       // Cargar inventario y validar stock
@@ -388,6 +425,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         if (puntos_canjeados > saldoActual) {
           return {
             error: `Puntos insuficientes: requiere ${puntos_canjeados}, disponible ${saldoActual}`,
+          } as const
+        }
+      }
+
+      // RE-VALIDACIÓN del saldo a favor DENTRO del lock, antes de tocar el
+      // inventario: por si otra venta concurrente del mismo cliente ya lo consumió.
+      if (saldoCambioService && body.cliente_id && pago_saldo_cambio > 0) {
+        const saldoActual = await saldoCambioService.saldoCliente(body.cliente_id)
+        if (pago_saldo_cambio > saldoActual + 0.01) {
+          return {
+            error: `Saldo a favor insuficiente: requiere $${pago_saldo_cambio.toFixed(2)}, disponible $${saldoActual.toFixed(2)}`,
           } as const
         }
       }
@@ -492,6 +540,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           pago_puntos,
           puntos_canjeados,
           puntos_ganados: puntos_ganados_final,
+          // Saldo a favor por cambio (ferremex_saldo_cambio, 1:1 con pesos). Se
+          // persiste para el ticket, el historial y para revertirlo al cancelar.
+          pago_saldo_cambio,
           // cliente_id se persiste para poder revertir el cargo a crédito si la
           // venta se cancela (PATCH /caja/ventas/:folio).
           cliente_id: body.cliente_id ?? null,
@@ -500,7 +551,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           // lo cubierto por otros métodos. Se calcula sobre lo COBRADO HOY. En envío
           // con pago en tienda (entregaPagada) la base es min(abono, total): un abono
           // parcial no genera cambio, pero un sobrepago en efectivo sí lo devuelve.
-          cambio: Math.max(0, pago_efectivo - Math.max(0, (entregaPagada ? Math.min(Math.round(total_pagado * 100) / 100, total) : pago_requerido) - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos)),
+          cambio: Math.max(0, pago_efectivo - Math.max(0, (entregaPagada ? Math.min(Math.round(total_pagado * 100) / 100, total) : pago_requerido) - pago_transferencia - pago_tarjeta - pago_credito - pago_puntos - pago_saldo_cambio)),
         }
 
         // Cargo a crédito: registrar el movimiento en la cartera del cliente.
@@ -561,6 +612,19 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
               fecha: registro.fecha,
             })
           }
+        }
+
+        // Saldo a favor por cambio: registrar el consumo transaccional con la
+        // venta (mismo lock; el saldo ya se re-validó arriba antes de tocar
+        // inventario). Monto NEGATIVO (reduce el saldo del cliente).
+        if (saldoCambioService && body.cliente_id && pago_saldo_cambio > 0) {
+          await saldoCambioService.agregarMovimiento(body.cliente_id, {
+            tipo: "consumido",
+            monto: -pago_saldo_cambio,
+            venta_consumo_folio: registro.folio,
+            descripcion: `Consumo en venta ${registro.folio}`,
+            fecha: registro.fecha,
+          })
         }
 
         const ventas = cargarVentas()

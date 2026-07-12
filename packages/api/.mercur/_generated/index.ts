@@ -709,6 +709,9 @@ export type Routes = {
         cajas: typeof import("../../src/api/caja/cajas/route") & {
             $id: typeof import("../../src/api/caja/cajas/[id]/route");
         };
+        cambios: typeof import("../../src/api/caja/cambios/route") & {
+            $id: typeof import("../../src/api/caja/cambios/[id]/route");
+        };
         cartera: typeof import("../../src/api/caja/cartera/route") & {
             $customerId: typeof import("../../src/api/caja/cartera/[customerId]/route") & {
                 limite: typeof import("../../src/api/caja/cartera/[customerId]/limite/route");
@@ -795,6 +798,9 @@ export type Routes = {
                     $facturaId: typeof import("../../src/api/caja/proveedores/[id]/facturas/[facturaId]/route");
                 };
             };
+        };
+        saldoCambio: {
+            $customerId: typeof import("../../src/api/caja/saldo-cambio/[customerId]/route");
         };
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");
         turnosConfig: typeof import("../../src/api/caja/turnos-config/route");

@@ -6,6 +6,8 @@ import { FERREMEX_CARTERA } from "../../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../../modules/ferremex-cartera/service"
 import { FERREMEX_MONEDERO } from "../../../../modules/ferremex-monedero"
 import type FerremexMonederoService from "../../../../modules/ferremex-monedero/service"
+import { FERREMEX_SALDO_CAMBIO } from "../../../../modules/ferremex-saldo-cambio"
+import type FerremexSaldoCambioService from "../../../../modules/ferremex-saldo-cambio/service"
 
 const VENTAS_FILE = path.join(__dirname, "../../../../../data/ventas-pos.json")
 
@@ -18,6 +20,7 @@ interface VentaRegistro {
   pago_credito?: number
   puntos_ganados?: number
   puntos_canjeados?: number
+  pago_saldo_cambio?: number
   cliente_id?: string | null
   [k: string]: unknown
 }
@@ -156,6 +159,24 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
           }
         } catch (e: any) {
           console.error(`[caja/ventas PATCH] No se pudo revertir el monedero de ${folio}:`, e?.message ?? e)
+        }
+      }
+
+      // Revertir el saldo a favor por cambio: si la venta consumió saldo, se
+      // reembolsa con un "ajuste" positivo por el mismo monto. Best-effort (no
+      // aborta la cancelación si falla).
+      const saldoCambioConsumido = Number(ventas[idx].pago_saldo_cambio ?? 0)
+      if (clienteId && saldoCambioConsumido > 0) {
+        try {
+          const saldoCambioService: FerremexSaldoCambioService = req.scope.resolve(FERREMEX_SALDO_CAMBIO)
+          await saldoCambioService.agregarMovimiento(clienteId, {
+            tipo: "ajuste",
+            monto: saldoCambioConsumido,
+            venta_consumo_folio: folio,
+            descripcion: `Reembolso por cancelación de venta ${folio}`,
+          })
+        } catch (e: any) {
+          console.error(`[caja/ventas PATCH] No se pudo revertir el saldo a favor de ${folio}:`, e?.message ?? e)
         }
       }
 

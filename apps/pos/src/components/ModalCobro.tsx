@@ -7,7 +7,9 @@ import {
 import {
   registrarVenta, marcarCotizacionConvertida, obtenerDetalleMonederoAPI,
   listarReglasMonederoAPI, listarCatalogos, listarHuellasAPI, registrarVerificacionAPI,
+  obtenerSaldoCambioAPI,
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
+  type DetalleSaldoCambio,
 } from "../lib/client"
 import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
@@ -63,6 +65,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [catMon, setCatMon] = useState<CatalogosData | null>(null)
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
+  // ── Saldo a favor por cambio (ferremex_saldo_cambio) ──────────────────────
+  // Concepto de negocio DISTINTO al Monedero de lealtad: se acredita cuando el
+  // cliente cambia un artículo por otro de menor valor. Se consume 1:1 en pesos
+  // (sin tasa de conversión). Se carga junto con el monedero al elegir cliente.
+  const [saldoCambio, setSaldoCambio] = useState<DetalleSaldoCambio | null>(null)
   // ── Venta por encargo ─────────────────────────────────────────────────────
   // Dos sub-modos de encargo:
   //   - REPOSICIÓN: todas las líneas se encargan sin descontar inventario.
@@ -123,6 +130,21 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     return () => { on = false }
   }, [state.clienteActivo])
 
+  // Saldo a favor por cambio: independiente del Monedero (no requiere inscripción,
+  // cualquier cliente identificado puede tener saldo generado por un cambio previo).
+  useEffect(() => {
+    const cli = state.clienteActivo
+    if (!cli?.id) { setSaldoCambio(null); return }
+    let on = true
+    ;(async () => {
+      try {
+        const det = await obtenerSaldoCambioAPI(cli.id)
+        if (on) setSaldoCambio(det)
+      } catch { /* el saldo a favor es opcional; si falla, se cobra sin él */ if (on) setSaldoCambio(null) }
+    })()
+    return () => { on = false }
+  }, [state.clienteActivo])
+
   // Precio unitario efectivo de una línea, ya con promociones aplicadas. Para
   // NxM/volumen el descuento no es un precio uniforme, así que se reparte el
   // importe total de la línea entre sus unidades (lo que se persiste y se imprime).
@@ -131,7 +153,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     if (linea && i.cantidad > 0) return Math.round((linea.importe / i.cantidad) * 100) / 100
     return efectivoPrecio(i)
   }
-  const [pagos, setPagos] = useState<Record<Metodo, string>>({ efectivo: "", transferencia: "", tarjeta: "", credito: "", puntos: "" })
+  const [pagos, setPagos] = useState<Record<Metodo, string> & { saldoCambio: string }>({ efectivo: "", transferencia: "", tarjeta: "", credito: "", puntos: "", saldoCambio: "" })
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const efectivoRef = useRef<HTMLInputElement>(null)
@@ -158,10 +180,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const pTarjeta       = parseFloat(pagos.tarjeta)        || 0
   const pCredito       = parseFloat(pagos.credito)        || 0
   const pPuntos        = parseFloat(pagos.puntos)          || 0
-  const asignado       = pEfectivo + pTransferencia + pTarjeta + pCredito + pPuntos
+  const pSaldoCambio   = parseFloat(pagos.saldoCambio)     || 0
+  const asignado       = pEfectivo + pTransferencia + pTarjeta + pCredito + pPuntos + pSaldoCambio
 
   // Cuánto falta cubrir con efectivo una vez restados otros métodos
-  const neededCash = Math.max(0, totalACobrar - pTransferencia - pTarjeta - pCredito - pPuntos)
+  const neededCash = Math.max(0, totalACobrar - pTransferencia - pTarjeta - pCredito - pPuntos - pSaldoCambio)
   const cambio     = Math.max(0, pEfectivo - neededCash)
   const pendiente  = Math.max(0, neededCash - pEfectivo)
   const cubierto   = asignado >= totalACobrar - 0.005
@@ -201,6 +224,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   // que el cajero teclea/ve; el backend redondea hacia arriba al DESCONTAR del
   // saldo real del cliente (nunca a favor del cliente), ver /caja/ventas.
   const puntosUsados = (cfgMon && pPuntos > 0) ? Math.round((pPuntos / cfgMon.valor_punto) * 100) / 100 : 0
+
+  // ── Derivados del saldo a favor por cambio ────────────────────────────────
+  // 1:1 con pesos (sin tasa de conversión). Máximo aplicable = min(saldo, lo que
+  // falta cubrir tras el resto de métodos ya capturados + lo ya aplicado aquí).
+  const saldoCambioDisponible = saldoCambio?.saldo ?? 0
+  const maxSaldoCambio = Math.max(0, Math.min(saldoCambioDisponible, totalACobrar))
+  const puedeUsarSaldoCambio = saldoCambioDisponible >= 0.01
 
   // ── Banner de canje de puntos ────────────────────────────────────────────
   // El control de canje se despliega cuando el cajero pulsa "Usar puntos". El
@@ -255,6 +285,37 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     aplicarPuntos(Number.isFinite(n) ? n : 0)
   }
 
+  // ── Banner de saldo a favor por cambio ────────────────────────────────────
+  // Más simple que el de puntos: pesos directos, sin conversión ni tasa.
+  const [saldoCambioAbierto, setSaldoCambioAbierto] = useState(false)
+  const [saldoCambioTexto, setSaldoCambioTexto] = useState("")
+
+  // Aplica un monto de saldo a favor (en pesos), acotado a lo disponible/al total
+  // a cobrar. Mismo ajuste que `aplicarPuntos`: si un único método en pesos
+  // cubría el ticket él solo, se reajusta al nuevo "a pagar".
+  function aplicarSaldoCambio(monto: number, opts?: { sincronizarTexto?: boolean }) {
+    const m = Math.max(0, Math.min(Math.round(monto * 100) / 100, maxSaldoCambio))
+    const nuevoMonto = m > 0 ? m.toFixed(2) : ""
+    if (opts?.sincronizarTexto) {
+      setSaldoCambioTexto(m > 0 ? String(m) : "")
+    }
+    setPagos((prev) => {
+      const enPesos = (["efectivo", "transferencia", "tarjeta", "credito"] as Metodo[])
+        .filter((mtd) => (parseFloat(prev[mtd]) || 0) > 0)
+      const aPagar = Math.max(0, totalACobrar - m)
+      if (enPesos.length === 1) {
+        return { ...prev, saldoCambio: nuevoMonto, [enPesos[0]]: aPagar > 0 ? aPagar.toFixed(2) : "" }
+      }
+      return { ...prev, saldoCambio: nuevoMonto }
+    })
+  }
+
+  function handleSaldoCambioTextoChange(texto: string) {
+    setSaldoCambioTexto(texto)
+    const n = parseFloat(texto)
+    aplicarSaldoCambio(Number.isFinite(n) ? n : 0)
+  }
+
   function completar(id: Metodo) {
     const otros = asignado - (parseFloat(pagos[id]) || 0)
     let resto = Math.max(0, totalACobrar - otros)
@@ -264,12 +325,13 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   }
 
   // Cambiar de método en un clic: asigna TODO el restante (tras lo ya canjeado en
-  // puntos) al método elegido y vacía los otros métodos en pesos. El canje de
-  // puntos se conserva (se controla aparte desde su banner). Para pagos combinados
-  // el cajero sigue usando "Completar" o teclea manualmente.
+  // puntos y/o saldo a favor) al método elegido y vacía los otros métodos en
+  // pesos. El canje de puntos y el saldo a favor se conservan (se controlan
+  // aparte desde sus banners). Para pagos combinados el cajero sigue usando
+  // "Completar" o teclea manualmente.
   function pagarTodoAqui(id: Metodo) {
     if (id === "credito" && !tieneCredito) return
-    const resto = Math.max(0, totalACobrar - pPuntos)
+    const resto = Math.max(0, totalACobrar - pPuntos - pSaldoCambio)
     setPagos((p) => ({
       ...p,
       efectivo: "", transferencia: "", tarjeta: "", credito: "",
@@ -358,9 +420,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     if (!cubierto || procesando || !state.cajero) return
     if (pCredito > 0 && !state.clienteActivo) return
     if (pPuntos > 0 && !state.clienteActivo) return
+    if (pSaldoCambio > 0 && !state.clienteActivo) return
     // Validación de canje contra saldo/tope antes de tocar el backend.
     if (pPuntos > maxCanjePesos + 0.01) {
       setError(`Con puntos solo puedes cubrir ${fmt(maxCanjePesos)} de este ticket`)
+      return
+    }
+    // Validación de saldo a favor contra lo disponible antes de tocar el backend.
+    if (pSaldoCambio > saldoCambioDisponible + 0.01) {
+      setError(`Con saldo a favor solo puedes cubrir ${fmt(saldoCambioDisponible)} de este ticket`)
       return
     }
     // Venta por encargo: la ficha se llena al ENTRAR al cobro (define el anticipo).
@@ -455,6 +523,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         // del frontend; el backend valida el canje y registra ambos movimientos).
         ...(pPuntos > 0 ? { pago_puntos: pPuntos } : {}),
         ...(puntosAGanar > 0 ? { puntos_ganados: puntosAGanar } : {}),
+        // Saldo a favor por cambio (ferremex_saldo_cambio): 1:1 con pesos, sin
+        // tasa de conversión. El backend valida saldo disponible y registra el
+        // consumo transaccionalmente.
+        ...(pSaldoCambio > 0 ? { pago_saldo_cambio: pSaldoCambio } : {}),
         // El cliente se envía SIEMPRE que haya uno seleccionado (no solo cuando
         // hay crédito/puntos). Así la venta queda atribuida al cliente —necesario
         // para facturar nominativo y para distinguir en el historial—. El `plazo`
@@ -577,23 +649,34 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             </div>
           )}
 
-          {/* Total — con desglose cuando se aplican puntos (Total − puntos = a pagar) */}
-          {pPuntos > 0 ? (
+          {/* Total — con desglose cuando se aplican puntos y/o saldo a favor
+              (Total − puntos − saldo a favor = a pagar) */}
+          {(pPuntos > 0 || pSaldoCambio > 0) ? (
             <div className="rounded-xl bg-gray-50 border border-gray-100 px-4 py-3 flex flex-col gap-1.5">
               <div className="flex items-center justify-between text-sm text-gray-500">
                 <span>{restaEncargo > 0 ? "A cobrar hoy" : "Total"}</span>
                 <span className="font-medium text-gray-700">{fmt(totalACobrar)}</span>
               </div>
-              <div className="flex items-center justify-between text-sm text-amber-700">
-                <span className="inline-flex items-center gap-1">
-                  <Coins size={14} /> Puntos aplicados ({puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts)
-                </span>
-                <span className="font-semibold">−{fmt(pPuntos)}</span>
-              </div>
+              {pPuntos > 0 && (
+                <div className="flex items-center justify-between text-sm text-amber-700">
+                  <span className="inline-flex items-center gap-1">
+                    <Coins size={14} /> Puntos aplicados ({puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts)
+                  </span>
+                  <span className="font-semibold">−{fmt(pPuntos)}</span>
+                </div>
+              )}
+              {pSaldoCambio > 0 && (
+                <div className="flex items-center justify-between text-sm text-teal-700">
+                  <span className="inline-flex items-center gap-1">
+                    <RotateCcw size={14} /> Saldo a favor aplicado
+                  </span>
+                  <span className="font-semibold">−{fmt(pSaldoCambio)}</span>
+                </div>
+              )}
               <div className="h-px bg-gray-200 my-0.5" />
               <div className="flex items-end justify-between">
                 <span className="text-sm font-medium text-gray-500 uppercase tracking-wide">A pagar</span>
-                <span className="text-4xl font-black text-orange-600 leading-none">{fmt(Math.max(0, totalACobrar - pPuntos))}</span>
+                <span className="text-4xl font-black text-orange-600 leading-none">{fmt(Math.max(0, totalACobrar - pPuntos - pSaldoCambio))}</span>
               </div>
             </div>
           ) : (
@@ -688,8 +771,79 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             </div>
           )}
 
+          {/* ── Banner de saldo a favor por cambio ───────────────────────────
+              Concepto de negocio DISTINTO al Monedero: se acredita al cambiar un
+              artículo por otro de menor valor. Aparece si el cliente activo tiene
+              saldo disponible. 1:1 con pesos — sin conversión ni tasa. */}
+          {puedeUsarSaldoCambio && (
+            <div className="rounded-xl border border-teal-200 bg-teal-50 overflow-hidden">
+              <div className="flex items-center gap-3 px-4 py-3">
+                <span className="w-10 h-10 p-0 inline-flex items-center justify-center rounded-lg bg-teal-100 text-teal-600 shrink-0">
+                  <RotateCcw size={20} />
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-semibold text-teal-900">Saldo a favor por cambio</div>
+                  <div className="text-xs text-teal-700">
+                    {fmt(saldoCambioDisponible)} disponibles
+                  </div>
+                </div>
+                {pSaldoCambio > 0 ? (
+                  <button
+                    onClick={() => { aplicarSaldoCambio(0, { sincronizarTexto: true }); setSaldoCambioAbierto(false) }}
+                    className="inline-flex items-center gap-1.5 bg-white border border-teal-300 text-teal-700 px-3 py-2 rounded-lg text-sm font-medium hover:bg-teal-100">
+                    <X size={14} /> Quitar
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => { setSaldoCambioAbierto(true); aplicarSaldoCambio(maxSaldoCambio, { sincronizarTexto: true }) }}
+                    className="inline-flex items-center gap-1.5 bg-teal-500 text-white px-3.5 py-2 rounded-lg text-sm font-semibold hover:bg-teal-600">
+                    <RotateCcw size={15} /> Usar saldo
+                  </button>
+                )}
+              </div>
+
+              {/* Control de monto, visible al activar el uso del saldo */}
+              {(saldoCambioAbierto || pSaldoCambio > 0) && (
+                <div className="px-4 pb-3 pt-1 border-t border-teal-100 bg-teal-50/60">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-teal-700">Monto a usar</span>
+                    <span className="text-sm font-bold text-teal-900">{fmt(pSaldoCambio)}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      className="w-24 text-right text-sm font-bold text-gray-900 bg-white border border-teal-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-teal-500"
+                      value={saldoCambioTexto}
+                      onChange={(e) => {
+                        const limpio = e.target.value.replace(/[^0-9.,]/g, "").replace(",", ".")
+                        if ((limpio.match(/\./g) || []).length > 1) return
+                        handleSaldoCambioTextoChange(limpio)
+                      }}
+                      onBlur={() => {
+                        setSaldoCambioTexto(pSaldoCambio > 0 ? String(pSaldoCambio) : "")
+                      }}
+                      placeholder="0.00"
+                    />
+                    <span className="text-xs text-gray-500">MXN</span>
+                    <button
+                      onClick={() => aplicarSaldoCambio(maxSaldoCambio, { sincronizarTexto: true })}
+                      className="ml-auto text-xs font-medium text-teal-700 border border-teal-300 rounded-lg px-3 py-1.5 hover:bg-teal-100">
+                      Usar todo ({fmt(maxSaldoCambio)})
+                    </button>
+                  </div>
+                  {maxSaldoCambio < saldoCambioDisponible && (
+                    <p className="text-[11px] text-teal-600 mt-2 leading-tight">
+                      Máx {fmt(maxSaldoCambio)} en este ticket (no puede exceder el total a cobrar).
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
           <p className="text-sm text-gray-500 -mb-1">
-            {pPuntos > 0 ? "Cobra el resto con:" : "Selecciona una forma de pago o combínalas:"}
+            {(pPuntos > 0 || pSaldoCambio > 0) ? "Cobra el resto con:" : "Selecciona una forma de pago o combínalas:"}
           </p>
 
           {/* Métodos de pago como tarjetas */}
@@ -776,7 +930,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 <strong className="text-red-700">{fmt(pendiente)}</strong>
               </div>
             </div>
-          ) : cambio >= 0.01 && pTransferencia === 0 && pTarjeta === 0 && pCredito === 0 && pPuntos === 0 ? (
+          ) : cambio >= 0.01 && pTransferencia === 0 && pTarjeta === 0 && pCredito === 0 && pPuntos === 0 && pSaldoCambio === 0 ? (
             <div className="flex items-center justify-between bg-green-50 border border-green-200 rounded-xl px-4 py-3">
               <span className="text-sm font-medium text-green-700">Cambio</span>
               <span className="text-2xl font-black text-green-600">{fmt(cambio)}</span>

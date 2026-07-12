@@ -1481,6 +1481,22 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   white-space: nowrap;
 }
 
+/* Línea "artículo libre" (capturada a mano, fuera de catálogo) — gris, no naranja,
+   para no confundirse visualmente con los badges de promoción. */
+.badge-libre {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  background: #64748b;
+  color: #fff;
+  border-radius: 4px;
+  padding: 1px 6px;
+  letter-spacing: 0.2px;
+  flex-shrink: 0;
+}
+
 /* Promo DISPONIBLE pero aún no aplicada (outline, no relleno) — solo aviso */
 .badge-promo-disp {
   font-size: 10px;

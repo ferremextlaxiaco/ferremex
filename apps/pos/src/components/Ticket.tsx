@@ -237,6 +237,12 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
                   <span>${(venta.pago_puntos ?? 0).toFixed(2)}</span>
                 </div>
               )}
+              {(venta.pago_saldo_cambio ?? 0) > 0 && (
+                <div className="ticket-fila-resumen">
+                  <span>Saldo a favor</span>
+                  <span>${(venta.pago_saldo_cambio ?? 0).toFixed(2)}</span>
+                </div>
+              )}
               <div className="ticket-fila-resumen ticket-cambio">
                 <span>Cambio</span>
                 <span>${venta.cambio.toFixed(2)}</span>

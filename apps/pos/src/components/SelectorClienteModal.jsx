@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
-import { Search, X, UserRound } from "lucide-react"
+import { Search, X, UserRound, UserPlus } from "lucide-react"
 import { loadClientes } from "../lib/clientes"
+import { ClienteRapidoModal } from "./ClienteRapidoModal"
 
 /**
  * Ventana flotante (modal) para buscar y seleccionar un cliente de la BD.
@@ -22,6 +23,7 @@ export default function SelectorClienteModal({ open, onSelect, onClose, permitir
   const [clientes, setClientes] = useState([])
   const [cargando, setCargando] = useState(false)
   const [error, setError] = useState(false)
+  const [creandoCliente, setCreandoCliente] = useState(false)
   const inputRef = useRef(null)
 
   // Cargar clientes frescos de la BD cada vez que se abre.
@@ -59,6 +61,7 @@ export default function SelectorClienteModal({ open, onSelect, onClose, permitir
   if (!open) return null
 
   return createPortal(
+    <>
     <div className="scm-overlay" onClick={onClose}>
       <div className="scm-modal" role="dialog" aria-modal="true" aria-label="Buscar cliente" onClick={(e) => e.stopPropagation()}>
         <div className="scm-head">
@@ -76,6 +79,19 @@ export default function SelectorClienteModal({ open, onSelect, onClose, permitir
             onChange={(e) => setBusqueda(e.target.value)}
           />
         </div>
+
+        <button
+          type="button"
+          onClick={() => setCreandoCliente(true)}
+          style={{
+            display: "flex", alignItems: "center", gap: 6, width: "100%",
+            padding: "8px 12px", margin: "0 0 4px", background: "rgba(234,88,12,0.06)",
+            border: "1px dashed rgba(234,88,12,0.35)", borderRadius: 8, color: "#c2410c",
+            fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          <UserPlus size={15} /> Crear cliente nuevo
+        </button>
 
         <div className="scm-results">
           {permitirTodos && (
@@ -106,7 +122,17 @@ export default function SelectorClienteModal({ open, onSelect, onClose, permitir
           )}
         </div>
       </div>
-    </div>,
+    </div>
+    {creandoCliente && (
+      <ClienteRapidoModal
+        onClose={() => setCreandoCliente(false)}
+        onCreado={(creado) => {
+          setCreandoCliente(false)
+          onSelect(creado)
+        }}
+      />
+    )}
+    </>,
     document.body
   )
 }

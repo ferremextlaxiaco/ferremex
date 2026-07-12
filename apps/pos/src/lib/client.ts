@@ -82,6 +82,11 @@ export interface VentaRequest {
   // saldo del canje y registra ambos movimientos transaccionalmente.
   pago_puntos?: number
   puntos_ganados?: number
+  // Saldo a favor por cambio (módulo ferremex_saldo_cambio, en MXN, 1:1 con
+  // pesos — sin tasa de conversión). El backend valida saldo y registra el
+  // consumo transaccionalmente. Requiere cliente_id. Concepto de negocio
+  // DISTINTO al Monedero de lealtad (ferremex_monedero) — no se mezclan.
+  pago_saldo_cambio?: number
   // Venta a crédito: el backend registra el cargo en la cartera del cliente de
   // forma transaccional (dentro del lock de la venta). cliente_id = Customer id.
   cliente_id?: string
@@ -121,7 +126,13 @@ export interface VentaResponse {
   fecha: string
   cajero: string
   // `encargo` marca líneas vendidas sobre pedido (sin stock). El ticket lo rotula.
-  items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number; encargo?: boolean }[]
+  // `sku` se persiste siempre (necesario para reintegrar inventario al cancelar o
+  // al procesar un cambio de artículo); opcional en el tipo por compatibilidad
+  // con lecturas antiguas que no lo declaraban.
+  items: { sku?: string; descripcion: string; cantidad: number; precio_unitario: number; subtotal: number; encargo?: boolean }[]
+  // Folios de cambios de artículo procesados sobre esta venta (traza). Ver
+  // módulo ferremex_cambios / POST /caja/cambios.
+  cambios?: string[]
   total: number
   pago_efectivo: number
   pago_transferencia: number
@@ -131,6 +142,8 @@ export interface VentaResponse {
   pago_puntos?: number
   puntos_canjeados?: number
   puntos_ganados?: number
+  // Saldo a favor por cambio consumido en esta venta (presente solo si aplicó).
+  pago_saldo_cambio?: number
   cambio: number
   // Venta contra entrega (a domicilio, pago diferido). `estado: "por_cobrar"`,
   // `metodo_pago: "contra_entrega"`, y `entrega_total` = monto real a cobrar al
@@ -684,6 +697,9 @@ export interface VentaListItem {
   pago_transferencia: number
   pago_tarjeta?: number
   pago_credito: number
+  pago_puntos?: number
+  puntos_canjeados?: number
+  pago_saldo_cambio?: number
   cambio: number
   estado?: string
   motivo_cancelacion?: string
@@ -2277,6 +2293,36 @@ export async function resetearPuntosMonederoAPI(customerId: string, motivo: stri
   return r
 }
 
+// ── Saldo a favor por cambio (módulo ferremex_saldo_cambio) ─────────────────
+// Concepto de negocio DISTINTO al Monedero de lealtad (ferremex_monedero): se
+// acredita cuando un cliente cambia un artículo por otro de menor valor, y se
+// consume 1:1 en pesos como método de pago en una compra futura (sin tasa de
+// conversión). No usa cache: el saldo debe leerse fresco al abrir el cobro.
+
+export interface MovimientoSaldoCambioAPI {
+  id: string
+  customer_id: string
+  tipo: "generado" | "consumido" | "ajuste"
+  monto: number
+  fecha: string
+  origen_cambio_folio?: string | null
+  venta_consumo_folio?: string | null
+  descripcion: string
+  cancelado?: boolean
+  motivo_cancelacion?: string | null
+  fecha_cancelacion?: string | null
+}
+
+export interface DetalleSaldoCambio {
+  customer_id: string
+  saldo: number
+  movimientos: MovimientoSaldoCambioAPI[]
+}
+
+export async function obtenerSaldoCambioAPI(customerId: string): Promise<DetalleSaldoCambio> {
+  return apiFetch<DetalleSaldoCambio>(`/caja/saldo-cambio/${encodeURIComponent(customerId)}`)
+}
+
 // ── Biometría (huella) — capa de BD (/caja/biometria/*) ──────────────────────
 // Persistencia de plantillas + log de auditoría. La CAPTURA/COMPARACIÓN real
 // vive en lib/biometria.ts (habla con el servicio local 127.0.0.1:52700).
@@ -2365,3 +2411,104 @@ export async function registrarVerificacionAPI(data: {
     body: JSON.stringify(data),
   })
 }
+
+// ── Cambio de artículo (módulos ferremex_cambios + ferremex_saldo_cambio) ────
+//
+// Devolución con cambio, NUNCA reembolso. El cliente regresa artículo(s) de una
+// venta previa y se lleva otro(s) del catálogo. Si el nuevo vale igual o más,
+// se cobra la diferencia (venta normal enlazada); si vale menos, se acredita
+// "saldo a favor" (módulo separado del Monedero de lealtad).
+
+export interface LineaCambioDevuelta {
+  id: string
+  sku: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+}
+
+export interface LineaCambioNueva {
+  id: string
+  sku: string
+  descripcion: string
+  cantidad: number
+  precio_unitario: number
+  subtotal: number
+}
+
+export interface Cambio {
+  id: string
+  folio_cambio: string
+  venta_origen_folio: string
+  fecha: string
+  cajero: string
+  caja_id: string | null
+  caja_name: string | null
+  vendedor: string | null
+  customer_id: string | null
+  cliente_nombre: string | null
+  valor_devuelto: number
+  valor_nuevo: number
+  diferencia: number
+  diferencia_cobrada: number
+  saldo_generado: number
+  venta_diferencia_folio: string | null
+  estado: "completado" | "cancelado"
+  motivo_cancelacion: string | null
+  fecha_cancelacion: string | null
+  lineasDevueltas: LineaCambioDevuelta[]
+  lineasNuevas: LineaCambioNueva[]
+}
+
+export interface ProcesarCambioPayload {
+  venta_origen_folio: string
+  cajero: string
+  turno_id: string
+  caja_id?: string | null
+  caja_name?: string | null
+  vendedor?: string | null
+  customer_id?: string | null
+  cliente_nombre?: string | null
+  lineas_devueltas: { sku: string; cantidad: number }[]
+  // Opcional: vacío/omitido = "solo devolución" (el cliente no se lleva nada
+  // ahora). El 100% del valor devuelto se acredita como saldo a favor.
+  lineas_nuevas?: { sku: string; descripcion: string; cantidad: number; precio_unitario: number }[]
+  pago_efectivo?: number
+  pago_transferencia?: number
+  pago_tarjeta?: number
+}
+
+/** Procesa un cambio de artículo. Reintegra/descuenta inventario y liquida la diferencia. */
+export async function procesarCambioAPI(payload: ProcesarCambioPayload): Promise<Cambio> {
+  return apiFetch<Cambio>("/caja/cambios", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  })
+}
+
+/** Lista el histórico de cambios, opcionalmente filtrado por fecha. */
+export async function listarCambiosAPI(filtros?: { desde?: string; hasta?: string }): Promise<Cambio[]> {
+  const qs = new URLSearchParams()
+  if (filtros?.desde) qs.set("desde", filtros.desde)
+  if (filtros?.hasta) qs.set("hasta", filtros.hasta)
+  const query = qs.toString()
+  return apiFetch<Cambio[]>(`/caja/cambios${query ? `?${query}` : ""}`)
+}
+
+/** Detalle completo de un cambio (con sus líneas). */
+export async function obtenerCambioAPI(id: string): Promise<Cambio> {
+  return apiFetch<Cambio>(`/caja/cambios/${encodeURIComponent(id)}`)
+}
+
+/** Cancela (soft-cancel) un cambio: revierte inventario y anula el saldo generado. */
+export async function cancelarCambioAPI(id: string, motivo: string): Promise<Cambio> {
+  return apiFetch<Cambio>(`/caja/cambios/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ motivo }),
+  })
+}
+
+// Tipos y `obtenerSaldoCambioAPI` del saldo a favor viven en la sección
+// "Saldo a favor por cambio" (DetalleSaldoCambio / MovimientoSaldoCambioAPI),
+// consumida también por ModalCobro.

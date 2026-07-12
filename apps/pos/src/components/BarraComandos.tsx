@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom"
-import { Bookmark, Banknote, BarChart3, Lock, FileText, CheckCircle2 } from "lucide-react"
+import { Bookmark, Banknote, BarChart3, Lock, FileText, CheckCircle2, PackagePlus } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 import { clientePuedeFacturar } from "../lib/clientes"
 import { SelectorCliente } from "./SelectorCliente"
@@ -11,6 +11,8 @@ interface BarraComandosProps {
   onAbrirEspera: () => void
   /** Abre el popup de cargar cotización (acción local, no navega). */
   onCargarCotizacion: () => void
+  /** Abre el modal de alta rápida de artículo libre (fuera de catálogo). */
+  onArticuloLibre: () => void
 }
 
 /**
@@ -20,7 +22,7 @@ interface BarraComandosProps {
  * /admin. Cada atajo respeta los permisos del cajero: si no tiene el permiso,
  * el botón no se renderiza. Admin y Salir quedan al extremo derecho, discretos.
  */
-export function BarraComandos({ pedidosEnEspera, onAbrirEspera, onCargarCotizacion }: BarraComandosProps) {
+export function BarraComandos({ pedidosEnEspera, onAbrirEspera, onCargarCotizacion, onArticuloLibre }: BarraComandosProps) {
   const { state } = usePOS()
   const navigate = useNavigate()
   const cajero = state.cajero
@@ -47,6 +49,12 @@ export function BarraComandos({ pedidosEnEspera, onAbrirEspera, onCargarCotizaci
           <Bookmark size={18} />
           <span>En espera</span>
           {pedidosEnEspera > 0 && <span className="cmd-badge">{pedidosEnEspera}</span>}
+        </button>
+
+        {/* Artículo libre: vender algo que no está en el catálogo (ej. caja de cartón) */}
+        <button className="cmd-btn" onClick={onArticuloLibre} title="Agregar artículo que no está en el catálogo">
+          <PackagePlus size={18} />
+          <span>Artículo libre</span>
         </button>
 
         {/* Movimientos de caja (entradas/salidas/fondo) */}

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react"
-import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, X, AlertTriangle, Trash2, Boxes } from "lucide-react"
+import { List, FileText, ShoppingCart, Bookmark, PackageCheck, Package, PenLine, X, AlertTriangle, Trash2, Boxes } from "lucide-react"
 import { usePOS, efectivoPrecio, modoVentaActual } from "../lib/pos-store"
 import { abreviaturaUnidad } from "../lib/unidades-sat"
 import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDeCliente, diagnosticoPromo } from "../lib/promociones"
@@ -305,9 +305,14 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                 <div className="carrito-item-sup">
                 <div className="carrito-item-desc">
                   <span className="carrito-item-nombre">
-                    <span className="carrito-item-sku">{item.sku}</span> {item.descripcion}
+                    <span className="carrito-item-sku">{item.libre ? "LIBRE" : item.sku}</span> {item.descripcion}
                   </span>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                    {item.libre && (
+                      <span className="badge-libre" title="Artículo capturado a mano, no está en el catálogo">
+                        <PenLine size={11} /> Libre
+                      </span>
+                    )}
                     {tienePromo && (
                       <button
                         type="button"
