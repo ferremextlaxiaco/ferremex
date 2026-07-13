@@ -2,10 +2,10 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules } from "@medusajs/framework/utils"
 import * as path from "path"
 import * as crypto from "crypto"
-import { readJson, writeJsonAtomic, withFileLock } from "../../../lib/json-store"
+import { readJson, writeJsonAtomic, withFileLock, updateJson } from "../../../lib/json-store"
 import { agregarEncargosAPedidos, type EncargoLinea } from "../../../lib/pedidos-encargo"
 import { crearEncargoFicha, type EncargoArticulo } from "../../../lib/encargos-store"
-import { crearEntregaFicha, type EntregaArticulo } from "../../../lib/entregas-store"
+import { crearEntregaFicha, cargarEntregas, type EntregaArticulo } from "../../../lib/entregas-store"
 import { FERREMEX_CARTERA } from "../../../modules/ferremex-cartera"
 import type FerremexCarteraService from "../../../modules/ferremex-cartera/service"
 import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
@@ -115,12 +115,21 @@ interface VentaBody {
     comentarios?: string
     // Con cuánto pagará el cliente el resto al recibir → cambio del repartidor.
     paga_con?: number
+    // Servicio de flete (opcional). Separado del total de la venta; NO va en el
+    // ticket de la venta. Si `cobrar_al_entregar` es false, se cobra AHORA (genera
+    // un movimiento de caja categoría "Flete") con `metodo_tienda`.
+    flete?: {
+      precio: number
+      cobrar_al_entregar: boolean
+      metodo_tienda?: string
+    }
   }
 }
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
 const CONFIG_FILE = path.join(__dirname, "../../../../data/ticket-config.json")
 const COUNTER_FILE = path.join(__dirname, "../../../../data/folio-counter.json")
+const MOVIMIENTOS_FILE = path.join(__dirname, "../../../../data/movimientos-caja.json")
 
 function cargarVentas(): unknown[] {
   return readJson<unknown[]>(VENTAS_FILE, [])
@@ -160,6 +169,36 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     const fb = typeof b.fecha === "string" ? b.fecha : ""
     return fb.localeCompare(fa)
   })
+
+  // Enriquecer con el flete de la entrega (vive en la ficha, no en la venta). Se
+  // adjunta un resumen liviano `flete` por folio para que la Consulta de ventas lo
+  // muestre como tarjeta ligada, sin una llamada extra por fila. Cruce O(1) con un
+  // índice folio→flete construido de una sola lectura de entregas-pos.json. Aditivo:
+  // los demás consumidores de /caja/ventas (Corte, Movimientos) lo ignoran.
+  try {
+    const fletesPorFolio = new Map<string, { precio: number; estado: string; cobrado: boolean; al_entregar: boolean }>()
+    for (const f of cargarEntregas()) {
+      const fl = f.flete
+      if (!fl || fl.cancelado || !(Number(fl.precio) > 0.005)) continue
+      fletesPorFolio.set(f.folio, {
+        precio: Number(fl.precio) || 0,
+        cobrado: !!fl.cobrado,
+        al_entregar: !!fl.cobrar_al_entregar,
+        // Estado legible para el chip: Pagado / Se cobra al entregar / Por cobrar.
+        estado: fl.cobrado ? "cobrado" : fl.cobrar_al_entregar ? "al_entregar" : "por_cobrar",
+      })
+    }
+    if (fletesPorFolio.size > 0) {
+      ventas = ventas.map((v) => {
+        const fl = typeof v.folio === "string" ? fletesPorFolio.get(v.folio) : undefined
+        return fl ? { ...v, flete: fl } : v
+      })
+    }
+  } catch (e) {
+    // El flete es informativo: si el cruce falla, la lista sigue sirviéndose igual.
+    console.warn("[caja/ventas] No se pudo enriquecer con flete:", e)
+  }
+
   res.json(ventas)
 }
 
@@ -752,9 +791,51 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           } : {}),
           // Con cuánto pagará el resto al recibir → cambio del repartidor.
           ...(ef.paga_con != null ? { paga_con: Number(ef.paga_con) } : {}),
+          // Flete (opcional). El store lo guarda y marca cobrado si es en tienda.
+          ...(ef.flete && Number(ef.flete.precio) > 0.005 ? {
+            flete: {
+              precio: Number(ef.flete.precio),
+              cobrar_al_entregar: !!ef.flete.cobrar_al_entregar,
+              ...(ef.flete.cobrar_al_entregar ? {} : { metodo_tienda: ef.flete.metodo_tienda ?? "efectivo" }),
+            },
+          } : {}),
           articulos: articulosEntrega,
           cliente_id: body.cliente_id ?? null,
         })
+
+        // Flete cobrado EN TIENDA (no al entregar) → movimiento de caja categoría
+        // "Flete" con la fecha de HOY, para que entre al corte de hoy separado de la
+        // venta. Solo efectivo pasa por el cajón; transf/tarjeta no lo tocan.
+        const fl = ef.flete
+        if (fl && Number(fl.precio) > 0.005 && !fl.cobrar_al_entregar) {
+          try {
+            const metodoFlete = fl.metodo_tienda ?? "efectivo"
+            if (metodoFlete === "efectivo") {
+              const now = new Date()
+              const isoNow = now.toISOString()
+              await updateJson<Record<string, unknown>[]>(MOVIMIENTOS_FILE, [], (movs) => {
+                const mov: Record<string, unknown> = {
+                  id: crypto.randomBytes(6).toString("hex"),
+                  date: isoNow.slice(0, 10),
+                  time: `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`,
+                  fecha: isoNow,
+                  origin: "MOVIM_E",
+                  desc: `Flete ${resultado.registro.folio}`,
+                  method: "efectivo",
+                  amount: Math.round(Number(fl.precio) * 100) / 100,
+                  category: "Flete",
+                  cajaId: body.caja_id ?? null,
+                  cajaName: body.caja_name ?? null,
+                  cajeroName: cajero,
+                  turnoId: turno_id ?? null,
+                }
+                return [mov, ...movs]
+              })
+            }
+          } catch (e) {
+            console.error("[caja/ventas] Ficha OK pero falló el movimiento de flete:", e)
+          }
+        }
       } catch (e) {
         console.error("[caja/ventas] Venta OK pero falló crear la ficha de entrega:", e)
       }

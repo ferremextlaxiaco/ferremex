@@ -56,6 +56,28 @@ export interface EntregaPago {
   nota?: string
 }
 
+/**
+ * Servicio de FLETE cargado al cliente (opcional, separado del total de la venta).
+ * Lo determina el vendedor. Puede cobrarse en tienda al hacer la compra o al
+ * entregar (junto con la resta, pero como movimiento aparte). NO aparece en el
+ * ticket de la venta; tiene su propio ticket de flete.
+ */
+export interface EntregaFlete {
+  precio: number
+  // true = se cobra al entregar (junto con la resta). false = ya se cobró en tienda.
+  cobrar_al_entregar: boolean
+  // Método con que se cobró en tienda (solo si NO es al entregar).
+  metodo_tienda?: string
+  // true una vez que el flete quedó cobrado (en tienda al vender, o al liquidar).
+  cobrado: boolean
+  fecha_cobro?: string // ISO, cuando se cobró
+  // Cancelación (soft): no borra, marca cancelado con motivo. Si ya se había cobrado
+  // en tienda, la ruta de cancelación genera un movimiento de reversa.
+  cancelado?: boolean
+  motivo_cancelacion?: string
+  fecha_cancelacion?: string
+}
+
 export interface EntregaFicha {
   id: string
   folio: string // folio de la venta que originó la entrega
@@ -83,6 +105,8 @@ export interface EntregaFicha {
   // Con cuánto pagará el cliente al recibir (para el CAMBIO del repartidor). Aplica
   // cuando hay algo por cobrar (contra entrega, o pagada con resta > 0).
   paga_con?: number
+  // Servicio de flete cargado al cliente (opcional, separado del total de la venta).
+  flete?: EntregaFlete
   // ── Estado ──
   status: EntregaStatus
   // Pago registrado al liquidar (contra entrega). En una ficha `pagada` queda null:
@@ -112,6 +136,8 @@ export interface NuevaEntregaFicha {
   pagos_tienda?: { efectivo?: number; transferencia?: number; tarjeta?: number }
   // Con cuánto pagará el cliente al recibir → para el cambio.
   paga_con?: number
+  // Flete: precio + si se cobra al entregar (o ya se cobró en tienda) + método.
+  flete?: { precio: number; cobrar_al_entregar: boolean; metodo_tienda?: string }
   articulos: EntregaArticulo[]
   cliente_id?: string | null
 }
@@ -142,6 +168,13 @@ export async function crearEntregaFicha(data: NuevaEntregaFicha): Promise<Entreg
     // El "paga con" (para el cambio) solo tiene sentido si hay algo por cobrar.
     const guardarPagaCon = resta > 0.005 && Number(data.paga_con) > 0
 
+    // Flete (opcional): solo se guarda si el precio es > 0. Si se cobra en tienda,
+    // el POST de ventas ya creó su movimiento y lo marca cobrado; si es al entregar,
+    // queda pendiente hasta liquidar.
+    const fletePrecio = Math.round((Number(data.flete?.precio) || 0) * 100) / 100
+    const conFlete = !!data.flete && fletePrecio > 0.005
+    const fleteAlEntregar = !!data.flete?.cobrar_al_entregar
+
     const ficha: EntregaFicha = {
       id: crypto.randomBytes(8).toString("hex"),
       folio: data.folio,
@@ -164,6 +197,16 @@ export async function crearEntregaFicha(data: NuevaEntregaFicha): Promise<Entreg
           } }
         : {}),
       ...(guardarPagaCon ? { paga_con: Math.round(Number(data.paga_con) * 100) / 100 } : {}),
+      // Flete: cobrado=true si se cobró en tienda (no al entregar).
+      ...(conFlete ? {
+        flete: {
+          precio: fletePrecio,
+          cobrar_al_entregar: fleteAlEntregar,
+          ...(fleteAlEntregar ? {} : { metodo_tienda: data.flete!.metodo_tienda ?? "efectivo" }),
+          cobrado: !fleteAlEntregar,
+          ...(fleteAlEntregar ? {} : { fecha_cobro: new Date().toISOString() }),
+        },
+      } : {}),
       status: "por_entregar",
       pago: null,
       articulos: data.articulos ?? [],
@@ -224,4 +267,71 @@ export async function registrarPagoEntrega(
     return copia
   })
   return out
+}
+
+/**
+ * Marca el flete como cobrado (al liquidar la entrega, cuando era "al entregar").
+ * No-op si la ficha no tiene flete, ya está cobrado o está cancelado.
+ */
+export async function marcarFleteCobrado(
+  id: string,
+  metodo: string
+): Promise<EntregaFicha | null> {
+  let out: EntregaFicha | null = null
+  await updateJson<EntregaFicha[]>(ENTREGAS_FILE, [], (fichas) => {
+    const idx = fichas.findIndex((f) => f.id === id)
+    if (idx === -1) return fichas
+    const copia = [...fichas]
+    const f = copia[idx]
+    if (f.flete && !f.flete.cobrado && !f.flete.cancelado) {
+      f.flete = {
+        ...f.flete,
+        cobrado: true,
+        metodo_tienda: f.flete.metodo_tienda ?? metodo,
+        fecha_cobro: new Date().toISOString(),
+      }
+    }
+    copia[idx] = f
+    out = f
+    return copia
+  })
+  return out
+}
+
+/**
+ * Cancela (soft) el flete de una ficha: marca `cancelado`, guarda motivo/fecha.
+ * Devuelve `{ ficha, revertir }` donde `revertir` = monto a reversar en caja si el
+ * flete YA se había cobrado en tienda (la ruta crea el movimiento de reversa). Si
+ * no se había cobrado o no hay flete, `revertir = 0`.
+ */
+export async function cancelarFleteEntrega(
+  id: string,
+  motivo: string
+): Promise<{ ficha: EntregaFicha | null; revertir: number; metodo?: string }> {
+  let out: EntregaFicha | null = null
+  let revertir = 0
+  let metodo: string | undefined
+  await updateJson<EntregaFicha[]>(ENTREGAS_FILE, [], (fichas) => {
+    const idx = fichas.findIndex((f) => f.id === id)
+    if (idx === -1) return fichas
+    const copia = [...fichas]
+    const f = copia[idx]
+    if (f.flete && !f.flete.cancelado) {
+      // Si ya se había cobrado en tienda (no al entregar), hay que reversar.
+      if (f.flete.cobrado && !f.flete.cobrar_al_entregar) {
+        revertir = Number(f.flete.precio) || 0
+        metodo = f.flete.metodo_tienda
+      }
+      f.flete = {
+        ...f.flete,
+        cancelado: true,
+        motivo_cancelacion: motivo,
+        fecha_cancelacion: new Date().toISOString(),
+      }
+    }
+    copia[idx] = f
+    out = f
+    return copia
+  })
+  return { ficha: out, revertir, metodo }
 }

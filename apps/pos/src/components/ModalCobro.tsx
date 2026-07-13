@@ -570,6 +570,11 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 ...(datosEntregaRef.current.paga_con != null
                   ? { paga_con: datosEntregaRef.current.paga_con }
                   : {}),
+                // Flete (opcional): separado del total; el backend lo registra y, si
+                // es en tienda, crea el movimiento de caja categoría "Flete".
+                ...(datosEntregaRef.current.flete
+                  ? { flete: datosEntregaRef.current.flete }
+                  : {}),
               },
             }
           : {}),

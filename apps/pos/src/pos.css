@@ -2201,9 +2201,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .ticket * { visibility: visible; }
 
-  /* Comprobantes de entrega: hay DOS .ticket (cliente + repartidor). Cuando se
-     imprime por el navegador (sin térmica), solo deben salir los marcados con
-     .ticket--print, y en FLUJO NORMAL (uno tras otro), no ambos apilados en 0,0.
+  /* Comprobantes de entrega: hay DOS o TRES .ticket (cliente + repartidor, y
+     flete si aplica). Cuando se imprime por el navegador (sin térmica), solo
+     deben salir los marcados con .ticket--print, y en FLUJO NORMAL (uno tras
+     otro), no apilados en 0,0.
      TODO scoped a `:has(.ticket--print)` para NO afectar el ticket de venta /
      encargo (que usan .ticket-overlay pero nunca .ticket--print). */
   .ticket-overlay:has(.ticket--print) .ticket:not(.ticket--print) { display: none !important; }

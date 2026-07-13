@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import { Printer, X, User, Truck } from "lucide-react"
+import { Printer, X, User, Truck, Banknote } from "lucide-react"
 import type { VentaResponse, EntregaFicha, TicketConfig, FormatoDoc } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
 import { imprimirBytesLocal, impresoraElegida } from "../lib/impresora-local"
@@ -41,7 +41,8 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   const cfg = state.ticketConfig
   const fmtCliente = cfg?.formatos?.entrega_cliente
   const fmtReparto = cfg?.formatos?.entrega_repartidor
-  const [imprimiendo, setImprimiendo] = useState<null | "cliente" | "repartidor" | "ambos">(null)
+  type Cual = "cliente" | "repartidor" | "flete" | "ambos"
+  const [imprimiendo, setImprimiendo] = useState<null | Cual>(null)
   // Mensaje de estado bajo los botones (error de servicio/impresora o aviso de
   // impresión del navegador). Antes los errores se tragaban en silencio y el
   // cajero no sabía por qué "no imprimía".
@@ -49,9 +50,11 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   // Qué ticket(s) marcar para el diálogo de impresión del navegador (fallback sin
   // impresora térmica). Controla la clase `.ticket--print` que el CSS @media print
   // usa para imprimir SOLO esos y no toda la pantalla.
-  const [porImprimir, setPorImprimir] = useState<null | "cliente" | "repartidor" | "ambos">(null)
+  const [porImprimir, setPorImprimir] = useState<null | Cual>(null)
   const printCliente = porImprimir === "cliente" || porImprimir === "ambos"
   const printReparto = porImprimir === "repartidor" || porImprimir === "ambos"
+  // El flete se imprime solo (botón "flete") o junto con los demás ("ambos").
+  const printFlete = porImprimir === "flete" || porImprimir === "ambos"
 
   // Envío con pago en tienda (pagada) vs. contra entrega (se cobra todo al recibir).
   const pagada = !!ficha.pagada
@@ -65,24 +68,34 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   // el abono no cubrió el total).
   const hayResta = restaCobrar > 0.005
 
+  // Flete (opcional, separado del total). Solo cuenta si existe y no está cancelado.
+  const flete = ficha.flete && !ficha.flete.cancelado ? ficha.flete : null
+  const fletePrecio = flete ? Number(flete.precio) || 0 : 0
+  // Flete que el repartidor cobra al entregar (marcado "al entregar" y no cobrado).
+  const fleteAlEntregar = !!(flete && flete.cobrar_al_entregar && !flete.cobrado)
+  const fleteACobrarReparto = fleteAlEntregar ? fletePrecio : 0
+
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onCerrar() }
     window.addEventListener("keydown", fn)
     return () => window.removeEventListener("keydown", fn)
   }, [onCerrar])
 
-  async function imprimir(cual: "cliente" | "repartidor" | "ambos") {
+  async function imprimir(cual: Cual) {
     if (imprimiendo) return
     setImprimiendo(cual)
     setAviso(null)
     try {
       const bytesCliente = () => construirTicketCliente(venta, ficha, cfg, fmtCliente)
       const bytesReparto = () => construirHojaRepartidor(venta, ficha, cfg, fmtReparto)
+      const bytesFlete = () => construirTicketFlete(venta, ficha, cfg)
       if (impresoraElegida()) {
         // Impresora térmica vía servicio local. Si falla (servicio caído, nombre
         // erróneo), el error se muestra al cajero en vez de tragarse.
         if (cual === "cliente" || cual === "ambos") await imprimirBytesLocal(bytesCliente())
         if (cual === "repartidor" || cual === "ambos") await imprimirBytesLocal(bytesReparto())
+        // "ambos" incluye el flete si existe (se imprime junto con los demás).
+        if (cual === "flete" || (cual === "ambos" && flete)) await imprimirBytesLocal(bytesFlete())
         setAviso({ tipo: "info", texto: "Enviado a la impresora." })
       } else {
         // Sin impresora térmica configurada (p. ej. desde la PC de administración):
@@ -110,7 +123,9 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   // quedaría atrapado en su stacking context y aparecería por detrás.
   return createPortal(
     <div className="ticket-overlay">
-      <div className="ticket-preview-box" style={{ maxWidth: 560 }}>
+      {/* Ancho de la caja según cuántos tickets se muestran: 2 (cliente+repartidor)
+          o 3 cuando hay flete. Así el ticket de flete cae al lado y no debajo. */}
+      <div className="ticket-preview-box" style={{ maxWidth: flete ? 820 : 560 }}>
         <p className="ticket-preview-titulo">
           {imprimiendo ? "Imprimiendo…" : "Comprobantes de entrega"}
         </p>
@@ -202,8 +217,8 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
               </tbody>
             </table>
             <div className="ticket-separador">————————————————</div>
-            {pagada && !hayResta ? (
-              // Pagó todo en tienda → solo entregar.
+            {pagada && !hayResta && fleteACobrarReparto <= 0.005 ? (
+              // Pagó todo en tienda y sin flete por cobrar → solo entregar.
               <div className="ticket-fila-resumen ticket-cambio"><span>PAGADO ✓</span><span>SOLO ENTREGAR</span></div>
             ) : (
               <>
@@ -216,19 +231,50 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
                     ))}
                   </>
                 )}
-                <div className="ticket-fila-resumen ticket-cambio"><span>COBRAR</span><span>{fmt(restaCobrar)}</span></div>
-                {/* Cambio a llevar: solo si el cajero capturó con cuánto paga el resto. */}
+                {/* Desglose material + flete cuando hay flete por cobrar al entregar. */}
+                {fleteACobrarReparto > 0.005 ? (
+                  <>
+                    {hayResta && <div className="ticket-fila-resumen"><span>Material</span><span>{fmt(restaCobrar)}</span></div>}
+                    <div className="ticket-fila-resumen"><span>Flete</span><span>{fmt(fleteACobrarReparto)}</span></div>
+                    <div className="ticket-fila-resumen ticket-cambio"><span>COBRAR</span><span>{fmt(restaCobrar + fleteACobrarReparto)}</span></div>
+                  </>
+                ) : (
+                  <div className="ticket-fila-resumen ticket-cambio"><span>COBRAR</span><span>{fmt(restaCobrar)}</span></div>
+                )}
+                {/* Cambio a llevar: sobre el total a cobrar (material + flete). */}
                 {ficha.paga_con != null && ficha.paga_con > 0 && (
                   <>
                     <div className="ticket-fila-resumen"><span>Paga con</span><span>{fmt(ficha.paga_con)}</span></div>
                     <div className="ticket-fila-resumen ticket-cambio">
-                      <span>CAMBIO</span><span>{fmt(Math.max(0, ficha.paga_con - restaCobrar))}</span>
+                      <span>CAMBIO</span><span>{fmt(Math.max(0, ficha.paga_con - restaCobrar - fleteACobrarReparto))}</span>
                     </div>
                   </>
                 )}
               </>
             )}
           </div>
+
+          {/* Ticket de FLETE (opcional) — separado. Solo si hay flete no cancelado. */}
+          {flete && (
+            <div className={`ticket ${printFlete ? "ticket--print" : ""}`} style={{ flex: "1 1 240px" }}>
+              <div className="ticket-header">
+                <p className="ticket-negocio">{cfg?.encabezado?.nombre || "FERREMEX"}</p>
+                <p className="ticket-tipo-doc">SERVICIO DE FLETE</p>
+              </div>
+              <div className="ticket-separador">————————————————</div>
+              <p className="ticket-meta">Venta: {venta.folio}</p>
+              <p className="ticket-meta">Fecha: {new Date(venta.fecha).toLocaleString("es-MX")}</p>
+              <p className="ticket-meta">Cliente: {ficha.recibe.nombre}</p>
+              <p className="ticket-meta">Destino: {ficha.direccion}</p>
+              <div className="ticket-separador">————————————————</div>
+              <div className="ticket-fila-resumen ticket-cambio"><span>FLETE</span><span>{fmt(fletePrecio)}</span></div>
+              <p className="ticket-meta" style={{ marginTop: 6 }}>
+                {flete.cobrado ? "Pagado" : flete.cobrar_al_entregar ? "Se cobra al entregar" : "Por cobrar"}
+              </p>
+              <div className="ticket-separador">————————————————</div>
+              <p className="ticket-gracias">Comprobante de servicio de flete</p>
+            </div>
+          )}
         </div>
 
         {/* Aviso de estado de impresión (error o info). No se traga en silencio. */}
@@ -246,8 +292,14 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
           <button className="btn-secondary" onClick={() => imprimir("repartidor")} disabled={!!imprimiendo}>
             <Truck size={16} /> Imprimir repartidor
           </button>
+          {/* Ticket de flete: solo si hay flete (no cancelado). */}
+          {flete && (
+            <button className="btn-secondary" onClick={() => imprimir("flete")} disabled={!!imprimiendo}>
+              <Banknote size={16} /> Imprimir flete
+            </button>
+          )}
           <button className="btn-confirmar" onClick={() => imprimir("ambos")} disabled={!!imprimiendo}>
-            <Printer size={16} /> Imprimir ambos
+            <Printer size={16} /> {flete ? "Imprimir todos" : "Imprimir ambos"}
           </button>
         </div>
       </div>
@@ -358,6 +410,10 @@ export function construirHojaRepartidor(
   const abonado = Number(ficha.abonado) || 0
   const restaCobrar = ficha.resta != null ? Number(ficha.resta) : (venta.entrega_total ?? ficha.total)
   const hayResta = restaCobrar > 0.005
+  // Flete que el repartidor cobra al entregar (al entregar, no cobrado, no cancelado).
+  const fl = ficha.flete
+  const fleteACobrar = (fl && fl.cobrar_al_entregar && !fl.cobrado && !fl.cancelado)
+    ? Math.round((Number(fl.precio) || 0) * 100) / 100 : 0
   encabezadoComun(b, negocio, (doc?.encabezado ?? ["Copia del repartidor"]).slice(1), doc?.titulo || "HOJA DE ENTREGA", "REPARTIDOR")
 
   b.push(...linea(sep))
@@ -391,8 +447,8 @@ export function construirHojaRepartidor(
     }
   }
   b.push(...linea(sep))
-  if (pagada && !hayResta) {
-    // Pagó todo en tienda → solo entregar.
+  if (pagada && !hayResta && fleteACobrar <= 0.005) {
+    // Pagó todo en tienda y sin flete por cobrar → solo entregar.
     b.push(ESC, 0x21, 0x30) // doble alto/ancho
     b.push(ESC, 0x61, 0x01, ...linea("PAGADO"), ...linea("SOLO ENTREGAR"), ESC, 0x61, 0x00)
     b.push(ESC, 0x21, 0x00)
@@ -407,13 +463,19 @@ export function construirHojaRepartidor(
         b.push(...linea(filaLR("Abonado:", `$${abonado.toFixed(2)}`)))
       }
     }
-    // COBRAR la resta (grande).
+    // Desglose material + flete cuando hay flete por cobrar al entregar.
+    if (fleteACobrar > 0.005) {
+      if (hayResta) b.push(...linea(filaLR("Material:", `$${restaCobrar.toFixed(2)}`)))
+      b.push(...linea(filaLR("Flete:", `$${fleteACobrar.toFixed(2)}`)))
+    }
+    // COBRAR = resta + flete (grande).
+    const cobrarTotal = Math.round((restaCobrar + fleteACobrar) * 100) / 100
     b.push(ESC, 0x21, 0x30) // doble alto/ancho
-    b.push(ESC, 0x61, 0x01, ...linea(`COBRAR $${restaCobrar.toFixed(2)}`), ESC, 0x61, 0x00)
+    b.push(ESC, 0x61, 0x01, ...linea(`COBRAR $${cobrarTotal.toFixed(2)}`), ESC, 0x61, 0x00)
     b.push(ESC, 0x21, 0x00)
-    // Cambio a llevar (si el cajero capturó con cuánto paga el resto).
+    // Cambio a llevar (si el cajero capturó con cuánto paga).
     if (ficha.paga_con != null && ficha.paga_con > 0) {
-      const cambio = Math.max(0, ficha.paga_con - restaCobrar)
+      const cambio = Math.max(0, ficha.paga_con - cobrarTotal)
       b.push(...linea(filaLR("Paga con:", `$${ficha.paga_con.toFixed(2)}`)))
       b.push(ESC, 0x21, 0x10) // doble alto
       b.push(...linea(filaLR("CAMBIO:", `$${cambio.toFixed(2)}`)))
@@ -422,6 +484,42 @@ export function construirHojaRepartidor(
   }
   b.push(...linea(sep))
   for (const l of (doc?.pie ?? [])) b.push(ESC, 0x61, 0x01, ...linea(l), ESC, 0x61, 0x00)
+  b.push(LF, LF, LF, LF, GS, 0x56, 0x42, 0x00) // corte
+  return b
+}
+
+/**
+ * Ticket de FLETE (comprobante independiente del servicio de flete). Ligado a la
+ * venta por folio, con el monto del flete y su estado. Separado del ticket de venta.
+ */
+export function construirTicketFlete(
+  venta: VentaResponse, ficha: EntregaFicha, cfg: TicketConfig | null
+): number[] {
+  const b: number[] = []
+  const sep = "-".repeat(COLS)
+  const negocio = cfg?.encabezado?.nombre || "FERREMEX"
+  const fl = ficha.flete
+  const precio = fl ? Number(fl.precio) || 0 : 0
+  encabezadoComun(b, negocio, (cfg?.encabezado?.direccion ? [cfg.encabezado.direccion] : ["Tlaxiaco, Oaxaca"]), "SERVICIO DE FLETE")
+
+  b.push(...linea(sep))
+  b.push(...linea(`Venta: ${venta.folio}`))
+  b.push(...linea(`Fecha: ${new Date(venta.fecha).toLocaleString("es-MX")}`))
+  b.push(...linea(`Cliente: ${ficha.recibe.nombre}`))
+  b.push(...linea("Destino:"))
+  for (const l of envolver(ficha.direccion)) b.push(...linea(`  ${l}`))
+  b.push(...linea(sep))
+  b.push(ESC, 0x21, 0x20) // doble ancho
+  b.push(...linea(filaLR("FLETE", `$${precio.toFixed(2)}`)))
+  b.push(ESC, 0x21, 0x00)
+  b.push(...linea(sep))
+  b.push(ESC, 0x61, 0x01) // center
+  const estado = fl?.cancelado ? "Cancelado"
+    : fl?.cobrado ? "Pagado"
+    : fl?.cobrar_al_entregar ? "Se cobra al entregar"
+    : "Por cobrar"
+  b.push(...linea(estado))
+  b.push(...linea("Comprobante de servicio de flete"))
   b.push(LF, LF, LF, LF, GS, 0x56, 0x42, 0x00) // corte
   return b
 }

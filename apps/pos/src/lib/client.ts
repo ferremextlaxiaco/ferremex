@@ -118,6 +118,9 @@ export interface VentaRequest {
     comentarios?: string
     // Con cuánto pagará el cliente al recibir (contra entrega) → cambio del repartidor.
     paga_con?: number
+    // Servicio de flete (opcional, separado del total de la venta). Si
+    // `cobrar_al_entregar` es false, se cobra ahora con `metodo_tienda`.
+    flete?: { precio: number; cobrar_al_entregar: boolean; metodo_tienda?: string }
   }
 }
 
@@ -165,6 +168,16 @@ export interface VentaResponse {
   // Presencia de `factura.cfdi_id` ⇒ venta ya facturada (permite mostrar
   // "Ver factura" en vez de "Facturar" sin una consulta extra por fila).
   factura?: FacturaVenta | null
+  // Servicio de flete ligado a esta venta (vive en la ficha de entrega; el GET
+  // /caja/ventas lo adjunta como resumen). Presente solo si hay flete no cancelado.
+  // La Consulta de ventas lo muestra como tarjeta ligada bajo la venta.
+  flete?: {
+    precio: number
+    cobrado: boolean
+    al_entregar: boolean
+    // "cobrado" | "al_entregar" | "por_cobrar"
+    estado: string
+  } | null
 }
 
 export interface VentaRegistro {
@@ -464,6 +477,38 @@ export async function generarOCPdf(data: {
   if (!res.ok) {
     const body = await res.text()
     throw new Error(`Error ${res.status}: ${body}`)
+  }
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
+/** Opciones de personalización de la Nota de Venta (toggles del modal). */
+export interface NotaVentaOpts {
+  imagen: boolean
+  sku: boolean
+  precio: boolean
+  cliente: boolean
+  notas: boolean
+  notasTexto?: string
+}
+
+/**
+ * Genera la NOTA DE VENTA (PDF tamaño carta) de una venta por folio, con la
+ * estética de la factura pero sin sellos fiscales. El backend resuelve las
+ * imágenes por SKU y el desglose de IVA. Devuelve un object URL del PDF blob
+ * (revócalo con URL.revokeObjectURL al cerrar el visor).
+ */
+export async function generarNotaVentaPdf(folio: string, opts: NotaVentaOpts): Promise<string> {
+  const res = await fetch("/caja/nota-venta", {
+    method: "POST",
+    headers: posHeaders(),
+    body: JSON.stringify({ folio, opts }),
+  })
+  if (!res.ok) {
+    const body = await res.text()
+    let msg = `Error ${res.status}: ${body}`
+    try { const j = JSON.parse(body); if (j?.error) msg = j.error } catch { /* no-JSON */ }
+    throw new Error(msg)
   }
   const blob = await res.blob()
   return URL.createObjectURL(blob)
@@ -1219,6 +1264,18 @@ export interface EntregaPago {
   nota?: string
 }
 
+/** Servicio de flete cargado al cliente (opcional, separado del total de la venta). */
+export interface EntregaFlete {
+  precio: number
+  cobrar_al_entregar: boolean
+  metodo_tienda?: string
+  cobrado: boolean
+  fecha_cobro?: string
+  cancelado?: boolean
+  motivo_cancelacion?: string
+  fecha_cancelacion?: string
+}
+
 export interface EntregaFicha {
   id: string
   folio: string
@@ -1239,6 +1296,8 @@ export interface EntregaFicha {
   pagos_tienda?: { efectivo?: number; transferencia?: number; tarjeta?: number }
   // Con cuánto pagará el resto al recibir → cambio del repartidor.
   paga_con?: number
+  // Servicio de flete (opcional).
+  flete?: EntregaFlete
   status: EntregaStatus
   pago: EntregaPago | null
   articulos: EntregaArticulo[]
@@ -1298,7 +1357,24 @@ export async function cancelarEntrega(id: string, nota?: string): Promise<Entreg
   })
 }
 
+/**
+ * Cancela (soft) el flete de una entrega. Si ya se había cobrado en tienda en
+ * efectivo, el backend genera un movimiento de reversa. Requiere motivo.
+ */
+export async function cancelarFleteEntrega(
+  id: string,
+  motivo: string,
+  ctx?: { caja_id?: string | null; caja_name?: string | null; cajero_id?: string; cajero_name?: string; turno_id?: string }
+): Promise<EntregaFicha> {
+  return apiFetch<EntregaFicha>(`/caja/entregas/${encodeURIComponent(id)}/flete`, {
+    method: "DELETE",
+    body: JSON.stringify({ motivo, ...(ctx ?? {}) }),
+  })
+}
+
 export type CatalogosOp =
+  | { op: "create_dept"; nombre: string }
+  | { op: "create_cat"; nombre: string; dep_nombre: string }
   | { op: "create_marca"; nombre: string; cat_nombre: string; dep_nombre: string }
   | { op: "rename_dept";  nombre_actual: string; nombre_nuevo: string }
   | { op: "rename_cat";   nombre_actual: string; nombre_nuevo: string }
@@ -1319,8 +1395,8 @@ export type CatalogosOp =
 
 export async function actualizarCatalogo(
   payload: CatalogosOp
-): Promise<{ ok: boolean; actualizados: number }> {
-  const r = await apiFetch<{ ok: boolean; actualizados: number }>("/caja/catalogos", {
+): Promise<{ ok: boolean; actualizados?: number }> {
+  const r = await apiFetch<{ ok: boolean; actualizados?: number }>("/caja/catalogos", {
     method: "PATCH",
     body: JSON.stringify(payload),
   })

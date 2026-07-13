@@ -1,13 +1,15 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react"
+import { useNavigate } from "react-router-dom"
 import {
   Clock, User, CreditCard, Receipt, UserRound, Printer, Ban, Truck,
-  Package, Search, AlertTriangle, Loader, ArrowRightLeft,
+  Package, Search, AlertTriangle, Loader, ArrowRightLeft, Banknote, Wallet, FileText,
 } from "lucide-react"
 import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta, obtenerEntregaPorFolio } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import { formatMXNAbs as fmt } from "../lib/format"
 import { FacturarBoton } from "../components/FacturarBoton"
 import { TicketsEntrega } from "../components/TicketsEntrega"
+import NotaVentaModal from "../components/NotaVentaModal"
 import SelectorClienteModal from "../components/SelectorClienteModal"
 import { CambioWizard } from "../components/CambioWizard"
 
@@ -74,99 +76,6 @@ function ToastStack({ toasts }) {
   )
 }
 
-// ── Mini calendar (range highlight) ────────────────────────────────────────────
-
-const MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-const DIAS  = ["Lu","Ma","Mi","Ju","Vi","Sa","Do"]
-
-function MiniCalendar({ desde, hasta, onChange }) {
-  const [cursor, setCursor] = useState(() => {
-    const base = hasta ? new Date(hasta + "T12:00:00") : new Date()
-    return { y: base.getFullYear(), m: base.getMonth() }
-  })
-  const [hov, setHov] = useState(null)
-
-  // First weekday of month (0=Sun→shift to Mon-first grid)
-  const firstDow = new Date(cursor.y, cursor.m, 1).getDay() // 0=Sun
-  const offset = (firstDow + 6) % 7 // Mon-first offset
-  const daysInMonth = new Date(cursor.y, cursor.m + 1, 0).getDate()
-  const cells = []
-  for (let i = 0; i < offset; i++) cells.push(null)
-  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
-
-  function iso(d) {
-    return `${cursor.y}-${String(cursor.m + 1).padStart(2,"0")}-${String(d).padStart(2,"0")}`
-  }
-
-  function click(d) {
-    const day = iso(d)
-    if (!desde || (desde && hasta)) { onChange(day, null) }
-    else if (day < desde) { onChange(day, desde) }
-    else { onChange(desde, day) }
-  }
-
-  function dayState(d) {
-    if (!d) return "empty"
-    const day = iso(d)
-    const end = hov ?? hasta
-    if (day === desde) return "start"
-    if (end && day === end) return "end"
-    if (desde && end) {
-      const lo = desde < end ? desde : end
-      const hi = desde < end ? end : desde
-      if (day > lo && day < hi) return "range"
-    }
-    return "normal"
-  }
-
-  const navBtn = {
-    background: "none", border: "none", cursor: "pointer",
-    fontSize: 15, color: "var(--text)", padding: "0 6px", lineHeight: 1,
-  }
-
-  const DAY_STYLES = {
-    start:  { background: "#f96302", color: "#fff", fontWeight: 700, borderRadius: 6 },
-    end:    { background: "#16a34a", color: "#fff", fontWeight: 700, borderRadius: 6 },
-    range:  { background: "rgba(249,99,2,0.18)", color: "var(--text)", fontWeight: 400, borderRadius: 0 },
-    normal: { background: "transparent", color: "var(--text)", fontWeight: 400, borderRadius: 4 },
-    empty:  {},
-  }
-
-  return (
-    <div style={{ userSelect: "none", paddingTop: 4 }}>
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <button style={navBtn}
-          onClick={() => setCursor(c => { const m = c.m === 0 ? 11 : c.m - 1; return { y: m === 11 ? c.y - 1 : c.y, m } })}>‹</button>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>{MESES[cursor.m]} {cursor.y}</span>
-        <button style={navBtn}
-          onClick={() => setCursor(c => { const m = c.m === 11 ? 0 : c.m + 1; return { y: m === 0 ? c.y + 1 : c.y, m } })}>›</button>
-      </div>
-      {/* grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", rowGap: 2 }}>
-        {DIAS.map(d => (
-          <div key={d} style={{ textAlign: "center", fontSize: 9, fontWeight: 700, color: "var(--text-muted)", paddingBottom: 2 }}>{d}</div>
-        ))}
-        {cells.map((d, i) => {
-          const state = dayState(d)
-          if (state === "empty") return <div key={`e${i}`} />
-          return (
-            <div key={d}
-              onClick={() => click(d)}
-              onMouseEnter={() => desde && !hasta && setHov(iso(d))}
-              onMouseLeave={() => setHov(null)}
-              style={{
-                textAlign: "center", fontSize: 11, lineHeight: "22px", cursor: "pointer",
-                ...DAY_STYLES[state],
-              }}
-            >{d}</div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
 // ── ArticuloPicker modal ────────────────────────────────────────────────────────
 
 const ART_PAGE = 15
@@ -208,8 +117,14 @@ function ArticuloPicker({ onSelect, onClose }) {
       if (q.trim()) params.q = q.trim()
       if (ctx.cat?.medusaId)   params.category_id  = ctx.cat.medusaId
       else if (ctx.dept)       params.departamento  = ctx.dept.nombre
-      if (ctx.marca)           params.marca         = ctx.marca.nombre
-      setResultados(await buscarProductos(params))
+      let res = await buscarProductos(params)
+      // El backend /caja/productos NO filtra por marca (solo q/category_id/
+      // departamento). La marca se acota en cliente sobre el campo `marca` que ya
+      // trae cada producto — mismo patrón que el Buscador de la pantalla de venta.
+      if (ctx.marca?.nombre) {
+        res = res.filter((p) => (p.marca ?? "") === ctx.marca.nombre)
+      }
+      setResultados(res)
     } finally { setBuscando(false) }
   }
 
@@ -418,7 +333,7 @@ function defaultFilters() {
   return { desde: isoToday(), hasta: isoToday(), articulo: "", monto: "", cajero: "", metodo: "", cliente: "", clienteTodoPeriodo: false, estados: { vigente: true, cancelada: true } }
 }
 
-function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
+function FilterPanel({ filters, onChange, cajeros = [] }) {
   const [artModal, setArtModal] = useState(false)
   const [artObj, setArtObj]     = useState(null)
   const [cliModal, setCliModal] = useState(false)
@@ -492,10 +407,6 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
             <input type="date" value={filters.hasta} onChange={e => set("hasta", e.target.value)} style={inputStyle} />
           </div>
         </div>
-        <MiniCalendar
-          desde={filters.desde} hasta={filters.hasta}
-          onChange={(d, h) => onChange({ ...filters, desde: d, hasta: h ?? d })}
-        />
       </div>
 
       {/* Artículo */}
@@ -616,18 +527,6 @@ function FilterPanel({ filters, onChange, onSearch, onClear, cajeros = [] }) {
           </button>
         </div>
       </div>
-
-      {/* Botones */}
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={onSearch} style={{
-          flex: 1, background: "var(--orange)", color: "#fff", border: "none", borderRadius: 6,
-          padding: "7px 0", fontSize: 12, fontWeight: 600, cursor: "pointer",
-        }}>Buscar</button>
-        <button onClick={onClear} style={{
-          flex: 1, background: "var(--panel-bg, #f4f4f5)", color: "var(--text)", border: "1px solid var(--border)",
-          borderRadius: 6, padding: "7px 0", fontSize: 12, fontWeight: 600, cursor: "pointer",
-        }}>Limpiar</button>
-      </div>
     </div>
   )
 }
@@ -724,6 +623,11 @@ function restaEntrega(v) {
 function entregaPagadaConResta(v) {
   return esEntregaPagada(v) && restaEntrega(v) > 0.005 && v.estado === "por_cobrar"
 }
+/** True si la entrega tiene algo por cobrar al entregar (contra entrega pendiente
+ *  o envío pagado con resta). Es cuando "marcar como pagado" tiene sentido. */
+function cobroPendienteEntrega(v) {
+  return v.estado !== "cancelada" && (entregaPorCobrar(v) || entregaPagadaConResta(v))
+}
 
 const METODO_LABEL = {
   efectivo: "Efectivo", transferencia: "Transferencia", tarjeta: "Tarjeta",
@@ -785,16 +689,26 @@ function VentaCard({ v, onClick }) {
   // no el `total` (que es 0 hoy para que el corte cuadre).
   const totalMostrar = esContraEntrega(v) ? (v.entrega_total ?? v.total) : v.total
 
-  return (
+  // Flete ligado a la venta (lo adjunta el GET desde la ficha de entrega). Se
+  // muestra como una subtarjeta UNIDA debajo de la venta (misma barra de color,
+  // sin separación, borde punteado). El flete NO va en el total de la venta.
+  const flete = v.flete && Number(v.flete.precio) > 0.005 ? v.flete : null
+
+  const card = (
     <div onClick={() => onClick(v)} style={{
-      background: "#fff", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px",
+      background: "#fff", border: "1px solid var(--border)",
+      // Si hay flete, la venta y el flete forman un bloque: la venta pierde el
+      // radio inferior para "pegarse" a la subtarjeta.
+      borderRadius: flete ? "10px 10px 0 0" : 10,
+      borderBottom: flete ? "none" : "1px solid var(--border)",
+      padding: "12px 14px",
       cursor: "pointer", display: "flex", gap: 12, alignItems: "stretch",
-      transition: "box-shadow 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      transition: "box-shadow 0.15s", boxShadow: flete ? "none" : "0 1px 3px rgba(0,0,0,0.04)",
       borderLeft: `4px solid ${accentColor}`,
       position: "relative",
     }}
-      onMouseEnter={e => e.currentTarget.style.boxShadow = "0 3px 12px rgba(0,0,0,0.10)"}
-      onMouseLeave={e => e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"}
+      onMouseEnter={e => e.currentTarget.style.boxShadow = flete ? "none" : "0 3px 12px rgba(0,0,0,0.10)"}
+      onMouseLeave={e => e.currentTarget.style.boxShadow = flete ? "none" : "0 1px 3px rgba(0,0,0,0.04)"}
     >
       <div style={{ flex: 1, minWidth: 0 }}>
         {/* Row 1 */}
@@ -827,6 +741,38 @@ function VentaCard({ v, onClick }) {
       <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", justifyContent: "center", minWidth: 80 }}>
         <span style={{ fontSize: 18, fontWeight: 700, color: "var(--text)" }}>{fmt(totalMostrar)}</span>
         <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{v.items.length} art.</span>
+      </div>
+    </div>
+  )
+
+  // Sin flete: la tarjeta va sola.
+  if (!flete) return card
+
+  // Con flete: bloque venta + subtarjeta de flete UNIDA (misma barra de color a la
+  // izquierda, pegada abajo, borde superior punteado como "hilo" que las une).
+  const fleteEstado =
+    flete.estado === "cobrado" ? { txt: "Cobrado", color: "#16a34a" }
+    : flete.estado === "al_entregar" ? { txt: "Se cobra al entregar", color: "#ea580c" }
+    : { txt: "Por cobrar", color: "#ea580c" }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {card}
+      <div onClick={() => onClick(v)} style={{
+        background: "#fff7ed", border: "1px solid var(--border)", borderTop: "1px dashed #fdba74",
+        borderRadius: "0 0 10px 10px", borderLeft: `4px solid ${accentColor}`,
+        padding: "7px 14px", cursor: "pointer",
+        display: "flex", alignItems: "center", gap: 8,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+      }}
+        onMouseEnter={e => e.currentTarget.style.boxShadow = "0 3px 12px rgba(0,0,0,0.10)"}
+        onMouseLeave={e => e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.04)"}
+      >
+        <Banknote size={14} style={{ color: "#c2410c", flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#9a3412" }}>Flete</span>
+        <span style={{ fontSize: 11, color: fleteEstado.color, fontWeight: 500 }}>· {fleteEstado.txt}</span>
+        <span style={{ fontSize: 10, color: "var(--text-muted)" }}>· ligado a {v.folio}</span>
+        <span style={{ marginLeft: "auto", fontSize: 14, fontWeight: 700, color: "#9a3412" }}>{fmt(flete.precio)}</span>
       </div>
     </div>
   )
@@ -894,10 +840,13 @@ function CompactTable({ ventas, sort, onSort, onRowClick }) {
 
 // ── Sale detail drawer ─────────────────────────────────────────────────────────
 
-function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
+function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
+  const navigate = useNavigate()
   // Reimpresión de los dos tickets de entrega (solo ventas contra entrega).
   const [ticketsEntrega, setTicketsEntrega] = useState(null) // { venta, ficha } | null
   const [cargandoFicha, setCargandoFicha] = useState(false)
+  // Nota de venta imprimible (hoja carta, estética factura). true = modal abierto.
+  const [notaVenta, setNotaVenta] = useState(false)
 
   useEffect(() => {
     function esc(e) { if (e.key === "Escape") onClose() }
@@ -934,7 +883,7 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
       <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.25)", zIndex: 1500 }} />
       {/* Drawer */}
       <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: 420, background: "#fff",
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 560, maxWidth: "92vw", background: "#fff",
         zIndex: 1501, boxShadow: "-4px 0 24px rgba(0,0,0,0.12)", display: "flex", flexDirection: "column",
         animation: "slideInRight 0.2s ease",
       }}>
@@ -1113,6 +1062,18 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
 
         {/* Footer actions */}
         <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {/* Marcar como pagado: solo cuando la entrega tiene cobro pendiente. El
+              cobro/liquidación vive en "Entregas a domicilio" — este botón lleva
+              allá y abre esa entrega directamente (folio por query string). */}
+          {cobroPendienteEntrega(venta) && (
+            <button onClick={() => navigate(`/admin/entregas-por-cobrar?folio=${encodeURIComponent(venta.folio)}`)} style={{
+              flex: "1 1 100%", background: "#16a34a", border: "1px solid #15803d", borderRadius: 6,
+              padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "#fff",
+              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            }}>
+              <Wallet size={14} /> Marcar como pagado
+            </button>
+          )}
           {/* Entrega a domicilio (contra entrega o pagada): reimprime los DOS
               comprobantes (cliente + repartidor). */}
           {tieneEntrega(venta) ? (
@@ -1146,6 +1107,13 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
               display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
             }}><ArrowRightLeft size={14} /> Cambiar artículo</button>
           )}
+          {/* Nota de venta formal (hoja carta, estética factura sin sellos). Para
+              cualquier venta: convierte el ticket en un documento imprimible. */}
+          <button onClick={() => setNotaVenta(true)} style={{
+            flex: 1, background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 6,
+            padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#ea580c",
+            display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+          }}><FileText size={14} /> Nota de venta</button>
           {vigente && (
             <button onClick={() => onCancel(venta)} style={{
               flex: 1, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.3)", borderRadius: 6,
@@ -1162,6 +1130,15 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio }) {
           venta={ticketsEntrega.venta}
           ficha={ticketsEntrega.ficha}
           onCerrar={() => setTicketsEntrega(null)}
+        />
+      )}
+
+      {/* Nota de venta: modal de opciones + visor PDF (hoja carta). */}
+      {notaVenta && (
+        <NotaVentaModal
+          venta={venta}
+          onClose={() => setNotaVenta(false)}
+          pushToast={onToast}
         />
       )}
     </>
@@ -1460,11 +1437,13 @@ export default function SalesHistory() {
     return map
   }, [paginated])
 
-  function handleSearch() {
+  // Búsqueda automática: cada cambio en el panel de filtros se aplica al instante
+  // (sin botón "Buscar"). `applied` sigue a `filters`; los filtros de fecha/cliente
+  // disparan recarga vía `recargar`, el resto filtra sobre `allVentas` en cliente.
+  useEffect(() => {
     setApplied({ ...filters })
     setPage(1)
-    pushToast("Filtros aplicados", "success")
-  }
+  }, [filters])
 
   function handleClear() {
     const def = defaultFilters()
@@ -1519,15 +1498,6 @@ export default function SalesHistory() {
         height: 56, background: "#fff", borderBottom: "1px solid var(--border)",
         display: "flex", alignItems: "center", gap: 12, padding: "0 16px", flexShrink: 0,
       }}>
-        {/* Panel toggle */}
-        <button onClick={() => setPanelOpen(o => !o)} style={{
-          background: "none", border: "1px solid var(--border)", borderRadius: 6,
-          padding: "4px 8px", cursor: "pointer", fontSize: 12, color: "var(--text-muted)",
-          display: "flex", alignItems: "center", gap: 4,
-        }}>
-          {panelOpen ? "◀ Filtros" : "▶ Filtros"}
-        </button>
-
         {/* Title */}
         <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", flexShrink: 0 }}>Consulta de ventas</span>
 
@@ -1582,30 +1552,47 @@ export default function SalesHistory() {
           ⬇ CSV
         </button>
 
+        {/* KPI de conteo: empujado al extremo derecho de la barra con margin-left auto. */}
         <div style={{
           background: "#fff", border: "1px solid var(--border)", borderRadius: 10,
-          padding: "10px 16px", minWidth: 100,
+          padding: "10px 16px", minWidth: 100, marginLeft: "auto",
         }}>
           <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>Ventas</div>
           <div style={{ fontSize: 18, fontWeight: 700, color: "var(--text)" }}>{filtered.length}</div>
         </div>
 
+        {/* Limpiar filtros: entre el contador de ventas y el toggle de filtros. La
+            búsqueda es automática (cada cambio se aplica), así que solo queda Limpiar. */}
+        <button onClick={handleClear} style={{
+          background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
+          padding: "5px 12px", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",
+          flexShrink: 0,
+        }}>Limpiar</button>
+
+        {/* Panel toggle: al extremo derecho, del lado del panel de filtros que controla. */}
+        <button onClick={() => setPanelOpen(o => !o)} style={{
+          background: "none", border: "1px solid var(--border)", borderRadius: 6,
+          padding: "4px 8px", cursor: "pointer", fontSize: 12, color: "var(--text-muted)",
+          display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
+        }}>
+          {panelOpen ? "Filtros ▶" : "Filtros ◀"}
+        </button>
+
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+      {/* Body. row-reverse: el contenido queda a la izquierda y el panel de
+          filtros a la derecha (el JSX mantiene panel-primero por claridad). */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "row-reverse", overflow: "hidden" }}>
 
-        {/* Filter panel */}
+        {/* Filter panel (a la derecha) */}
         {panelOpen && (
           <div style={{
-            width: 260, flexShrink: 0, background: "#fff", borderRight: "1px solid var(--border)",
+            width: 260, flexShrink: 0, background: "#fff", borderLeft: "1px solid var(--border)",
             overflowY: "auto",
           }}>
             <FilterPanel
               filters={filters}
               onChange={setFilters}
-              onSearch={handleSearch}
-              onClear={handleClear}
               cajeros={cajeros}
             />
           </div>
@@ -1679,6 +1666,7 @@ export default function SalesHistory() {
         onClose={() => setDrawer(null)}
         onCancel={v => { setCancelTarget(v); setDrawer(null) }}
         onCambio={v => { setCambioTarget(v); setDrawer(null) }}
+        onToast={pushToast}
       />
 
       {/* Cancel modal */}

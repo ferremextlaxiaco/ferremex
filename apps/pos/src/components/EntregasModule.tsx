@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import {
   Truck, Search, RefreshCw, Phone, MapPin, X, Printer, CheckCircle2,
   Clock, Ban, Wallet, User, MessageSquare, Package, AlertTriangle,
 } from "lucide-react"
 import {
-  listarEntregas, liquidarEntrega, marcarEntregada, cancelarEntrega,
+  listarEntregas, liquidarEntrega, marcarEntregada, cancelarEntrega, cancelarFleteEntrega,
   type EntregaFicha, type EntregaStatus,
 } from "../lib/client"
 import { TicketsEntrega } from "./TicketsEntrega"
@@ -93,6 +94,10 @@ export default function EntregasModule() {
   const [filtroNat, setFiltroNat] = useState<FiltroNaturaleza>("todas")
   const [sel, setSel] = useState<EntregaFicha | null>(null)
   const [comprobantes, setComprobantes] = useState<EntregaFicha | null>(null)
+  // Folio a abrir automáticamente (llega desde "Consulta de ventas" → "Marcar como
+  // pagado" con `?folio=T100`). Se consume una sola vez tras cargar las fichas.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const folioAbrir = searchParams.get("folio")
 
   // ¿La ficha casa con el filtro de naturaleza? pagada=solo_enviar, !pagada=por_cobrar.
   function casaNaturaleza(f: EntregaFicha): boolean {
@@ -113,6 +118,27 @@ export default function EntregasModule() {
     }
   }
   useEffect(() => { cargar() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-apertura: si venimos con `?folio=`, tras cargar las fichas abrimos el
+  // drawer de esa entrega directamente (prefiere la pendiente si hubiera varias).
+  // Precarga el buscador con el folio para que la fila quede visible detrás. Se
+  // consume una sola vez (se limpia el query param) para no reabrir al recargar.
+  useEffect(() => {
+    if (!folioAbrir || cargando || fichas.length === 0) return
+    const coincidencias = fichas.filter((f) => f.folio === folioAbrir)
+    const ficha = coincidencias.find((f) => f.status === "por_entregar") ?? coincidencias[0]
+    if (ficha) {
+      setQ(folioAbrir)
+      setFiltroStatus("todos")
+      setFiltroNat("todas")
+      setSel(ficha)
+    } else {
+      push(`No se encontró una entrega para el folio ${folioAbrir}`, "error")
+    }
+    // Limpia el folio del URL para que no se reabra al actualizar / navegar atrás.
+    searchParams.delete("folio")
+    setSearchParams(searchParams, { replace: true })
+  }, [folioAbrir, cargando, fichas]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filtrado por naturaleza, por status y por texto (paga/recibe/dirección/folio).
   const filtradas = useMemo(() => {
@@ -357,6 +383,8 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
   const [metodo, setMetodo] = useState("efectivo")
   const [confirmCancel, setConfirmCancel] = useState(false)
   const [confirmCobrar, setConfirmCobrar] = useState(false)
+  const [confirmFlete, setConfirmFlete] = useState(false)
+  const [motivoFlete, setMotivoFlete] = useState("")
   const cerrada = ficha.status === "entregada" || ficha.status === "cancelada"
   const pagada = !!ficha.pagada
   // Lo que se cobra al entregar (la resta). Contra entrega = total; pagada = total −
@@ -364,6 +392,12 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
   const resta = ficha.resta != null ? Number(ficha.resta) : (Number(ficha.total) || 0)
   const abonado = Number(ficha.abonado) || 0
   const hayResta = resta > 0.005
+  // Flete (opcional, no cancelado) y flete que se cobra al entregar.
+  const flete = ficha.flete && !ficha.flete.cancelado ? ficha.flete : null
+  const fletePrecio = flete ? Number(flete.precio) || 0 : 0
+  const fleteAlEntregar = !!(flete && flete.cobrar_al_entregar && !flete.cobrado)
+  // ¿Hay algo por cobrar al entregar? (resta de material o flete pendiente).
+  const cobraAlEntregar = hayResta || fleteAlEntregar
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => { if (e.key === "Escape") onCerrar() }
@@ -379,7 +413,9 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
     setConfirmCobrar(false)
     setGuardando(true)
     try {
-      const f = !hayResta
+      // Sin nada por cobrar (ni resta ni flete pendiente) → solo marcar entregada.
+      // Con resta o flete al entregar → liquidar (cobra resta y/o flete).
+      const f = !cobraAlEntregar
         ? await marcarEntregada(ficha.id)
         : await liquidarEntrega(ficha.id, {
             caja_id: state.cajero?.caja_id ?? null,
@@ -390,9 +426,30 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
             metodo,
           })
       onCambiado(f)
-      push(!hayResta ? "Entrega marcada como entregada" : `Entrega cobrada (resta ${fmt(resta)}) y marcada entregada`)
+      push(!cobraAlEntregar ? "Entrega marcada como entregada" : "Entrega cobrada y marcada entregada")
     } catch (e) {
       push(e instanceof Error ? e.message : "No se pudo completar la entrega", "error")
+    } finally {
+      setGuardando(false)
+    }
+  }
+
+  async function cancelarFlete() {
+    setConfirmFlete(false)
+    setGuardando(true)
+    try {
+      const f = await cancelarFleteEntrega(ficha.id, motivoFlete.trim() || "Cancelado desde el módulo", {
+        caja_id: state.cajero?.caja_id ?? null,
+        caja_name: state.cajero?.caja_nombre ?? null,
+        cajero_id: state.cajero?.id,
+        cajero_name: state.cajero?.nombre,
+        turno_id: state.cajero?.turno_id,
+      })
+      onCambiado(f)
+      setMotivoFlete("")
+      push("Flete cancelado", "info")
+    } catch (e) {
+      push(e instanceof Error ? e.message : "No se pudo cancelar el flete", "error")
     } finally {
       setGuardando(false)
     }
@@ -480,18 +537,22 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
               </p>
             )}
 
-            {/* Cambio a llevar (si hay resta y se capturó con cuánto paga). */}
-            {hayResta && ficha.paga_con != null && ficha.paga_con > 0 && (
+            {/* Cambio a llevar (si hay algo por cobrar y se capturó con cuánto paga).
+                El cambio se calcula contra el total a cobrar = resta + flete al entregar,
+                igual que el ticket del repartidor. */}
+            {cobraAlEntregar && ficha.paga_con != null && ficha.paga_con > 0 && (
               <div className="mt-3 flex items-center justify-between rounded-lg bg-white border border-gray-200 px-3 py-2">
                 <span className="text-xs text-gray-500">Paga con {fmt(ficha.paga_con)} → cambio</span>
-                <span className="text-sm font-bold tabular-nums text-green-700">{fmt(Math.max(0, ficha.paga_con - resta))}</span>
+                <span className="text-sm font-bold tabular-nums text-green-700">
+                  {fmt(Math.max(0, ficha.paga_con - resta - (fleteAlEntregar ? fletePrecio : 0)))}
+                </span>
               </div>
             )}
 
-            {/* Selector de método de cobro de la RESTA: solo si hay resta pendiente. */}
-            {hayResta && ficha.status === "por_entregar" && (
+            {/* Selector de método de cobro (resta y/o flete): si hay algo por cobrar. */}
+            {cobraAlEntregar && ficha.status === "por_entregar" && (
               <div className="mt-3">
-                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Método de cobro (resta)</label>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Método de cobro al entregar</label>
                 <select value={metodo} onChange={(e) => setMetodo(e.target.value)}
                   className="mt-1.5 w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-orange-500">
                   <option value="efectivo">Efectivo</option>
@@ -499,11 +560,43 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
                   <option value="tarjeta">Tarjeta</option>
                 </select>
                 <p className="text-[11px] text-gray-400 mt-1.5 leading-snug">
-                  En efectivo entra al corte de <strong>hoy</strong> como "Cobro de entrega".
+                  En efectivo entra al corte de <strong>hoy</strong>.
                 </p>
               </div>
             )}
           </Bloque>
+
+          {/* Flete (si la entrega tiene servicio de flete). */}
+          {ficha.flete && (
+            <Bloque titulo="Flete">
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-semibold ${ficha.flete.cancelado ? "text-gray-400 line-through" : "text-gray-700"}`}>
+                  Servicio de flete
+                </span>
+                <span className={`text-lg font-black tabular-nums ${ficha.flete.cancelado ? "text-gray-400 line-through" : "text-orange-600"}`}>
+                  {fmt(Number(ficha.flete.precio) || 0)}
+                </span>
+              </div>
+              <p className="text-[11px] mt-1.5 leading-snug">
+                {ficha.flete.cancelado ? (
+                  <span className="text-red-600">Cancelado{ficha.flete.motivo_cancelacion ? ` — ${ficha.flete.motivo_cancelacion}` : ""}</span>
+                ) : ficha.flete.cobrado ? (
+                  <span className="text-green-700">Cobrado ({ficha.flete.metodo_tienda ?? "efectivo"})</span>
+                ) : ficha.flete.cobrar_al_entregar ? (
+                  <span className="text-amber-600">Se cobra al entregar (junto con la resta)</span>
+                ) : (
+                  <span className="text-gray-500">Por cobrar</span>
+                )}
+              </p>
+              {/* Cancelar flete: solo si no está cancelado y la entrega no está cerrada. */}
+              {!ficha.flete.cancelado && !cerrada && (
+                <button onClick={() => setConfirmFlete(true)} disabled={guardando}
+                  className="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg px-3 py-1.5 hover:bg-red-50 disabled:opacity-40">
+                  <Ban size={13} /> Cancelar flete
+                </button>
+              )}
+            </Bloque>
+          )}
 
           {/* Acciones */}
           {!cerrada && (
@@ -513,7 +606,9 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
                   icon={CheckCircle2}
                   onClick={() => setConfirmCobrar(true)}
                   disabled={guardando}
-                  label={!hayResta ? "Marcar como entregada" : `Cobrar resta ${fmt(resta)} y entregar`}
+                  label={!cobraAlEntregar
+                    ? "Marcar como entregada"
+                    : `Cobrar ${fmt(resta + (fleteAlEntregar ? fletePrecio : 0))} y entregar`}
                   tono="green" />
                 <BotonStatus icon={Ban} onClick={() => setConfirmCancel(true)} disabled={guardando}
                   label="Cancelar entrega" tono="red" />
@@ -541,13 +636,23 @@ function EntregaDetalle({ ficha, onCerrar, onImprimir, onCambiado, push }: Detal
 
       <ConfirmDialog
         open={confirmCobrar}
-        title={!hayResta ? "Marcar como entregada" : "Cobrar resta y entregar"}
-        message={!hayResta
+        title={!cobraAlEntregar ? "Marcar como entregada" : "Cobrar y entregar"}
+        message={!cobraAlEntregar
           ? `La venta ${ficha.folio} ya está pagada. Se marcará la entrega como entregada. No se cobra nada. ¿Continuar?`
-          : `Se cobrará la resta ${fmt(resta)} (${metodo}) y la entrega se marcará como entregada. ${metodo === "efectivo" ? "El efectivo entrará al corte de hoy." : "El pago se registrará sin tocar el cajón."} ¿Continuar?`}
-        confirmLabel={!hayResta ? "Marcar entregada" : "Cobrar y entregar"}
+          : `Se cobrará ${hayResta ? `la resta ${fmt(resta)}` : ""}${hayResta && fleteAlEntregar ? " + " : ""}${fleteAlEntregar ? `flete ${fmt(fletePrecio)}` : ""} (${metodo}) y la entrega se marcará como entregada. ${metodo === "efectivo" ? "El efectivo entrará al corte de hoy." : "El pago se registrará sin tocar el cajón."} ¿Continuar?`}
+        confirmLabel={!cobraAlEntregar ? "Marcar entregada" : "Cobrar y entregar"}
         onConfirm={cobrarYEntregar}
         onClose={() => setConfirmCobrar(false)}
+      />
+
+      <ConfirmDialog
+        open={confirmFlete}
+        title="Cancelar flete"
+        message={`¿Cancelar el flete de ${fmt(Number(ficha.flete?.precio) || 0)}? ${ficha.flete?.cobrado && !ficha.flete?.cobrar_al_entregar ? "Como ya se cobró en tienda, se registrará una reversa en la caja de hoy." : "Aún no se cobraba, así que no toca la caja."}`}
+        confirmLabel="Sí, cancelar flete"
+        danger
+        onConfirm={cancelarFlete}
+        onClose={() => setConfirmFlete(false)}
       />
 
       <ConfirmDialog

@@ -127,9 +127,12 @@ export function Venta() {
 
   function handleVentaCompletada(venta: VentaResponse) {
     setMostrarCobro(false)
-    // Venta contra entrega: en vez del ticket normal, cargar la ficha de entrega
-    // y mostrar los dos comprobantes (cliente + repartidor). No hubo pago hoy.
-    if (venta.estado === "por_cobrar" || venta.metodo_pago === "contra_entrega") {
+    // Venta con entrega a domicilio (contra entrega, envío con abono o envío ya
+    // pagado completo): en vez del ticket normal, cargar la ficha y mostrar los
+    // comprobantes de entrega (cliente + repartidor + flete si lo hay). Cubre el
+    // caso de pago completo, que NO queda "por_cobrar" pero sí lleva
+    // `entrega_domicilio: "pagada"`.
+    if (venta.estado === "por_cobrar" || venta.metodo_pago === "contra_entrega" || venta.entrega_domicilio) {
       obtenerEntregaPorFolio(venta.folio)
         .then((ficha) => {
           if (ficha) setTicketsEntrega({ venta, ficha })
