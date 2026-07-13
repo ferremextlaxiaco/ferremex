@@ -651,6 +651,8 @@ export default function ArticlesModule({ vista = "articulos" }) {
         onSave={handleSave}
         onClose={() => setDrawerOpen(false)}
         getNextClave={getNextClave}
+        onRecargarTaxonomia={() => listarCatalogos().then(setTaxonomy)}
+        onRecargarProveedores={() => loadProveedores().then(setProveedores)}
         onCrearPromocion={({ sku, descripcion }) => {
           // Deep-link al módulo de promociones con este SKU precargado (mismo
           // patrón que "Cargar en venta" de cotizaciones: ?param en la URL).

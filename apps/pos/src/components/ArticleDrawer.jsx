@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import { UNIDADES_SAT } from "../lib/unidades-sat"
-import { subirImagenArticulo } from "../lib/client"
+import { subirImagenArticulo, actualizarCatalogo } from "../lib/client"
+import { crearProveedor } from "../lib/proveedores"
+import { SelectConOpcion } from "./SelectConOpcion"
+import { ProveedorDrawer } from "./ProveedorDrawer"
 
 function round2(n) { return Math.round(n * 100) / 100 }
 // El precio SIN IVA se guarda con 4 decimales para que el CON IVA cierre exacto
@@ -144,10 +147,11 @@ function Field({ label, error, children, tooltip }) {
   )
 }
 
-export default function ArticleDrawer({ open, mode, article, articles, taxonomy = { depts: [], cats: [], marcas: [] }, proveedores = [], onSave, onClose, getNextClave, saving = false, onCrearPromocion }) {
+export default function ArticleDrawer({ open, mode, article, articles, taxonomy = { depts: [], cats: [], marcas: [] }, proveedores = [], onSave, onClose, getNextClave, saving = false, onCrearPromocion, onRecargarTaxonomia, onRecargarProveedores }) {
   const [form, setForm] = useState(EMPTY_FORM)
   const [errors, setErrors] = useState({})
   const [uploading, setUploading] = useState(0)
+  const [proveedorDrawerAbierto, setProveedorDrawerAbierto] = useState(false)
   const firstInputRef = useRef(null)
   const fileInputRef  = useRef(null)
 
@@ -198,6 +202,14 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
     () => (deptItem ? taxonomy.cats.filter((c) => c.depId === deptItem.id) : []),
     [taxonomy.cats, deptItem]
   )
+  const catItem = useMemo(
+    () => catOpts.find((c) => c.nombre === form.categoria) ?? null,
+    [catOpts, form.categoria]
+  )
+  const marcaOpts = useMemo(
+    () => (catItem ? taxonomy.marcas.filter((m) => m.catId === catItem.id) : []),
+    [taxonomy.marcas, catItem]
+  )
 
   // Al cambiar el departamento, si la categoría actual ya no pertenece a él, se
   // resetea (mismo comportamiento de cascada que FiltroBar/ArticlesModule).
@@ -209,8 +221,22 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
       ...prev,
       departamento: nombreDepto,
       categoria: catSiguePerteneciendo ? prev.categoria : "",
+      marca: catSiguePerteneciendo ? prev.marca : "",
     }))
     setErrors((prev) => ({ ...prev, departamento: undefined, categoria: undefined }))
+  }
+
+  // Al cambiar la categoría, si la marca actual ya no pertenece a ella, se resetea.
+  function cambiarCategoria(nombreCat) {
+    const nuevaCat = catOpts.find((c) => c.nombre === nombreCat) ?? null
+    const marcaSiguePerteneciendo =
+      nuevaCat && taxonomy.marcas.some((m) => m.catId === nuevaCat.id && m.nombre === form.marca)
+    setForm((prev) => ({
+      ...prev,
+      categoria: nombreCat,
+      marca: marcaSiguePerteneciendo ? prev.marca : "",
+    }))
+    setErrors((prev) => ({ ...prev, categoria: undefined }))
   }
 
   function handleGenerarClave() {
@@ -303,75 +329,103 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
               placeholder="Nombre completo del artículo" />
           </Field>
 
+          <div className="ar-grid-2">
+            <Field label="Departamento">
+              <SelectConOpcion
+                value={form.departamento}
+                onChange={cambiarDepartamento}
+                options={taxonomy.depts}
+                valorActualNoListado={
+                  form.departamento && !taxonomy.depts.some((d) => d.nombre === form.departamento)
+                    ? form.departamento : null
+                }
+                onCrear={async (nombre) => {
+                  await actualizarCatalogo({ op: "create_dept", nombre })
+                  await onRecargarTaxonomia?.()
+                }}
+              />
+            </Field>
+            <Field label="Categoría">
+              <SelectConOpcion
+                value={form.categoria}
+                onChange={cambiarCategoria}
+                options={catOpts}
+                placeholder={form.departamento ? "— Selecciona —" : "Elige departamento primero"}
+                disabled={!form.departamento}
+                disabledTitle="Selecciona un departamento primero"
+                valorActualNoListado={
+                  form.categoria && !catOpts.some((c) => c.nombre === form.categoria)
+                    ? form.categoria : null
+                }
+                onCrear={async (nombre) => {
+                  await actualizarCatalogo({ op: "create_cat", nombre, dep_nombre: form.departamento })
+                  await onRecargarTaxonomia?.()
+                }}
+              />
+            </Field>
+          </div>
+
           <Field label="Marca">
-            <input type="text" className="ar-input" value={form.marca}
-              onChange={(e) => f("marca", e.target.value)} placeholder="Ej: Truper, Urrea, Pretul" />
+            <SelectConOpcion
+              value={form.marca}
+              onChange={(v) => f("marca", v)}
+              options={marcaOpts}
+              placeholder={form.categoria ? "— Selecciona —" : "Elige categoría primero"}
+              disabled={!form.categoria}
+              disabledTitle="Selecciona una categoría primero"
+              valorActualNoListado={
+                form.marca && !marcaOpts.some((m) => m.nombre === form.marca)
+                  ? form.marca : null
+              }
+              onCrear={async (nombre) => {
+                await actualizarCatalogo({ op: "create_marca", nombre, cat_nombre: form.categoria, dep_nombre: form.departamento })
+                await onRecargarTaxonomia?.()
+              }}
+            />
           </Field>
 
           <Field label="Proveedor">
-            <select
-              className="ar-input"
-              /* El value es el ID del catálogo. Para artículos viejos que solo
-                 tienen nombre (sin proveedor_id), caemos a un valor legacy para
-                 no perder el dato mientras no se re-elija del catálogo. */
-              value={form.proveedor_id || (form.proveedor ? "__legacy__" : "")}
-              onChange={(e) => {
-                const id = e.target.value
-                if (id === "__legacy__") return // no cambia nada (opción informativa)
-                const prov = proveedores.find((p) => String(p.id) === id)
-                // Guardamos id + nombre a la vez (dual-write).
-                setForm((prev) => ({ ...prev, proveedor_id: id, proveedor: prov?.nombre ?? "" }))
-                setErrors((prev) => ({ ...prev, proveedor: undefined }))
-              }}
-            >
-              <option value="">— Selecciona —</option>
-              {proveedores.map((p) => (
-                <option key={p.id} value={p.id}>{p.nombre}</option>
-              ))}
-              {/* Artículo viejo con proveedor en texto libre y sin id: se muestra
-                  como "(sin vincular)" hasta que se elija uno del catálogo. */}
-              {!form.proveedor_id && form.proveedor && (
-                <option value="__legacy__">{form.proveedor} (sin vincular)</option>
-              )}
-            </select>
-          </Field>
-
-          <div className="ar-grid-2">
-            <Field label="Departamento">
+            <div style={{ display: "flex", gap: 6, alignItems: "stretch" }}>
               <select
                 className="ar-input"
-                value={form.departamento}
-                onChange={(e) => cambiarDepartamento(e.target.value)}
+                style={{ flex: 1 }}
+                /* El value es el ID del catálogo. Para artículos viejos que solo
+                   tienen nombre (sin proveedor_id), caemos a un valor legacy para
+                   no perder el dato mientras no se re-elija del catálogo. */
+                value={form.proveedor_id || (form.proveedor ? "__legacy__" : "")}
+                onChange={(e) => {
+                  const id = e.target.value
+                  if (id === "__legacy__") return // no cambia nada (opción informativa)
+                  const prov = proveedores.find((p) => String(p.id) === id)
+                  // Guardamos id + nombre a la vez (dual-write).
+                  setForm((prev) => ({ ...prev, proveedor_id: id, proveedor: prov?.nombre ?? "" }))
+                  setErrors((prev) => ({ ...prev, proveedor: undefined }))
+                }}
               >
                 <option value="">— Selecciona —</option>
-                {taxonomy.depts.map((d) => (
-                  <option key={d.id} value={d.nombre}>{d.nombre}</option>
+                {proveedores.map((p) => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
                 ))}
-                {/* Conserva el valor actual aunque ya no exista en la taxonomía
-                    (artículos viejos), para no borrarlo al editar. */}
-                {form.departamento && !taxonomy.depts.some((d) => d.nombre === form.departamento) && (
-                  <option value={form.departamento}>{form.departamento} (actual)</option>
+                {/* Artículo viejo con proveedor en texto libre y sin id: se muestra
+                    como "(sin vincular)" hasta que se elija uno del catálogo. */}
+                {!form.proveedor_id && form.proveedor && (
+                  <option value="__legacy__">{form.proveedor} (sin vincular)</option>
                 )}
               </select>
-            </Field>
-            <Field label="Categoría">
-              <select
-                className="ar-input"
-                value={form.categoria}
-                onChange={(e) => f("categoria", e.target.value)}
-                disabled={!form.departamento}
-                title={!form.departamento ? "Selecciona un departamento primero" : undefined}
+              <button
+                type="button"
+                onClick={() => setProveedorDrawerAbierto(true)}
+                title="Crear proveedor nuevo"
+                style={{
+                  display: "inline-flex", alignItems: "center", justifyContent: "center",
+                  width: 34, flexShrink: 0, borderRadius: 6, border: "1px solid var(--border, #d1d5db)",
+                  background: "rgba(234,88,12,0.08)", color: "#ea580c", cursor: "pointer",
+                }}
               >
-                <option value="">{form.departamento ? "— Selecciona —" : "Elige departamento primero"}</option>
-                {catOpts.map((c) => (
-                  <option key={c.id} value={c.nombre}>{c.nombre}</option>
-                ))}
-                {form.categoria && !catOpts.some((c) => c.nombre === form.categoria) && (
-                  <option value={form.categoria}>{form.categoria} (actual)</option>
-                )}
-              </select>
-            </Field>
-          </div>
+                +
+              </button>
+            </div>
+          </Field>
 
           <Field label="Clave" error={errors.clave}>
             <div className="ar-clave-row">
@@ -677,6 +731,26 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
           </button>
         </div>
       </div>
+
+      {/* Alta rápida de proveedor desde el formulario de artículo. */}
+      <ProveedorDrawer
+        open={proveedorDrawerAbierto}
+        mode="add"
+        proveedor={null}
+        defaultNum=""
+        onClose={() => setProveedorDrawerAbierto(false)}
+        onSave={async (data) => {
+          try {
+            const creado = await crearProveedor(data)
+            await onRecargarProveedores?.()
+            setForm((prev) => ({ ...prev, proveedor_id: creado.id, proveedor: creado.nombre }))
+            setErrors((prev) => ({ ...prev, proveedor: undefined }))
+            setProveedorDrawerAbierto(false)
+          } catch (e) {
+            console.error("[ArticleDrawer] crear proveedor:", e)
+          }
+        }}
+      />
     </>
   )
 }

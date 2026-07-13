@@ -49,6 +49,43 @@ function writeMarcasExtra(marcas: MarcaExtra[]): void {
   fs.writeFileSync(MARCAS_EXTRA_PATH, JSON.stringify(marcas, null, 2))
 }
 
+// Departments created in the catalog but with no products yet. Departamento
+// is pure metadata (no native Medusa entity), so — same as marcas-extra —
+// it needs a side file to "reserve" the name until a product references it.
+const DEPTOS_EXTRA_PATH = path.join(process.cwd(), "data", "deptos-extra.json")
+
+function readDeptosExtra(): string[] {
+  try { return JSON.parse(fs.readFileSync(DEPTOS_EXTRA_PATH, "utf8")) }
+  catch { return [] }
+}
+
+function writeDeptosExtra(deptos: string[]): void {
+  const dir = path.dirname(DEPTOS_EXTRA_PATH)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(DEPTOS_EXTRA_PATH, JSON.stringify(deptos, null, 2))
+}
+
+// Categories created in the catalog but with no products yet. Categoría IS a
+// native Medusa ProductCategory, but the GET below only surfaces categories
+// that have ≥1 product (it walks products, not categories). A category
+// created empty needs this side file so it appears (with 0 artículos) and
+// nested under the right departamento (also pure metadata) until a product
+// gets assigned to it.
+const CATS_EXTRA_PATH = path.join(process.cwd(), "data", "cats-extra.json")
+
+interface CatExtra { nombre: string; dep_nombre: string }
+
+function readCatsExtra(): CatExtra[] {
+  try { return JSON.parse(fs.readFileSync(CATS_EXTRA_PATH, "utf8")) }
+  catch { return [] }
+}
+
+function writeCatsExtra(cats: CatExtra[]): void {
+  const dir = path.dirname(CATS_EXTRA_PATH)
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(CATS_EXTRA_PATH, JSON.stringify(cats, null, 2))
+}
+
 // ---------------------------------------------------------------------------
 // GET /caja/catalogos
 // ---------------------------------------------------------------------------
@@ -114,6 +151,28 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     marParent.set(marId, catId)
   }
 
+  // Merge departments created but not yet assigned to any product.
+  for (const nombre of readDeptosExtra()) {
+    const depId = "dep-" + slugify(nombre)
+    if (!deptsCount.has(depId)) {
+      deptsCount.set(depId, 0)
+      depNames.set(depId, nombre)
+    }
+  }
+
+  // Merge categories created but not yet assigned to any product. Requires
+  // its departamento (real or extra) to already be in the merged map above.
+  for (const extra of readCatsExtra()) {
+    const depId = "dep-" + slugify(extra.dep_nombre)
+    if (!depNames.has(depId)) continue   // department doesn't exist in taxonomy
+    const catId = "cat-" + slugify(extra.nombre) + "--" + slugify(extra.dep_nombre)
+    if (!catsCount.has(catId)) {
+      catsCount.set(catId, 0)
+      catNames.set(catId, extra.nombre)
+      catParent.set(catId, depId)
+    }
+  }
+
   // Merge brands registered in catalog but not yet assigned to products
   for (const extra of readMarcasExtra()) {
     const catId = "cat-" + slugify(extra.cat_nombre) + "--" + slugify(extra.dep_nombre)
@@ -136,6 +195,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 // ---------------------------------------------------------------------------
 // PATCH /caja/catalogos — taxonomy mutations
 //
+//   create_dept  { nombre }
+//   create_cat   { nombre, dep_nombre }
 //   create_marca { nombre, cat_nombre, dep_nombre }
 //   rename_dept  { nombre_actual, nombre_nuevo }
 //   rename_cat   { nombre_actual, nombre_nuevo }
@@ -150,6 +211,51 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = req.body as any
   const op: string = body?.op ?? ""
+
+  // ── create_dept ─────────────────────────────────────────────────────────────
+  // Reserva un departamento vacío (sin productos aún). Departamento es pura
+  // metadata; se guarda en deptos-extra.json hasta que un producto lo use.
+  if (op === "create_dept") {
+    const { nombre } = body
+    if (!nombre || !String(nombre).trim()) {
+      res.status(400).json({ error: "nombre es requerido" }); return
+    }
+    const nombreTrim = String(nombre).trim()
+    const extras = readDeptosExtra()
+    if (!extras.includes(nombreTrim)) {
+      extras.push(nombreTrim)
+      writeDeptosExtra(extras)
+    }
+    res.json({ ok: true })
+    return
+  }
+
+  // ── create_cat ──────────────────────────────────────────────────────────────
+  // Crea (o reutiliza) la ProductCategory nativa de Medusa por nombre, y la
+  // reserva en cats-extra.json anclada a su departamento (metadata) para que
+  // el GET la muestre con 0 artículos hasta que un producto la use.
+  if (op === "create_cat") {
+    const { nombre, dep_nombre } = body
+    if (!nombre || !String(nombre).trim() || !dep_nombre || !String(dep_nombre).trim()) {
+      res.status(400).json({ error: "nombre y dep_nombre son requeridos" }); return
+    }
+    const nombreTrim = String(nombre).trim()
+    const depNombreTrim = String(dep_nombre).trim()
+    const found = await productModule.listProductCategories(
+      { name: nombreTrim }, { select: ["id", "name"], take: 1 }
+    )
+    if (!(found as any[]).length) {
+      await productModule.createProductCategories([{ name: nombreTrim, is_active: true }])
+    }
+    const extras = readCatsExtra()
+    const exists = extras.some(c => c.nombre === nombreTrim && c.dep_nombre === depNombreTrim)
+    if (!exists) {
+      extras.push({ nombre: nombreTrim, dep_nombre: depNombreTrim })
+      writeCatsExtra(extras)
+    }
+    res.json({ ok: true })
+    return
+  }
 
   // ── create_marca ────────────────────────────────────────────────────────────
   if (op === "create_marca") {
