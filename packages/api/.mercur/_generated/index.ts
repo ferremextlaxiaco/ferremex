@@ -741,6 +741,7 @@ export type Routes = {
         };
         entregas: typeof import("../../src/api/caja/entregas/route") & {
             $id: typeof import("../../src/api/caja/entregas/[id]/route") & {
+                flete: typeof import("../../src/api/caja/entregas/[id]/flete/route");
                 liquidar: typeof import("../../src/api/caja/entregas/[id]/liquidar/route");
             };
         };
@@ -786,6 +787,7 @@ export type Routes = {
             };
         };
         movimientos: typeof import("../../src/api/caja/movimientos/route");
+        notaVenta: typeof import("../../src/api/caja/nota-venta/route");
         paquetes: typeof import("../../src/api/caja/paquetes/route");
         pedidos: typeof import("../../src/api/caja/pedidos/route");
         productos: typeof import("../../src/api/caja/productos/route");

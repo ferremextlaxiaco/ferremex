@@ -1,15 +1,16 @@
 import { useState, useEffect, useRef } from "react"
 import { createPortal } from "react-dom"
 import {
-  X, FileText, Image as ImageIcon, Hash, DollarSign, UserRound,
+  X, FileText, Image as ImageIcon, Hash, DollarSign, UserRound, BadgeCheck,
   StickyNote, Printer, Download, Loader2, AlertTriangle,
 } from "lucide-react"
 import { generarNotaVentaPdf, type NotaVentaOpts, type VentaResponse } from "../lib/client"
+import { formatMXN } from "../lib/format"
 
 const LS_KEY = "pos_nota_venta_opts"
 
 const DEFAULT_OPTS: NotaVentaOpts = {
-  imagen: true, sku: true, precio: true, cliente: true, notas: false, notasTexto: "",
+  imagen: true, sku: true, precio: true, cliente: true, vendedor: true, notas: false, notasTexto: "",
 }
 
 /** Carga las preferencias de toggles guardadas (el usuario casi siempre repite formato). */
@@ -55,6 +56,27 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
 
   const sinCliente = !venta.cliente_id && !venta.cliente_nombre
 
+  // Fecha legible + forma de pago para el panel lateral del visor.
+  const fechaLegible = (() => {
+    try {
+      return new Date(venta.fecha).toLocaleString("es-MX", {
+        day: "2-digit", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit",
+      })
+    } catch { return venta.fecha }
+  })()
+
+  const formaPagoLabel = (() => {
+    if (venta.metodo_pago === "contra_entrega") return "Contra entrega"
+    const partes: string[] = []
+    if ((venta.pago_efectivo ?? 0) > 0) partes.push("Efectivo")
+    if ((venta.pago_transferencia ?? 0) > 0) partes.push("Transferencia")
+    if ((venta.pago_tarjeta ?? 0) > 0) partes.push("Tarjeta")
+    if ((venta.pago_credito ?? 0) > 0) partes.push("Crédito")
+    if ((venta.pago_puntos ?? 0) > 0) partes.push("Puntos")
+    if ((venta.pago_saldo_cambio ?? 0) > 0) partes.push("Saldo a favor")
+    return partes.length ? partes.join(" + ") : "—"
+  })()
+
   function set<K extends keyof NotaVentaOpts>(k: K, v: NotaVentaOpts[K]) {
     setOpts((o) => ({ ...o, [k]: v }))
   }
@@ -91,31 +113,60 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
     document.body.appendChild(a); a.click(); a.remove()
   }
 
-  // ── Fase 2: visor PDF a pantalla completa ─────────────────────────────────
+  // ── Fase 2: visor PDF a pantalla completa con panel lateral de acciones ────
+  //   Izquierda: la nota PDF de borde a borde (iframe).
+  //   Derecha: panel blanco con los datos de la venta + acciones (Imprimir /
+  //   Descargar). Mismo layout que el visor de comprobantes CFDI (fac-visor-*).
   if (pdfUrl) {
     return createPortal(
-      <div style={{ position: "fixed", inset: 0, zIndex: 4200, background: "rgba(0,0,0,0.55)", display: "flex", flexDirection: "column" }}>
-        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-gray-200">
-          <span className="inline-flex items-center gap-2 text-sm font-bold text-gray-900">
-            <FileText size={18} className="text-orange-600" /> Nota de venta · {venta.folio}
-          </span>
-          <div className="flex items-center gap-2">
-            <button onClick={imprimir}
-              className="inline-flex items-center gap-1.5 bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-700">
-              <Printer size={16} /> Imprimir
-            </button>
-            <button onClick={descargar}
-              className="inline-flex items-center gap-1.5 bg-white border border-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-50">
-              <Download size={16} /> Descargar
-            </button>
-            <button onClick={onClose} aria-label="Cerrar"
-              className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-gray-500 hover:bg-gray-100">
-              <X size={18} />
-            </button>
+      <div className="fac-visor-overlay" onClick={onClose}>
+        {/* Izquierda: la nota de venta a pantalla completa sobre el fondo difuminado. */}
+        <div className="fac-visor-zona" onClick={(e) => e.stopPropagation()}>
+          <iframe ref={iframeRef} className="fac-visor-doc" src={pdfUrl}
+            title={`Nota de venta ${venta.folio}`} />
+        </div>
+
+        {/* Derecha: panel de datos + acciones. */}
+        <div className="fac-detalle-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="fac-modal-head">
+            <span><FileText size={18} /> Nota de venta {venta.folio}</span>
+            <button className="fac-btn-ghost" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
+          </div>
+          <div className="fac-modal-body fac-detalle-info">
+            <div className="fac-resultado-datos">
+              <div><b>Folio:</b> {venta.folio}</div>
+              <div><b>Fecha:</b> {fechaLegible}</div>
+              <div><b>Cliente:</b> {venta.cliente_nombre || "Público en general"}</div>
+              <div><b>Atendió:</b> {venta.cajero}</div>
+              {venta.vendedor && venta.vendedor !== venta.cajero && (
+                <div><b>Vendedor:</b> {venta.vendedor}</div>
+              )}
+              <div><b>Forma de pago:</b> {formaPagoLabel}</div>
+              <div><b>Artículos:</b> {venta.items.length}</div>
+              <div><b>Total:</b> {formatMXN(venta.total)}</div>
+              <div><b>Estado:</b> <span className="fac-chip fac-chip--nomina">Nota de venta</span></div>
+            </div>
+
+            {/* Acciones */}
+            <div className="fac-seccion">
+              <div className="fac-seccion-titulo">Acciones</div>
+              <div style={{ display: "flex", gap: 10 }}>
+                <button className="fac-btn-primary" onClick={imprimir} style={{ flex: 1 }}>
+                  <Printer size={15} /> Imprimir
+                </button>
+                <button className="fac-btn-secondary" onClick={descargar} style={{ flex: 1 }}>
+                  <Download size={15} /> Descargar PDF
+                </button>
+              </div>
+            </div>
+
+            {/* Aviso: no es comprobante fiscal. */}
+            <div className="fac-alert fac-alert--warn">
+              <AlertTriangle size={15} /> Este documento es una nota de venta y NO es un
+              comprobante fiscal digital (CFDI).
+            </div>
           </div>
         </div>
-        <iframe ref={iframeRef} src={pdfUrl} title={`Nota de venta ${venta.folio}`}
-          style={{ flex: 1, width: "100%", border: "none", background: "#525659" }} />
       </div>,
       document.body
     )
@@ -127,6 +178,7 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
     { key: "sku", label: "Código (SKU)", hint: "Incluye la clave de cada producto", icon: Hash },
     { key: "precio", label: "Precio e importe", hint: "Precio unitario, subtotal, IVA y total", icon: DollarSign },
     { key: "cliente", label: "Datos del cliente", hint: sinCliente ? "Esta venta es a público en general" : "Nombre y RFC del cliente", icon: UserRound, disabled: sinCliente },
+    { key: "vendedor", label: "Vendedor", hint: venta.vendedor ? `Muestra quién realizó la venta (${venta.vendedor})` : "Muestra quién realizó la venta", icon: BadgeCheck },
   ]
 
   return createPortal(

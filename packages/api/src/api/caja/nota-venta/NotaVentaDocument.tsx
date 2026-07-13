@@ -80,14 +80,18 @@ const s = StyleSheet.create({
   legal:       { fontSize: 7, color: "#9ca3af", textAlign: "center", marginTop: 18 },
   pgNum:       { position: "absolute", bottom: 20, left: 40, right: 40, fontSize: 7, color: "#9ca3af", textAlign: "center" },
 
-  // Column widths — se recomponen según toggles
-  cNum:        { width: "5%" },
-  cImg:        { width: "10%" },
-  cSku:        { width: "14%" },
-  cDesc:       { flexGrow: 1 },
-  cQty:        { width: "9%", textAlign: "right" },
-  cPrice:      { width: "15%", textAlign: "right" },
-  cSub:        { width: "16%", textAlign: "right" },
+  // Column widths — se recomponen según toggles.
+  // Todas las columnas fijas usan flexGrow/flexShrink 0 + flexBasis explícito, y
+  // SOLO la descripción crece (flexGrow 1, flexBasis 0). Así el header y las filas
+  // reparten el espacio de forma IDÉNTICA y las columnas no se desfasan cuando una
+  // descripción envuelve en varias líneas (bug de alineación con `width` + flexGrow).
+  cNum:        { flexGrow: 0, flexShrink: 0, flexBasis: "5%" },
+  cImg:        { flexGrow: 0, flexShrink: 0, flexBasis: "10%" },
+  cSku:        { flexGrow: 0, flexShrink: 0, flexBasis: "14%" },
+  cDesc:       { flexGrow: 1, flexShrink: 1, flexBasis: 0 },
+  cQty:        { flexGrow: 0, flexShrink: 0, flexBasis: "9%", textAlign: "right" },
+  cPrice:      { flexGrow: 0, flexShrink: 0, flexBasis: "15%", textAlign: "right" },
+  cSub:        { flexGrow: 0, flexShrink: 0, flexBasis: "16%", textAlign: "right" },
 })
 
 // ── Ícono llave (Lucide) para placeholder de imagen ───────────────────────────
@@ -125,6 +129,7 @@ export interface NotaVentaOpts {
   sku: boolean
   precio: boolean
   cliente: boolean
+  vendedor: boolean
   notas: boolean
   notasTexto?: string
 }
@@ -133,6 +138,7 @@ export interface NotaVentaProps {
   folio: string
   fecha: string          // legible (ya formateada)
   cajero: string
+  vendedor?: string | null
   clienteNombre?: string | null
   clienteRfc?: string | null
   metodoPago?: string | null
@@ -253,7 +259,7 @@ function Totales({ subtotal, iva, total }: { subtotal: number; iva: number; tota
 
 // ── Documento ─────────────────────────────────────────────────────────────────
 export function NotaVentaDocument({
-  folio, fecha, cajero, clienteNombre, clienteRfc, metodoPago,
+  folio, fecha, cajero, vendedor, clienteNombre, clienteRfc, metodoPago,
   items, imageMap, opts,
 }: NotaVentaProps) {
   // Totales: desglose hacia atrás por línea (respeta productos exentos de IVA).
@@ -290,6 +296,12 @@ export function NotaVentaDocument({
             <Text style={s.payLabel}>Atendió</Text>
             <Text style={s.payVal}>{cajero}</Text>
           </View>
+          {opts.vendedor && !!vendedor && vendedor !== cajero && (
+            <View style={s.payGroup}>
+              <Text style={s.payLabel}>Vendedor</Text>
+              <Text style={s.payVal}>{vendedor}</Text>
+            </View>
+          )}
           {metodoPago && (
             <View style={s.payGroup}>
               <Text style={s.payLabel}>Forma de pago</Text>

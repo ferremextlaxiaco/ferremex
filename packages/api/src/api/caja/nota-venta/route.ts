@@ -15,6 +15,7 @@ interface Venta {
   folio: string
   fecha: string
   cajero: string
+  vendedor?: string | null
   items: VentaItem[]
   cliente_id?: string | null
   cliente_nombre?: string | null
@@ -75,6 +76,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     sku: opts?.sku ?? true,
     precio: opts?.precio ?? true,
     cliente: opts?.cliente ?? true,
+    vendedor: opts?.vendedor ?? true,
     notas: opts?.notas ?? false,
     notasTexto: typeof opts?.notasTexto === "string" ? opts.notasTexto.slice(0, 600) : "",
   }
@@ -147,6 +149,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       folio: venta.folio,
       fecha: fechaLegible,
       cajero: venta.cajero,
+      vendedor: venta.vendedor ?? null,
       clienteNombre: venta.cliente_nombre ?? null,
       clienteRfc,
       metodoPago: formaPago(venta),

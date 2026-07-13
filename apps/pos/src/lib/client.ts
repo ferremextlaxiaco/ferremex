@@ -128,6 +128,9 @@ export interface VentaResponse {
   folio: string
   fecha: string
   cajero: string
+  // Vendedor atribuido a la venta (quién la hizo). Default = cajero. Solo
+  // atribución; lo usa la nota de venta para mostrar "Vendedor" opcionalmente.
+  vendedor?: string | null
   // `encargo` marca líneas vendidas sobre pedido (sin stock). El ticket lo rotula.
   // `sku` se persiste siempre (necesario para reintegrar inventario al cancelar o
   // al procesar un cambio de artículo); opcional en el tipo por compatibilidad
@@ -488,6 +491,7 @@ export interface NotaVentaOpts {
   sku: boolean
   precio: boolean
   cliente: boolean
+  vendedor: boolean
   notas: boolean
   notasTexto?: string
 }
