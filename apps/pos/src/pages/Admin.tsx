@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature, Tag, Wallet, Receipt, ArrowRightLeft,
+  Coins, FileSignature, Tag, Wallet, Receipt, ArrowRightLeft, Truck,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -28,7 +28,9 @@ export function Admin() {
     ? "formatos"
     : path.includes("/admin/perifericos")
     ? "perifericos"
-    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito") || path.includes("/admin/encargos") || path.includes("/admin/entregas-por-cobrar")
+    : path.includes("/admin/entregas")
+    ? "entregas"
+    : path.includes("/admin/clientes") || path.includes("/admin/cartera-credito") || path.includes("/admin/encargos")
     ? "clientes"
     : path.includes("/admin/monedero")
     ? "monedero"
@@ -154,6 +156,13 @@ export function Admin() {
           >
             <span className="admin-side-icon"><UserRound size={18} /></span>
             Clientes
+          </button>
+          <button
+            className={`admin-side-item${tab === "entregas" ? " active" : ""}`}
+            onClick={() => navigate("/admin/entregas")}
+          >
+            <span className="admin-side-icon"><Truck size={18} /></span>
+            Entregas a domicilio
           </button>
           <button
             className={`admin-side-item${tab === "monedero" ? " active" : ""}`}

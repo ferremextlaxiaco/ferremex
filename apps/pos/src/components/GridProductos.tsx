@@ -12,6 +12,9 @@ interface GridProductosProps {
   onEncargar?: (p: ProductoPOS) => void
   /** SKUs que son componentes de algún paquete (para mostrar el badge de paquete). */
   skusEnPaquete?: Set<string>
+  /** Artículo especial (a granel): abre el selector de presentación en vez de
+   *  agregar directo. Si no se pasa, los granel caen al flujo normal. */
+  onSeleccionarGranel?: (p: ProductoPOS) => void
 }
 
 function stockLabel(existencia: number) {
@@ -20,7 +23,7 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete, onSeleccionarGranel }: GridProductosProps) {
   const { state } = usePOS()
   const cotizando = state.modoCotizacion
   const enEncargo = state.modoEncargo
@@ -31,6 +34,59 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
   return (
     <div className="grid-productos">
       {productos.map((p) => {
+        // ── Artículo especial (a granel): inventario informativo ─────────────
+        // No se topa por existencia y su único bloqueo es el switch "Agotado".
+        // El "+"/click abren el selector de presentación (onSeleccionarGranel).
+        const esGranel = !!p.esGranel && !!onSeleccionarGranel
+        if (esGranel) {
+          const bloqueado = !!p.agotado
+          const desde = (p.presentaciones ?? []).filter((x) => !x.agotado)
+          const precioDesde = desde.length ? Math.min(...desde.map((x) => x.precio)) : p.precio
+          return (
+            <button
+              key={p.sku}
+              className={`tarjeta-producto${bloqueado ? " tarjeta-agotada" : ""}`}
+              onClick={() => { if (!bloqueado) onSeleccionarGranel!(p) }}
+              disabled={bloqueado}
+              title={bloqueado ? `${p.descripcion} está marcado como agotado` : ""}
+            >
+              <div className="tarjeta-imagen">
+                {p.thumbnail ? (
+                  <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />
+                ) : (
+                  <div className="tarjeta-sin-imagen">
+                    <Package size={34} strokeWidth={1.5} />
+                  </div>
+                )}
+                {bloqueado ? (
+                  <span className="badge-stock badge-sin-stock">Agotado</span>
+                ) : (
+                  <span className="badge-stock badge-granel">Granel</span>
+                )}
+              </div>
+              <div className="tarjeta-info">
+                <p className="tarjeta-nombre">{p.descripcion}</p>
+                <p className="tarjeta-sku">{p.sku}</p>
+                <div className="tarjeta-footer">
+                  <p className="tarjeta-precio">
+                    {desde.length > 1 && <span className="tarjeta-precio-desde">desde </span>}
+                    ${precioDesde.toFixed(2)}
+                  </p>
+                  {!bloqueado && (
+                    <button
+                      className="btn-agregar-rapido"
+                      onClick={(e) => { e.stopPropagation(); onSeleccionarGranel!(p) }}
+                      title="Elegir presentación"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </button>
+          )
+        }
+
         const stock = stockLabel(p.existencia)
         const qty = cartMap?.get(p.sku) ?? 0
         // En cotización o encargo se permite agregar aunque no haya existencia.

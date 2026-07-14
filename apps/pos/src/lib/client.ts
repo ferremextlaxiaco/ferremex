@@ -34,6 +34,30 @@ export interface ProductoPOS {
   // es el código SAT de la unidad (ej. "KGM", "MTR"); se muestra abreviada.
   granel?: boolean
   unidadVenta?: string
+  // Artículo especial (a granel): inventario informativo + presentaciones
+  // (padre→hijos) + interruptor manual de disponibilidad. Ver ArticleDrawer y
+  // PresentacionSelectorModal. `esGranel` = es artículo especial; `agotado` =
+  // switch manual "se acabó" (bloquea la venta); `unidadBase` = unidad del
+  // inventario informativo (ej. "MTQ" m³); `presentaciones` = hijos vendibles.
+  esGranel?: boolean
+  agotado?: boolean
+  // Disponibilidad de la unidad base (m³ = el Precio 1 del artículo) como forma de
+  // venta propia en el modal, independiente de las presentaciones hijas.
+  agotadoBase?: boolean
+  unidadBase?: string
+  presentaciones?: PresentacionGranel[]
+}
+
+// Presentación de un artículo especial (a granel). El precio llega CON IVA (listo
+// para mostrar). `factor` = equivalencia en la unidad base para el descuento
+// informativo del inventario (opcional; null/0 = no descuenta). `agotado` = esta
+// presentación específica no está disponible aunque el padre sí.
+export interface PresentacionGranel {
+  id: string
+  nombre: string
+  precio: number
+  factor: number | null
+  agotado: boolean
 }
 
 export interface FiltrosBusqueda {
@@ -70,7 +94,10 @@ export interface VentaRequest {
   // `encargo`: la línea se vende SIN stock (venta sobre pedido). El backend salta
   // la validación de stock para ella, descuenta en negativo, y la agrega al pedido
   // abierto de su proveedor. `proveedor_id`/`proveedor` viajan para ese pedido.
-  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; existencia?: number; proveedor_id?: string; proveedor?: string }[]
+  // `granel`: artículo especial (inventario informativo). El backend descuenta
+  // `granel_descuento` (unidad base) sin validar ni bloquear por número; `presentacion`
+  // = nombre de la presentación vendida (para ticket/historial).
+  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; existencia?: number; proveedor_id?: string; proveedor?: string; granel?: boolean; granel_descuento?: number; presentacion?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
   // Pago con tarjeta bancaria (crédito/débito vía TPV). No es efectivo (no abre
@@ -347,6 +374,13 @@ export interface ArticuloPOS {
   localizacion: string
   peso: number
   ventaGranel: boolean
+  // Artículo especial (a granel): ver ProductoPOS y ArticleDrawer. Opcionales y
+  // retrocompatibles (artículos viejos no los traen).
+  esGranel?: boolean
+  agotado?: boolean
+  agotadoBase?: boolean
+  unidadBase?: string
+  presentaciones?: PresentacionGranel[]
   mayoreoActivo: boolean
   mayoreoMin: number
   thumbnail: string | null
@@ -1035,6 +1069,38 @@ export async function reiniciarFolioContador(): Promise<void> {
 
 export async function guardarTicketConfig(config: TicketConfig): Promise<TicketConfig> {
   return apiFetch<TicketConfig>("/caja/ticket-config", {
+    method: "PUT",
+    body: JSON.stringify(config),
+  })
+}
+
+// ── Flete (servicio facturable) ───────────────────────────────────────────────
+// El flete es un SERVICIO que entra a la venta como una línea más (aparece en el
+// ticket y es facturable). Su config (nombre, clave SAT, unidad SAT, precio base,
+// IVA) vive en el tab "Fletes" del módulo Entregas. Al guardar, el backend crea/
+// actualiza un producto Medusa oculto con SKU `SERVICIO-FLETE` que lleva la clave
+// SAT — así el resolver fiscal lo mapea sin tocar el pipeline de facturación.
+
+/** SKU fijo del producto-servicio de flete (espejo del backend). */
+export const SKU_FLETE = "SERVICIO-FLETE"
+
+export interface FleteConfig {
+  nombre: string
+  claveSat: string
+  unidadSat: string
+  precioBase: number   // SIN IVA (el vendedor puede ajustarlo al cobrar)
+  aplicaIva: boolean
+  sku: string
+  /** Presente si el backend guardó la config pero no pudo sincronizar el producto. */
+  _warning?: string
+}
+
+export async function obtenerFleteConfig(): Promise<FleteConfig> {
+  return apiFetch<FleteConfig>("/caja/flete-config")
+}
+
+export async function guardarFleteConfig(config: Omit<FleteConfig, "sku" | "_warning">): Promise<FleteConfig> {
+  return apiFetch<FleteConfig>("/caja/flete-config", {
     method: "PUT",
     body: JSON.stringify(config),
   })

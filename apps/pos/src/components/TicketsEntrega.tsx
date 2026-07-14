@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 import { createPortal } from "react-dom"
-import { Printer, X, User, Truck, Banknote } from "lucide-react"
+import { Printer, X, User, Truck } from "lucide-react"
 import type { VentaResponse, EntregaFicha, TicketConfig, FormatoDoc } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
 import { imprimirBytesLocal, impresoraElegida } from "../lib/impresora-local"
@@ -41,7 +41,9 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   const cfg = state.ticketConfig
   const fmtCliente = cfg?.formatos?.entrega_cliente
   const fmtReparto = cfg?.formatos?.entrega_repartidor
-  type Cual = "cliente" | "repartidor" | "flete" | "ambos"
+  // El flete ya NO tiene ticket dedicado: ahora es una línea del ticket de venta
+  // (cliente). Solo quedan cliente / repartidor / ambos.
+  type Cual = "cliente" | "repartidor" | "ambos"
   const [imprimiendo, setImprimiendo] = useState<null | Cual>(null)
   // Mensaje de estado bajo los botones (error de servicio/impresora o aviso de
   // impresión del navegador). Antes los errores se tragaban en silencio y el
@@ -53,8 +55,6 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   const [porImprimir, setPorImprimir] = useState<null | Cual>(null)
   const printCliente = porImprimir === "cliente" || porImprimir === "ambos"
   const printReparto = porImprimir === "repartidor" || porImprimir === "ambos"
-  // El flete se imprime solo (botón "flete") o junto con los demás ("ambos").
-  const printFlete = porImprimir === "flete" || porImprimir === "ambos"
 
   // Envío con pago en tienda (pagada) vs. contra entrega (se cobra todo al recibir).
   const pagada = !!ficha.pagada
@@ -88,14 +88,11 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
     try {
       const bytesCliente = () => construirTicketCliente(venta, ficha, cfg, fmtCliente)
       const bytesReparto = () => construirHojaRepartidor(venta, ficha, cfg, fmtReparto)
-      const bytesFlete = () => construirTicketFlete(venta, ficha, cfg)
       if (impresoraElegida()) {
         // Impresora térmica vía servicio local. Si falla (servicio caído, nombre
         // erróneo), el error se muestra al cajero en vez de tragarse.
         if (cual === "cliente" || cual === "ambos") await imprimirBytesLocal(bytesCliente())
         if (cual === "repartidor" || cual === "ambos") await imprimirBytesLocal(bytesReparto())
-        // "ambos" incluye el flete si existe (se imprime junto con los demás).
-        if (cual === "flete" || (cual === "ambos" && flete)) await imprimirBytesLocal(bytesFlete())
         setAviso({ tipo: "info", texto: "Enviado a la impresora." })
       } else {
         // Sin impresora térmica configurada (p. ej. desde la PC de administración):
@@ -123,9 +120,8 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
   // quedaría atrapado en su stacking context y aparecería por detrás.
   return createPortal(
     <div className="ticket-overlay">
-      {/* Ancho de la caja según cuántos tickets se muestran: 2 (cliente+repartidor)
-          o 3 cuando hay flete. Así el ticket de flete cae al lado y no debajo. */}
-      <div className="ticket-preview-box" style={{ maxWidth: flete ? 820 : 560 }}>
+      {/* Dos tickets: cliente + repartidor (el flete ya no tiene ticket aparte). */}
+      <div className="ticket-preview-box" style={{ maxWidth: 560 }}>
         <p className="ticket-preview-titulo">
           {imprimiendo ? "Imprimiendo…" : "Comprobantes de entrega"}
         </p>
@@ -254,27 +250,9 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
             )}
           </div>
 
-          {/* Ticket de FLETE (opcional) — separado. Solo si hay flete no cancelado. */}
-          {flete && (
-            <div className={`ticket ${printFlete ? "ticket--print" : ""}`} style={{ flex: "1 1 240px" }}>
-              <div className="ticket-header">
-                <p className="ticket-negocio">{cfg?.encabezado?.nombre || "FERREMEX"}</p>
-                <p className="ticket-tipo-doc">SERVICIO DE FLETE</p>
-              </div>
-              <div className="ticket-separador">————————————————</div>
-              <p className="ticket-meta">Venta: {venta.folio}</p>
-              <p className="ticket-meta">Fecha: {new Date(venta.fecha).toLocaleString("es-MX")}</p>
-              <p className="ticket-meta">Cliente: {ficha.recibe.nombre}</p>
-              <p className="ticket-meta">Destino: {ficha.direccion}</p>
-              <div className="ticket-separador">————————————————</div>
-              <div className="ticket-fila-resumen ticket-cambio"><span>FLETE</span><span>{fmt(fletePrecio)}</span></div>
-              <p className="ticket-meta" style={{ marginTop: 6 }}>
-                {flete.cobrado ? "Pagado" : flete.cobrar_al_entregar ? "Se cobra al entregar" : "Por cobrar"}
-              </p>
-              <div className="ticket-separador">————————————————</div>
-              <p className="ticket-gracias">Comprobante de servicio de flete</p>
-            </div>
-          )}
+          {/* El flete ya no tiene ticket dedicado: aparece como línea del ticket de
+              venta (cliente). Las entregas viejas con `ficha.flete` conservan el
+              dato pero ya no generan comprobante aparte. */}
         </div>
 
         {/* Aviso de estado de impresión (error o info). No se traga en silencio. */}
@@ -292,14 +270,8 @@ export function TicketsEntrega({ venta, ficha, onCerrar }: TicketsEntregaProps) 
           <button className="btn-secondary" onClick={() => imprimir("repartidor")} disabled={!!imprimiendo}>
             <Truck size={16} /> Imprimir repartidor
           </button>
-          {/* Ticket de flete: solo si hay flete (no cancelado). */}
-          {flete && (
-            <button className="btn-secondary" onClick={() => imprimir("flete")} disabled={!!imprimiendo}>
-              <Banknote size={16} /> Imprimir flete
-            </button>
-          )}
           <button className="btn-confirmar" onClick={() => imprimir("ambos")} disabled={!!imprimiendo}>
-            <Printer size={16} /> {flete ? "Imprimir todos" : "Imprimir ambos"}
+            <Printer size={16} /> Imprimir ambos
           </button>
         </div>
       </div>
@@ -488,38 +460,5 @@ export function construirHojaRepartidor(
   return b
 }
 
-/**
- * Ticket de FLETE (comprobante independiente del servicio de flete). Ligado a la
- * venta por folio, con el monto del flete y su estado. Separado del ticket de venta.
- */
-export function construirTicketFlete(
-  venta: VentaResponse, ficha: EntregaFicha, cfg: TicketConfig | null
-): number[] {
-  const b: number[] = []
-  const sep = "-".repeat(COLS)
-  const negocio = cfg?.encabezado?.nombre || "FERREMEX"
-  const fl = ficha.flete
-  const precio = fl ? Number(fl.precio) || 0 : 0
-  encabezadoComun(b, negocio, (cfg?.encabezado?.direccion ? [cfg.encabezado.direccion] : ["Tlaxiaco, Oaxaca"]), "SERVICIO DE FLETE")
-
-  b.push(...linea(sep))
-  b.push(...linea(`Venta: ${venta.folio}`))
-  b.push(...linea(`Fecha: ${new Date(venta.fecha).toLocaleString("es-MX")}`))
-  b.push(...linea(`Cliente: ${ficha.recibe.nombre}`))
-  b.push(...linea("Destino:"))
-  for (const l of envolver(ficha.direccion)) b.push(...linea(`  ${l}`))
-  b.push(...linea(sep))
-  b.push(ESC, 0x21, 0x20) // doble ancho
-  b.push(...linea(filaLR("FLETE", `$${precio.toFixed(2)}`)))
-  b.push(ESC, 0x21, 0x00)
-  b.push(...linea(sep))
-  b.push(ESC, 0x61, 0x01) // center
-  const estado = fl?.cancelado ? "Cancelado"
-    : fl?.cobrado ? "Pagado"
-    : fl?.cobrar_al_entregar ? "Se cobra al entregar"
-    : "Por cobrar"
-  b.push(...linea(estado))
-  b.push(...linea("Comprobante de servicio de flete"))
-  b.push(LF, LF, LF, LF, GS, 0x56, 0x42, 0x00) // corte
-  return b
-}
+// El comprobante dedicado de flete (construirTicketFlete) se eliminó: el flete
+// ahora es una línea del ticket de venta (cliente), no un ticket aparte.

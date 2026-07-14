@@ -1,7 +1,7 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-06-19.
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-07-14.
 > **Medusa:** módulos nativos + `metadata` en producto + **módulos custom ferremex_cartera + ferremex_monedero + ferremex_facturable** (Fase 3).
 
 ---
@@ -78,17 +78,28 @@ El shape `ArticuloPOS` se mapea principalmente a `metadata`:
   "precio_compra": 25.50,
   "precio2": 40.50, "precio3": 38.00, "precio4": 35.50,  // precio1 = price_set base
   "mayoreoActivo": true, "mayoreoMin": 10,
-  "granel": false, "precioNeto": false,
+  "granel": false, "agotado": false, "agotadoBase": false, "unidadBase": "Pieza",  // NUEVO: artículo especial granel
+  "presentaciones": [                  // NUEVO: formas de venta de granel
+    { "id": "uuid", "nombre": "m³", "precio": 500, "factor": 1, "agotado": false },
+    { "id": "uuid", "nombre": "carretilla", "precio": 150, "factor": 0.3, "agotado": false }
+  ],
+  "precioNeto": false,
   "claveSat": "01010101", "claveAlterna": "GR6X1ALT",
   "proveedor": "Distribuidora ABC",
   "inventarioMin": 5, "inventarioMax": 100,
   "localizacion": "Pasillo 3, Repisa 2",
   "unidadCompra": "Caja", "unidadVenta": "Pieza", "factor": 12,
-  "facturable": true                   // NUEVO: marcado en depto facturable (CFDI global)
+  "facturable": true                   // marcado en depto facturable (CFDI global)
 }
 ```
 - **Precios:** `precio1` vive en el price_set (BD, en **diezmilésimas** factor 10000); `precio2-4` en metadata. Nivel elegido por venta según `clienteActivo.num_precio` (1–4): Mostrador / Cliente / Distribuidor / Especial. Helper central: `lib/precio.ts` `pesosAAmount()` / `amountAPesos()`. Convención: guardados SIN IVA, devueltos a venta YA CON IVA (×1.16).
 - **Taxonomía:** `departamento`, `categoria`, `marca` son metadata. Ahora `/caja/productos` expone `departamento` y `categoria` en respuesta para cálculo de puntos REAL (no derivado de marca). El motor `lib/monedero.ts` `tasaDeLinea()` recibe `LineaPuntos` con campos `departamento?`, `categoria?`, `marca?` y resuelve por orden: marca → categoría → departamento → tasa_base.
+- **Artículos a granel (NUEVO 2026-07-14):** cuando `esGranel=true`, el producto tiene variante con `manage_inventory=true, allow_backorder=true` (permite sobregiro). Metadata guarda:
+  - `agotado` (bool): disponibilidad del padre (bloquea todas las presentaciones).
+  - `agotadoBase`: disponibilidad de la unidad principal (dentro de `presentaciones[]` con id generado).
+  - `unidadBase`: nombre de la unidad principal del inventario (ej. "Pieza" para conteo).
+  - `presentaciones[]`: formas de venta `{ id (uuid), nombre, precio, factor, agotado }`. Cada presentación puede agotarse independientemente.
+  - Inventario INFORMATIVO: descuenta cantidad×factor en línea, pero NUNCA bloquea (salvo `agotado=true`). Campo `granelDescuento` en venta registra piezas reales deducidas; cancelación reintegra `granelDescuento` (no cantidad).
 
 ## 2b. `customer.metadata` (JSONB) — Cliente POS (Fase 3)
 
@@ -135,7 +146,7 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 
 | Archivo | Forma | Escrito por |
 |---|---|---|
-| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion?, global_uuid?, global_cfdi_id? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales de producto), PATCH `/caja/ventas/:folio` (cancelación revierte puntos). **NUEVO:** `global_uuid`, `global_cfdi_id` marcan inclusión en factura global. |
+| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?, **esGranel?, presentacion?, granelFactor?, granelDescuento?, granelSku?, esFlete?**}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion?, global_uuid?, global_cfdi_id? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales, granel sin tope, flete si aplica), PATCH `/caja/ventas/:folio` (cancelación reintegra `granelDescuento`, revierte puntos, excluye FLETE/granel de factura global). |
 | `globales-pos.json` | `{ uuid, fecha, serie, folio, cfdi_id, estado, monto_total, articulos_incluidos, consumo_saldo, timbrado_en }[]` | `/caja/facturama/global` POST (timbra) + PATCH (cancelación reversible) |
 | `facturacion-config.json` | `{ serie_nominativa: string, serie_global: string, periodicidad_global: "diaria"|"manual", correo_contador: string }` | `/caja/facturama/config` GET/PUT |
 | `pedidos-pos.json` | `{ id, folio, fecha, proveedor?, proveedorId?, status, articulos[{clave?, descripcion?, cantidad}], ... }[]` | `/caja/pedidos` |
@@ -146,6 +157,7 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 | `ticket-config.json` | `{ encabezado{}, pie[], opciones{}, tipos{}, formato_folio{}, formatos{} }` | `/caja/ticket-config` PUT |
 | `folio-counter.json` | `{ contador: number }` | `/caja/ventas` (secuencial), `/caja/folio-contador` |
 | `marcas-extra.json` | `{ nombre, cat_nombre, dep_nombre }[]` | `/caja/catalogos` PATCH (create_marca) |
+| `flete-config.json` | **NUEVO:** `{ precio_base: number, impuesto: boolean, opciones?: {...} }` | `/caja/flete-config` GET/PUT. PUT crea/actualiza producto-servicio FLETE en BD 🟢. |
 
 **Sección `formatos` en `ticket-config.json` (Fase 2):**
 ```jsonc
@@ -172,7 +184,7 @@ Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + v
 
 ---
 
-## 4. localStorage (navegador) — provisional, por terminal
+## 5. localStorage (navegador) — provisional, por terminal
 
 | Clave | Forma | Usado por | Notas |
 |---|---|---|---|
@@ -186,6 +198,20 @@ Roles: `admin` (todo), `supervisor` (todo menos ver_admin), `cajero` (vender + v
 | ~~`pos_grupos`~~ | **MIGRADO A BD** | **Retirado (Fase 3)** | Reemplazado por `/caja/grupos`, customer_group Medusa |
 | ~~`pos_cartera`~~ | **MIGRADO A BD** | **Retirado (Fase 3)** | Reemplazado por `/caja/cartera`, módulo ferremex_cartera |
 | `pos_migrado_v1` | flag booleano | MigracionNube.tsx | Red de seguridad: marca si se migró localStorage |
+
+### Tipos nuevos para Granel — en `client.ts` y `pos-store.ts` (CartItem)
+```ts
+PresentacionGranel { id: string, nombre: string, precio: number, factor: number, agotado: boolean }
+CartItem extends {
+  esGranel?: boolean,          // es artículo granel
+  presentacion?: string,       // id de presentación seleccionada
+  granelFactor?: number,       // factor de descuento (para cálculo de piezas reales)
+  granelSku?: string          // SKU real para inventario (PADRE::presId)
+  esFlete?: boolean            // es línea de flete (servicio)
+}
+```
+- En venta, línea granel propaga `esGranel`, `presentacion`, `granelFactor`, `granelSku`. El monedero EXCLUYE líneas granel del devengo de puntos (no suma, no multiplica tasa).
+- Línea flete se agrega única con `esFlete=true`, `sku="SERVICIO-FLETE"`.
 
 ### Tipos conservados para API (ahora BD) — en `lib/clientes.ts`
 ```ts
@@ -223,7 +249,7 @@ LineaPuntos { subtotal: number, marca?: string | null, departamento?: string | n
 
 ---
 
-## 4b. Rutas `/caja/*` nuevas y refactorizadas (Sesión 2026-06-12 y 2026-06-19)
+## 6. Rutas `/caja/*` nuevas y refactorizadas (Sesiones 2026-06-12, 2026-06-19 y 2026-07-14)
 
 | Método | Ruta | Cambio | Notas |
 |--------|------|--------|-------|
@@ -241,10 +267,11 @@ LineaPuntos { subtotal: number, marca?: string | null, departamento?: string | n
 | **POST** | **`/caja/facturama/comprobantes/[cfdiId]/reenviar`** | **NUEVO** | Reenvía CFDI por correo. Body: `{ email }`. |
 | **GET** | **`/caja/facturama/comprobantes/[cfdiId]/archivo`** | **NUEVO** | Descarga PDF/XML de CFDI. Query: `?tipo=pdf|xml`. |
 | **GET/PUT** | **`/caja/facturama/config`** | **NUEVO** | Lee/escribe configuración (serie, periodicidad, correo contador). |
+| **GET/PUT** | **`/caja/flete-config`** | **NUEVO (2026-07-14)** | Lee/escribe configuración de flete (precio_base, impuesto, opciones). PUT crea/actualiza producto-servicio FLETE en BD (SKU `SERVICIO-FLETE`, clave SAT 78102203, status DRAFT, sin inventario). |
 
 ---
 
-## 5. Migración Fase 3 — Completada (Clientes/Cartera) y Pendiente (Proveedores/Cajas)
+## 7. Migración Fase 3 — Completada (Clientes/Cartera) y Pendiente (Proveedores/Cajas)
 
 ### Completada (2026-05-29/30)
 - **`pos_clientes`, `pos_grupos`, `pos_cartera`** → Medusa (Customer + customer_group + módulo ferremex_cartera).

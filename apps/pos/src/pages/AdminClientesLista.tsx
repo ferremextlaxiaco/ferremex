@@ -12,6 +12,7 @@ import {
   siguienteNumCliente,
 } from "../lib/clientes"
 import { tieneHuellaAPI, eliminarHuellaAPI, listarHuellasAPI } from "../lib/client"
+import { soloTelefono } from "../lib/format"
 import RegistroHuellaModal from "../components/RegistroHuellaModal"
 import ConfirmDialog from "../components/ConfirmDialog"
 
@@ -235,7 +236,7 @@ export function AdminClientesLista() {
             <div className="ac-grid-3" style={{ marginTop: 10 }}>
               <div className="ac-field">
                 <label className="ac-label">Teléfono</label>
-                <input className="ac-input" value={editando.telefono} onChange={(e) => setField("telefono", e.target.value)} placeholder="953 000 0000" />
+                <input className="ac-input" type="tel" inputMode="numeric" maxLength={10} value={editando.telefono} onChange={(e) => setField("telefono", soloTelefono(e.target.value))} placeholder="953 000 0000" />
               </div>
               <div className="ac-field">
                 <label className="ac-label">Número de precio asignado</label>

@@ -37,8 +37,26 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; granel: boolean; unidadVenta: string }
+  type PresentacionGranel = { id: string; nombre: string; precio: number; factor: number | null; agotado: boolean }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; granel: boolean; unidadVenta: string; esGranel: boolean; agotado: boolean; agotadoBase: boolean; unidadBase: string; presentaciones: PresentacionGranel[] }
   const variantesBase: VarianteBase[] = []
+
+  // Sanea el array de presentaciones que viene en metadata (artículo especial).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const leerPresentaciones = (meta: any): PresentacionGranel[] => {
+    const raw = meta?.presentaciones
+    if (!Array.isArray(raw)) return []
+    return raw
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((p: any) => ({
+        id: String(p?.id ?? ""),
+        nombre: String(p?.nombre ?? ""),
+        precio: Number(p?.precio) || 0,
+        factor: p?.factor === "" || p?.factor == null ? null : Number(p.factor) || 0,
+        agotado: Boolean(p?.agotado),
+      }))
+      .filter((p: PresentacionGranel) => p.nombre !== "")
+  }
   // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
   // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
   // El match PARCIAL de SKU (abajo) NO corta: se fusiona con la búsqueda por nombre.
@@ -82,6 +100,11 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let precio4 = 0
       let granel = false
       let unidadVenta = ""
+      let esGranel = false
+      let agotado = false
+      let agotadoBase = false
+      let unidadBase = ""
+      let presentaciones: PresentacionGranel[] = []
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
@@ -103,10 +126,24 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           // Venta fraccionada (granel): permite capturar cantidad/monto decimal.
           granel = !!meta.granel
           unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
+          // Artículo especial (a granel): presentaciones + disponibilidad manual.
+          esGranel = !!meta.esGranel
+          agotado = !!meta.agotado
+          agotadoBase = !!meta.agotadoBase
+          unidadBase = meta.unidadBase ?? ""
+          presentaciones = leerPresentaciones(meta)
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, granel, unidadVenta })
-      matchExacto = true
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, granel, unidadVenta, esGranel, agotado, agotadoBase, unidadBase, presentaciones })
+      // Solo cortocircuitamos (un único resultado, sin búsqueda por nombre) cuando
+      // el match vino de un CÓDIGO REAL: un `?sku=` explícito o un código de barras
+      // escaneado. Si el match vino del texto `q` que CASUALMENTE coincide con un
+      // SKU (ej. escribes "estuco" y existe un producto con SKU "ESTUCO"), NO
+      // cortamos: seguimos con la búsqueda por nombre para traer también los demás
+      // productos cuyo TÍTULO contiene "estuco". La variante ya encontrada se
+      // deduplica al final. (Bug: antes "estuco" traía 1 en vez de 5.)
+      const matchPorBarcode = !varsPorSku[0] && !!varsPorBarcode[0]
+      if (skuExacto || matchPorBarcode) matchExacto = true
     }
   }
 
@@ -168,6 +205,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 precio3: Number(meta.precio3) || 0,
                 precio4: Number(meta.precio4) || 0,
                 granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "H87",
+                esGranel: !!meta.esGranel, agotado: !!meta.agotado, agotadoBase: !!meta.agotadoBase,
+                unidadBase: meta.unidadBase ?? "", presentaciones: leerPresentaciones(meta),
               })
             }
           }
@@ -260,8 +299,13 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vPrecio4 = Number(meta.precio4) || 0
         const vGranel = !!meta.granel
         const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
+        const vEsGranel = !!meta.esGranel
+        const vAgotado = !!meta.agotado
+        const vAgotadoBase = !!meta.agotadoBase
+        const vUnidadBase = meta.unidadBase ?? ""
+        const vPresentaciones = leerPresentaciones(meta)
         for (const v of p.variants ?? []) {
-          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, granel: vGranel, unidadVenta: vUnidadVenta })
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, granel: vGranel, unidadVenta: vUnidadVenta, esGranel: vEsGranel, agotado: vAgotado, agotadoBase: vAgotadoBase, unidadBase: vUnidadBase, presentaciones: vPresentaciones })
         }
       }
     }
@@ -356,6 +400,18 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         // decimal en el carrito. `unidadVenta` (kg/m/L) se muestra junto a la cantidad.
         granel: v.granel,
         unidadVenta: v.unidadVenta,
+        // Artículo especial (a granel): presentaciones (padre→hijos) + disponibilidad
+        // manual. El precio de cada presentación se guarda SIN IVA; se devuelve CON
+        // IVA (×1.16) listo para mostrar, igual que `precio`. El descuento de
+        // inventario es informativo (no bloquea) — ver /caja/ventas.
+        esGranel: v.esGranel,
+        agotado: v.agotado,
+        agotadoBase: v.agotadoBase,
+        unidadBase: v.unidadBase,
+        presentaciones: v.presentaciones.map((p) => ({
+          ...p,
+          precio: p.precio > 0 && v.impuesto ? Math.round(p.precio * 1.16 * 100) / 100 : p.precio,
+        })),
       }
     })
     .filter((r) => r.sku && r.descripcion)

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { X, UserPlus } from "lucide-react"
 import { crearCliente, loadGrupos, type Cliente } from "../lib/clientes"
+import { soloTelefono } from "../lib/format"
 
 /**
  * Alta rápida de un cliente nuevo, para usar dentro de otro flujo (ej. el
@@ -110,10 +111,12 @@ export function ClienteRapidoModal({
             <div className="flex-1">
               <label className="block text-xs font-medium text-gray-600 mb-1">Teléfono</label>
               <input
-                type="text"
+                type="tel"
+                inputMode="numeric"
+                maxLength={10}
                 value={telefono}
-                onChange={(e) => setTelefono(e.target.value)}
-                placeholder="Opcional"
+                onChange={(e) => setTelefono(soloTelefono(e.target.value))}
+                placeholder="Opcional (10 dígitos)"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
               />
             </div>

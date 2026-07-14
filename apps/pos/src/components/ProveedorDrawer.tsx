@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import type { Proveedor } from "../lib/proveedores"
+import { soloTelefono } from "../lib/format"
 
 // ── Iconos ────────────────────────────────────────────────────────────────────
 
@@ -124,8 +125,8 @@ export function ProveedorDrawer({
             </div>
             <div className="ac-field">
               <label className="ac-label">Teléfono</label>
-              <input className="ac-input" value={form.telefono}
-                onChange={(e) => f("telefono", e.target.value)} placeholder="55 1234 5678" />
+              <input className="ac-input" type="tel" inputMode="numeric" maxLength={10} value={form.telefono}
+                onChange={(e) => f("telefono", soloTelefono(e.target.value))} placeholder="55 1234 5678" />
             </div>
           </div>
 

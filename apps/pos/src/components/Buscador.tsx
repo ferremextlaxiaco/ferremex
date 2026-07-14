@@ -7,6 +7,8 @@ import { GridProductos } from "./GridProductos"
 import { GridPaquetes } from "./GridPaquetes"
 import { ProductoDetalle } from "./ProductoDetalle"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
+import { PresentacionSelectorModal } from "./PresentacionSelectorModal"
+import type { PresentacionGranel } from "../lib/client"
 
 export function Buscador() {
   const { state, dispatch } = usePOS()
@@ -28,6 +30,45 @@ export function Buscador() {
   const [paquetes, setPaquetes] = useState<Paquete[]>([])
   const [aplicandoPkg, setAplicandoPkg] = useState<string | null>(null)
   const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
+  // Artículo especial (a granel): producto cuyo selector de presentación está abierto.
+  const [granelSel, setGranelSel] = useState<ProductoPOS | null>(null)
+
+  // Agrega al carrito una línea de artículo especial con la presentación elegida.
+  // El precio de la línea = precio de la presentación (ya c/IVA desde el backend).
+  // `granelFactor` = equivalencia en unidad base para el descuento informativo.
+  function agregarGranel({ producto, presentacion, cantidad }:
+    { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) {
+    dispatch({
+      type: "ADD_ITEM",
+      item: {
+        // SKU compuesto (padre + presentación) para que cada presentación sea su
+        // propia línea en el carrito (m³ y carretilla no se fusionan).
+        sku: `${producto.sku}::${presentacion.id}`,
+        descripcion: `${producto.descripcion} — ${presentacion.nombre}`,
+        precio: presentacion.precio,
+        impuesto: producto.impuesto,
+        existencia: 0,
+        marca: producto.marca,
+        departamento: producto.departamento,
+        categoria: producto.categoria,
+        proveedor: producto.proveedor,
+        proveedor_id: producto.proveedor_id,
+        // Marca de artículo especial: inventario informativo (no se topa), y datos
+        // de la presentación para el ticket y el descuento del inventario base.
+        esGranel: true,
+        presentacion: presentacion.nombre,
+        granelFactor: presentacion.factor ?? null,
+        // El SKU REAL del producto (sin sufijo) — lo necesita el backend para el
+        // descuento de inventario. Lo pasamos vía granelSku para separarlo del sku
+        // compuesto de la línea.
+        granelSku: producto.sku,
+      },
+    })
+    // Si se pidió una cantidad != 1, ajustamos la línea recién creada.
+    if (cantidad !== 1) {
+      dispatch({ type: "SET_CANTIDAD", sku: `${producto.sku}::${presentacion.id}`, cantidad })
+    }
+  }
   useEffect(() => {
     let on = true
     listarPaquetes()
@@ -196,6 +237,7 @@ export function Buscador() {
             onSeleccionar={setSeleccionado}
             cartMap={cartMap}
             skusEnPaquete={skusEnPaquete}
+            onSeleccionarGranel={setGranelSel}
             onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta } })}
             onEncargar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta, esEncargo: true } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
@@ -209,6 +251,13 @@ export function Buscador() {
 
       {/* Modal de desglose del paquete (artículos, precios, ahorro) */}
       <DesglosePaqueteModal paquete={paqueteDesglose} onClose={() => setPaqueteDesglose(null)} />
+
+      {/* Selector de presentación para artículo especial (a granel) */}
+      <PresentacionSelectorModal
+        producto={granelSel}
+        onConfirmar={agregarGranel}
+        onClose={() => setGranelSel(null)}
+      />
     </div>
   )
 }

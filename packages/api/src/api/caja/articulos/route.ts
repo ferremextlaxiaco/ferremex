@@ -65,6 +65,26 @@ function metaBool(meta: Record<string, unknown>, ...keys: string[]): boolean {
   return false
 }
 
+// Presentaciones del artículo especial (a granel). Se guardan como array JSON en
+// metadata. Cada una: { id, nombre, precio (s/IVA), factor (equiv. en unidad base,
+// opcional para el descuento informativo), agotado }. Saneamos al leer para tolerar
+// datos viejos o corruptos sin romper el mapeo.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function metaPresentaciones(meta: Record<string, unknown>): any[] {
+  const raw = meta["presentaciones"]
+  if (!Array.isArray(raw)) return []
+  return raw
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .map((p: any) => ({
+      id: String(p?.id ?? ""),
+      nombre: String(p?.nombre ?? ""),
+      precio: Number(p?.precio) || 0,
+      factor: p?.factor === "" || p?.factor == null ? null : Number(p.factor) || 0,
+      agotado: Boolean(p?.agotado),
+    }))
+    .filter((p) => p.nombre !== "")
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function thumbnailPath(url: string | null | undefined): string | null {
   if (!url) return null
@@ -117,6 +137,15 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     localizacion: metaStr(meta, "localizacion"),
     peso: product.weight ? product.weight / 1000 : metaNum(meta, "peso"),
     ventaGranel: metaBool(meta, "granel", "ventaGranel"),
+    // Artículo especial (a granel): inventario informativo + presentaciones
+    // (padre→hijos) + interruptor manual de disponibilidad. Ver ArticleDrawer.
+    esGranel: metaBool(meta, "esGranel"),
+    agotado: metaBool(meta, "agotado"),
+    // Disponibilidad SOLO de la unidad base (m³ = el Precio 1 del artículo) como
+    // forma de venta propia en el modal, independiente de las presentaciones hijas.
+    agotadoBase: metaBool(meta, "agotadoBase"),
+    unidadBase: metaStr(meta, "unidadBase"),
+    presentaciones: metaPresentaciones(meta),
     mayoreoActivo: metaBool(meta, "mayoreoActivo"),
     mayoreoMin: metaNum(meta, "mayoreoMin"),
     thumbnail: thumb,
@@ -604,6 +633,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         factor: body.factor ?? 1,
         impuesto: body.aplicarIva ?? false,
         granel: body.ventaGranel ?? false,
+        // Artículo especial (a granel): inventario informativo + presentaciones.
+        esGranel: body.esGranel ?? false,
+        agotado: body.agotado ?? false,
+        agotadoBase: body.agotadoBase ?? false,
+        unidadBase: body.unidadBase ?? "",
+        presentaciones: Array.isArray(body.presentaciones) ? body.presentaciones : [],
         precioNeto: body.precioNeto ?? false,
         precio_compra: body.precioCompra ?? 0,
         precio2: body.precio2 ?? 0,
@@ -627,7 +662,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           sku: body.clave,
           barcode: body.claveAlterna || undefined,
           manage_inventory: true,
-          allow_backorder: false,
+          // Granel = inventario informativo: se permite backorder para que el
+          // descuento pueda dejar el stock en negativo sin bloquear la venta.
+          allow_backorder: body.esGranel ?? false,
           prices:
             body.precio1 > 0
               ? [{ amount: pesosAAmount(body.precio1), currency_code: "mxn" }]
@@ -714,6 +751,11 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       factor: body.factor ?? 1,
       impuesto: body.aplicarIva ?? false,
       granel: body.ventaGranel ?? false,
+      // Artículo especial (a granel): inventario informativo + presentaciones.
+      esGranel: body.esGranel ?? false,
+      agotado: body.agotado ?? false,
+      unidadBase: body.unidadBase ?? "",
+      presentaciones: Array.isArray(body.presentaciones) ? body.presentaciones : [],
       precioNeto: body.precioNeto ?? false,
       precio_compra: body.precioCompra ?? 0,
       precio2: body.precio2 ?? 0,
@@ -754,6 +796,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       sku: body.clave,
       barcode: body.claveAlterna || null,
       title: body.descripcion,
+      // Granel = inventario informativo: permite backorder (stock negativo) para
+      // que el descuento no bloquee la venta. Al volver a artículo normal se apaga.
+      allow_backorder: body.esGranel ?? false,
     })
 
     // Actualizar precio en el price set

@@ -4,7 +4,7 @@
 > `MEMORIA_INSTALACIÓN.md` (estado por fases/infra, mantenido por el skill `actualizador`).
 > **Actualiza este archivo al cierre de cada sesión** (regla abajo). Convierte fechas relativas a absolutas.
 >
-> Última actualización: **2026-07-10**
+> Última actualización: **2026-07-14**
 
 ---
 
@@ -24,6 +24,7 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 - **POS:** React 18 + Vite, puerto 7002 (`base: /pos`). Montado como módulo `vendor-ui`.
 - **Servicios (PM2):** `ferremex-admin` (7000), `ferremex-pos` (7002), `ferremex-api` (9000). Redis (Docker) 6379, PostgreSQL 16 (5432).
 - **Últimos commits:**
+  - `[NEW]` feat(articulos): artículos a granel + flete como servicio + validación teléfono + búsqueda fix + inventario info (2026-07-14)
   - `93ddb05` feat(ventas): contra entrega visible en Consulta de ventas + iconos lucide (2026-07-10)
   - `0d96190` feat(entrega): módulo "Por cobrar" + liquidación al corte (Entrega 2) (2026-07-10)
   - `8363d5b` feat(entrega): venta contra entrega — pago diferido a domicilio (Entrega 1) (2026-07-10)
@@ -45,6 +46,13 @@ la migración de datos locales (clientes, cartera) a la BD (Fase 3).
 ---
 
 ## Active Queues
+
+### Completados en esta sesión (2026-07-14)
+- ✅ **Artículos a granel:** tipo especial con presentaciones múltiples, inventario informativo, bloqueado solo por agotado.
+- ✅ **Flete como servicio:** producto FLETE BD, config vía `/caja/flete-config`, línea en venta facturable.
+- ✅ **Validación teléfono:** 10 dígitos en inputs de persona (ClienteRapidoModal, AdminClientesLista, ProveedorDrawer, Fichas).
+- ✅ **Fix búsqueda venta:** `/caja/productos` no cortocircuita por nombre vs SKU.
+- ✅ **Filtro existencia Artículos:** cíclico Todos → Con → Sin.
 
 ### Pendientes de producto (priorizados)
 1. **PDF/Imprimir compras:** los botones "Imprimir" / "Ver PDF" en ConsultarCompras son placeholders ("Función disponible próximamente").
@@ -83,6 +91,16 @@ El agente `doc-updater` puede ayudar a refrescar este archivo.
 ---
 
 ## Latest Execution Notes
+
+- **2026-07-14 (Feature: Artículos a granel + Flete como servicio + Validaciones UI):**
+  - **Artículos a granel (tipo especial):** producto Medusa con variante `manage_inventory=true, allow_backorder=true`. Metadata nueva: `esGranel` (bool), `agotado` (bool del padre), `agotadoBase`, `unidadBase`, `presentaciones[]` ({id, nombre, precio, factor, agotado}). En `ArticleDrawer` nuevo botón "Convertir a artículo especial" que abre sección con: switch Disponible/Agotado del padre, unidad base, lista de presentaciones padre→hijos (ej. Arena → m³/carretilla/bote). Inventario INFORMATIVO: descuenta cantidad×factor pero NUNCA bloquea la venta (sobregiro permitido); único bloqueo es marca "Agotado" o presentación agotada. En venta: badge "Granel"/"Agotado" en tarjeta; `PresentacionSelectorModal.tsx` (NUEVO, createPortal) con botones de forma de venta + cantidad. CartItem nuevos campos: `esGranel`, `presentacion`, `granelFactor`, `granelSku`. SKU de línea compuesto `PADRE::presId`. Reducer: `SET_FLETE` aparte; `ADD_ITEM`/`INCREMENT`/`SET_CANTIDAD` tratan granel sin tope. Backend `/caja/productos`, `/caja/articulos`, `/caja/ventas/*` persisten `granel`, `granel_descuento`, `presentacion`; cancelación reintegra `granel_descuento` (no cantidad). Fuera de facturación global (sin clave SAT).
+  - **Flete como servicio FACTURABLE:** ya no vive como sub-objeto de entrega. Es LÍNEA de venta (producto Medusa oculto SKU `SERVICIO-FLETE`, status DRAFT, sin inventario, clave SAT 78102203 = servicios de mensajería, unidad E48, IVA). Suma al total, aparece en ticket de venta, FACTURABLE (resolver fiscal mapea por SKU→metadata). `/caja/flete-config` (GET/PUT) nuevo; al guardar crea/actualiza el producto-servicio. CartItem: `esFlete` (excluido de devengo puntos monedero). Reducer `SET_FLETE` (agrega/quita línea única de flete). `FichaEntregaModal`: captura simplificada (checkbox + precio prellenado). Bloque flete en PRIMER lugar. ENTREGAS A DOMICILIO refactorizado: salió del panel de Clientes, ahora item sidebar propio icono Truck, ruta `/admin/entregas`. `AdminEntregas.tsx` shell con tabs internos Entregas | Fletes. Tab Fletes = `FletesConfigPanel.jsx` (NUEVO). Ruta vieja `/admin/entregas-por-cobrar` alias (deep-link ?folio=). Se eliminó ticket dedicado "SERVICIO DE FLETE"; entregas viejas con `ficha.flete` conservan compat.
+  - **Validación teléfono 10 dígitos:** helper `soloTelefono()` en `lib/format.ts`, aplicado en inputs de persona (ClienteRapidoModal, AdminClientesLista, ProveedorDrawer, FichaEncargoModal, FichaEntregaModal). EXCLUIDO ticket de tienda (AdminTickets, formato libre).
+  - **Fix búsqueda venta:** `/caja/productos` ya NO cortocircuita búsqueda por nombre cuando `q` casualmente coincide con SKU. Solo corta con `?sku=` explícito o código de barras. (Antes "estuco" traía 1 de 5.)
+  - **Filtro de existencia Artículos:** `ArticlesModule` ahora tiene mismo filtro cíclico que venta (Todos → Con existencia → Sin existencia).
+  - **UI ajustes:** drawer artículos más ancho (820px); tarjeta paquete uniforme con producto; `ConfirmDialog` en vez de `window.confirm`; Marca+Proveedor en fila.
+  - **Archivos:** `ArticleDrawer.jsx`, `PresentacionSelectorModal.tsx` (nuevo), `GridProductos.tsx`, `Buscador.tsx`, `Carrito.tsx`, `pos-store.ts`, `client.ts`, `ModalCobro.tsx`, `packages/api/src/api/caja/{articulos,productos,ventas,ventas/[folio]}/route.ts`, `packages/api/src/api/caja/flete-config/route.ts` (nuevo), `FletesConfigPanel.jsx` (nuevo), `AdminEntregas.tsx`, `Admin.tsx`, `main.tsx`, `AdminClientes.tsx`, `FichaEntregaModal.tsx`, `TicketsEntrega.tsx`.
+  - **Verificado:** tsc limpio backend+frontend. Smoke-test e2e: crear granel/cambiar presentación, agregar flete, generar venta, ticket visible, facturación excluye granel OK. Impacto cruzado: `/caja/ventas`, `/caja/articulos`, `/caja/productos`, `/caja/flete-config`, ModalCobro, Ticket, SalesHistory, CashMovementsModule, CorteModule. Persistencia: producto-servicio FLETE en BD 🟢, `flete-config.json` 🟡 (config global), metadata granel en producto 🟢, línea flete/granel en venta 🟡 `ventas-pos.json`.
 
 - **2026-07-10 (Feature: Encargos + Venta contra entrega):**
   - **Encargos (pedidos especiales, venta sobre pedido):** Módulo nuevo `EncargosModule.tsx` en `/admin/encargos` (acceso: 3ª tarjeta en landing AdminClientes, icono lucide PackageCheck). Lista con KPIs (pendientes/recibidos/entregados/por_cobrar), filtros status+texto, drawer de detalle (ficha + abonos parciales, cambio status, botón "Liquidar y entregar"). Estados: pendiente→recibido→entregado→cancelado. Comprobante imprimible `ComprobanteEncargo.tsx`. Captura: `FichaEncargoModal.tsx` en ModalCobro (nombre/teléfono/tiempo_entrega/motivo OBLIGATORIO, anticipo). Backend: `/caja/encargos` (GET/POST lista+crear, `[id]` GET/PATCH), `/caja/encargos/[id]/liquidar` POST → registro movimiento de caja "Abono de cliente" (origin MOVIM_E) el día de cobro, entra al corte, marca entregado. Store: `lib/encargos-store.ts` con `encargos-pos.json` (lock propio). Opción B: cliente con crédito → anticipo va a cartera; cliente esporádico → anticipo solo en ficha (sin crear Customer). Tipos: `EncargoFicha`, `EncargoStatus`.

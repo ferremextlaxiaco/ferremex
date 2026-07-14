@@ -65,6 +65,9 @@ createRoot(document.getElementById("root")!).render(
             <Route path="consultar-compras" element={<AdminConsultarCompras />} />
             <Route path="pedidos" element={<AdminPedidos />} />
           <Route path="encargos" element={<AdminEncargos />} />
+          {/* Entregas a domicilio: ruta nueva (item propio del sidebar) + alias
+              histórico "entregas-por-cobrar" (deep-link ?folio= desde Consulta de ventas). */}
+          <Route path="entregas" element={<AdminEntregas />} />
           <Route path="entregas-por-cobrar" element={<AdminEntregas />} />
           <Route path="catalogos" element={<AdminCatalogos />} />
           <Route path="monedero" element={<AdminMonedero />} />

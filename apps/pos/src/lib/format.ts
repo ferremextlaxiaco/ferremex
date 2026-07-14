@@ -20,3 +20,13 @@ export function formatMXN(n: number): string {
 export function formatMXNAbs(n: number): string {
   return MXN.format(Math.abs(Number(n) || 0))
 }
+
+/**
+ * Sanea la entrada de un teléfono: deja SOLO dígitos y trunca a 10 (formato de
+ * número mexicano a 10 dígitos). Se usa en el onChange de todos los inputs de
+ * teléfono del POS para que solo se puedan capturar 10 números.
+ * Uso: onChange={(e) => setTel(soloTelefono(e.target.value))}
+ */
+export function soloTelefono(valor: string): string {
+  return (valor || "").replace(/\D/g, "").slice(0, 10)
+}

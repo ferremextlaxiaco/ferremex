@@ -108,7 +108,14 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
           const invId = itemPorSku.get(it.sku as string)
           const locId = invId ? locPorItemId.get(invId) : undefined
           if (invId && locId) {
-            await inventoryModule.adjustInventory(invId, locId, +it.cantidad)
+            // GRANEL: se descontó `granel_descuento` (unidad base), no `cantidad`
+            // (presentaciones). Reintegramos exactamente lo que se descontó; 0 si la
+            // presentación no tenía factor (nunca tocó inventario).
+            const g = it as { granel?: boolean; granel_descuento?: number }
+            const reintegro = g.granel ? (Number(g.granel_descuento) || 0) : it.cantidad
+            if (reintegro > 0) {
+              await inventoryModule.adjustInventory(invId, locId, +reintegro)
+            }
           }
         }
       } else {

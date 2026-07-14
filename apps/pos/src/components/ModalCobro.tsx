@@ -7,16 +7,16 @@ import {
 import {
   registrarVenta, marcarCotizacionConvertida, obtenerDetalleMonederoAPI,
   listarReglasMonederoAPI, listarCatalogos, listarHuellasAPI, registrarVerificacionAPI,
-  obtenerSaldoCambioAPI,
+  obtenerSaldoCambioAPI, obtenerFleteConfig, SKU_FLETE,
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
-  type DetalleSaldoCambio,
+  type DetalleSaldoCambio, type FleteConfig,
 } from "../lib/client"
 import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
 import HuellaAnimacion from "./HuellaAnimacion"
 import { FichaEncargoModal, type DatosFichaEncargo } from "./FichaEncargoModal"
 import { FichaEntregaModal, type DatosFichaEntrega } from "./FichaEntregaModal"
-import { usePOS, efectivoPrecio } from "../lib/pos-store"
+import { usePOS, efectivoPrecio, type CartItem } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
 import { formatMXN as fmt } from "../lib/format"
@@ -80,7 +80,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const modoMixto = state.modoEncargo && !state.encargoReposicion
   // ¿Una línea aporta faltante encargado? (para preview de resta y para la ficha)
   const esLineaEncargo = (i: (typeof state.items)[number]) =>
-    modoReposicion || i.esEncargo || (modoMixto && i.cantidad > i.existencia)
+    // Las líneas de artículo especial (granel) NUNCA son encargo: su inventario es
+    // informativo, no se pide al proveedor. Se excluyen aunque cantidad > existencia
+    // (que para granel es siempre 0).
+    !i.esGranel && (modoReposicion || i.esEncargo || (modoMixto && i.cantidad > i.existencia))
   const faltanteLinea = (i: (typeof state.items)[number]) =>
     modoReposicion ? i.cantidad : Math.max(0, i.cantidad - i.existencia)
   // Si la FICHA se abre al entrar al cobro (define el anticipo). Hay encargo si el
@@ -101,6 +104,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [fichaEntregaAbierta, setFichaEntregaAbierta] = useState(false)
   const [entregaPagada, setEntregaPagada] = useState(false)
   const datosEntregaRef = useRef<DatosFichaEntrega | null>(null)
+  // Config del servicio de flete (nombre + precio base + IVA). El flete se agrega
+  // como LÍNEA de la venta (SKU SERVICIO-FLETE) desde la ficha de entrega. Se
+  // carga al montar; si falla, la ficha simplemente no ofrece flete.
+  const [fleteConfig, setFleteConfig] = useState<FleteConfig | null>(null)
+  useEffect(() => {
+    let on = true
+    obtenerFleteConfig().then((c) => { if (on) setFleteConfig(c) }).catch(() => {})
+    return () => { on = false }
+  }, [])
   // Verificación de huella del cliente para el canje (1:1). Estados del sub-flujo:
   //   idle → esperando que el cajero pulse "Verificar huella"
   //   verificando → capturando+comparando en el servicio local
@@ -214,7 +226,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   // Puntos a ganar por esta compra (preview). Usa el nivel del cliente.
   const puntosAGanar = (cfgMon && catMon)
     ? calcularPuntosGanados(
-        state.items.map<LineaPuntos>((i) => ({ subtotal: precioUnitEfectivo(i) * i.cantidad, marca: i.marca, departamento: i.departamento, categoria: i.categoria })),
+        // El flete es un SERVICIO: no genera puntos, se excluye del devengo.
+        state.items.filter((i) => !i.esFlete).map<LineaPuntos>((i) => ({ subtotal: precioUnitEfectivo(i) * i.cantidad, marca: i.marca, departamento: i.departamento, categoria: i.categoria })),
         cfgMon, reglasMon, catMon, monedero?.nivel_actual ?? null
       )
     : 0
@@ -461,15 +474,44 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   async function onFichaEntregaConfirmada(datos: DatosFichaEntrega) {
     datosEntregaRef.current = datos
     setFichaEntregaAbierta(false)
-    await finalizarVenta()
+    // Flete = LÍNEA de la venta (SKU SERVICIO-FLETE). Al confirmar la ficha con
+    // flete, lo agregamos al carrito (para que el total/ticket lo reflejen) Y lo
+    // pasamos explícito a finalizarVenta (el state.items de esta misma pasada aún
+    // no incluye el dispatch, así que sin pasarlo el backend no lo recibiría).
+    let lineaFlete: CartItem | null = null
+    const precioFlete = Number(datos.flete?.precio) || 0
+    if (precioFlete > 0 && fleteConfig) {
+      dispatch({
+        type: "SET_FLETE",
+        sku: fleteConfig.sku || SKU_FLETE,
+        descripcion: fleteConfig.nombre || "Servicio de flete",
+        precio: precioFlete,
+        impuesto: fleteConfig.aplicaIva,
+      })
+      lineaFlete = {
+        sku: fleteConfig.sku || SKU_FLETE,
+        descripcion: fleteConfig.nombre || "Servicio de flete",
+        precio: Math.round(precioFlete * 100) / 100,
+        cantidad: 1,
+        existencia: 0,
+        impuesto: fleteConfig.aplicaIva,
+        esFlete: true,
+      }
+    }
+    await finalizarVenta(lineaFlete)
   }
 
-  async function finalizarVenta() {
+  async function finalizarVenta(lineaFleteExtra?: CartItem | null) {
     if (!state.cajero) return
     setProcesando(true)
     setError(null)
     try {
-      const ventaItems = state.items
+      // El flete se agrega como una línea más. Se pasa explícito (no vía state)
+      // porque el dispatch SET_FLETE no se refleja en state.items en esta misma
+      // pasada. Si ya estuviera en el carrito (raro), no lo duplicamos.
+      const ventaItems = lineaFleteExtra && !state.items.some((i) => i.esFlete)
+        ? [...state.items, lineaFleteExtra]
+        : state.items
       const ventaCliente = state.clienteActivo
       // Diagnóstico (Bug: venta sin cliente pese a estar elegido): registra el
       // cliente EXACTO que se enviará en el payload, en el momento del cobro. Si
@@ -494,13 +536,26 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         // logueado por defecto. No afecta el corte (que agrupa por caja).
         vendedor: state.vendedorVenta?.nombre ?? state.cajero.nombre,
         items: ventaItems.map((i) => ({
-          sku: i.sku,
+          // Artículo especial (granel): el `sku` de la línea es compuesto
+          // (`PADRE::presId`) para separar presentaciones en el carrito, pero el
+          // backend descuenta inventario por el SKU REAL (`granelSku`).
+          sku: i.esGranel && i.granelSku ? i.granelSku : i.sku,
           descripcion: i.descripcion,
           cantidad: i.cantidad,
           // Precio unitario ya con promoción aplicada (gana sobre mayoreo).
           precio_unitario: precioUnitEfectivo(i),
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
+          // Artículo especial (granel): inventario informativo. `granel_descuento` =
+          // cantidad × factor de la presentación (en unidad base). El backend
+          // descuenta eso sin validar ni bloquear (puede ir a negativo).
+          ...(i.esGranel
+            ? {
+                granel: true,
+                granel_descuento: i.granelFactor ? Math.round(i.cantidad * i.granelFactor * 1000) / 1000 : 0,
+                presentacion: i.presentacion ?? "",
+              }
+            : {}),
           // Venta por encargo. Dos sabores:
           //  - MIXTO (esEncargo o cantidad > stock): el backend vende lo que hay y
           //    encarga el faltante. Enviamos `existencia` para que parta la línea.
@@ -570,11 +625,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 ...(datosEntregaRef.current.paga_con != null
                   ? { paga_con: datosEntregaRef.current.paga_con }
                   : {}),
-                // Flete (opcional): separado del total; el backend lo registra y, si
-                // es en tienda, crea el movimiento de caja categoría "Flete".
-                ...(datosEntregaRef.current.flete
-                  ? { flete: datosEntregaRef.current.flete }
-                  : {}),
+                // NOTA: el flete YA NO va aquí. Ahora es una LÍNEA de la venta
+                // (SKU SERVICIO-FLETE) → suma al total, aparece en el ticket y es
+                // facturable. Ver onFichaEntregaConfirmada + SET_FLETE.
               },
             }
           : {}),
@@ -968,7 +1021,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               </button>
               <button
                 onClick={() => { setEntregaPagada(false); setFichaEntregaAbierta(true) }}
-                disabled={procesando || state.items.length === 0}
+                disabled={procesando || state.items.length === 0 || asignado > 0}
+                title={asignado > 0 ? "Ya capturaste un pago/abono. Usa \"Abonar y enviar\" en su lugar." : undefined}
                 className="w-full inline-flex items-center justify-center gap-2 bg-white border-2 border-orange-300 text-orange-700 px-4 py-3 rounded-xl text-sm font-bold hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed">
                 <Truck size={18} /> Cobrar contra entrega (a domicilio)
               </button>
@@ -1012,6 +1066,8 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
           total={totalACobrar}
           pagada={entregaPagada}
           abonado={entregaPagada ? asignado : 0}
+          precioBaseFlete={fleteConfig?.precioBase ?? 0}
+          nombreFlete={fleteConfig?.nombre ?? "Servicio de flete"}
           onCancelar={() => setFichaEntregaAbierta(false)}
           onConfirmar={onFichaEntregaConfirmada}
         />

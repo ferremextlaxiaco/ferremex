@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-07-10.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-07-14.
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -15,15 +15,16 @@
 | Buscador | `components/Buscador.tsx` | Input + FiltroBar + GridProductos + ProductoDetalle |
 | FiltroBar | `components/FiltroBar.tsx` | Cascada Dept→Cat→Marca (chips) + filtro de stock |
 | GridProductos | `components/GridProductos.tsx` | Grid expandido (230px cols ≈6 por fila), thumbnail, +/- al carrito, modal desglose paquete |
-| ProductoDetalle | `components/ProductoDetalle.tsx` | Vista expandida, precio según `num_precio`, validación de cantidad |
-| Carrito | `components/Carrito.tsx` | Drawer deslizable (esquina inferior derecha), items con cantidad editable, cierra con Escape/overlay |
+| ProductoDetalle | `components/ProductoDetalle.tsx` | Vista expandida, precio según `num_precio`, validación de cantidad, modo encargo/reposición |
+| PresentacionSelectorModal | `components/PresentacionSelectorModal.tsx` | **NUEVO:** Modal de selección de presentación para artículos granel. Botones grandes de forma + cantidad. Agotado bloquea. Renderizado vía createPortal. |
+| Carrito | `components/Carrito.tsx` | Drawer deslizable (esquina inferior derecha), items con cantidad editable (excluye granel/flete del tope), cierra con Escape/overlay |
 | ModalCobro | `components/ModalCobro.tsx` | Pago split (efectivo/transferencia/crédito), cambio, registra venta. Cargo a crédito vía `/caja/cartera` (BD) |
 | Ticket | `components/Ticket.tsx` | Impresión ESC/POS directa |
 | SelectorCliente | `components/SelectorCliente.tsx` | Dropdown de clientes vía `/caja/clientes` (BD) → `clienteActivo` |
 | DesglosePaqueteModal | `components/DesglosePaqueteModal.tsx` | Modal de desglose: artículos del paquete, cantidad, precio prorrateo, ahorro $/%., renderizado vía createPortal |
 
-**Datos:** productos/stock/precio 🟢 (vía `/caja/productos`); venta 🟡 (`ventas-pos.json`); cartera 🟢 (módulo ferremex_cartera BD); cliente 🟢 (Customer Medusa).
-**Conexiones:** `buscarProductos()` → `pos-store` (carrito) → `registrarVenta()` (incluye cargo a cartera si crédito, transaccional) + `abrirCajon()` (si efectivo).
+**Datos:** productos/stock/precio 🟢 (vía `/caja/productos` + metadata `esGranel`/`presentaciones`); venta 🟡 (`ventas-pos.json`); cartera 🟢 (módulo ferremex_cartera BD); cliente 🟢 (Customer Medusa); flete-config 🟡 (vía `/caja/flete-config`).
+**Conexiones:** `buscarProductos()` → `pos-store` (carrito) → `registrarVenta()` (incluye cargo a cartera si crédito, devengo monedero con taxonomía real, línea flete si aplica, transaccional) + `abrirCajon()` (si efectivo).
 
 ---
 
@@ -33,7 +34,7 @@
 
 | Módulo | Página | Componente principal | Propósito | Persistencia |
 |---|---|---|---|---|
-| Artículos | `pages/AdminArticulos.tsx` | `components/ArticlesModule.jsx` (+ `ArticleDrawer`, `ArticleDeleteModal`) | CRUD de artículos, búsqueda, paginación, cascada taxonomía. Errores vía toasts (`useToasts`) | 🟢 producto+precio+inventario |
+| Artículos | `pages/AdminArticulos.tsx` | `components/ArticlesModule.jsx` (+ `ArticleDrawer` con sección granel, `ArticleDeleteModal`) | CRUD de artículos, búsqueda, paginación, cascada taxonomía, filtro de existencia. Botón "Convertir a artículo especial" para granel. Errores vía toasts (`useToasts`) | 🟢 producto+precio+inventario+metadata granel |
 | Catálogos | `pages/AdminCatalogos.jsx` | `CatalogosModule.jsx` (+ `CatalogosColumnas`, `CatalogosReasignacion`) | Árbol Dept→Cat→Marca, rename/move/reasignar | 🟢 (+ `marcas-extra.json` 🟡) |
 | Inventario | `pages/AdminInventario.tsx` | `modules/InventarioModule.jsx` | Ajuste masivo de stock por SKU. Búsqueda + tabla + confirmar. React puro, sin iframe | 🟢 inventory_level |
 | Consulta de ventas | `pages/AdminConsultaVentas.tsx` | `modules/SalesHistory.jsx` (fat module) | Historial: filtros por rango, KPIs, doble vista, CSV, cancelación 2 pasos. Ahora con filtro `pago_tarjeta` + columna en CSV | 🟡 `ventas-pos.json` |
@@ -47,8 +48,8 @@
 | Pedidos | `pages/AdminPedidos.jsx` | `components/PedidosModule.jsx` (+ `PedidosTabla`, `PedidosPreview`, `PedidosFiltros`, `ConfirmDialog`) | Pedidos a proveedor desde faltantes. **Backend en `/caja/pedidos`** (folio server-side); espera/draft 🔴 | 🟡 `pedidos-pos.json` + 🔴 espera/draft |
 | **Facturación CFDI** | **`pages/AdminFacturacion.tsx`** (`/admin/facturacion`) | **`components/FacturacionModule.jsx`** (3 tabs: Global/Comprobantes/Config; + `FacturaGlobalPanel`, `ComprobantesPanel`, `FacturacionConfigPanel`, `VisorComprobante`) | **NUEVO:** Centro de control CFDI vía Facturama. Factura global del día (pública) con preview de desglose (ENTRAN/EXCLUYEN/SIN CLAVE SAT por saldo facturable). Historial de CFDIs (filtros fecha/tipo/estado, descarga lote, cancelación, reenvío email). Config de serie/periodicidad. Backend en `/caja/facturama/*` | 🟢 módulo ferremex_facturable (BD) + 🟡 `globales-pos.json`, `facturacion-config.json` |
 | **Encargos** | **`pages/AdminEncargos.tsx`** (wrapper; bloque sidebar "clientes") | **`components/EncargosModule.tsx`** (+ `FichaEncargoModal`, `ComprobanteEncargo`) | **NUEVO:** Pedidos especiales/venta sobre pedido sin crear Customer. Lista con KPIs (pendientes/recibidos/entregados/por cobrar), status flow (pendiente→recibido→entregado→cancelado), abonos parciales, liquidación al corte. Acceso: 3ª tarjeta en landing AdminClientes (icono lucide PackageCheck). Ruta `/admin/encargos`. | 🟡 `encargos-pos.json` + 🟢 movimiento de caja |
-| **Por cobrar (Contra entrega)** | **`pages/AdminEntregas.tsx`** (wrapper; bloque sidebar "clientes") | **`components/EntregasModule.tsx`** (+ `TicketsEntrega`, `FichaEntregaModal`) | **NUEVO:** Ventas a domicilio pagadas contra entrega. Inventario sale inmediato. Lista con semáforo (antigüedad), KPIs, drawer de detalle, "Registrar pago y entregar". Acceso: 4ª tarjeta en landing AdminClientes (icono lucide Truck). Ruta `/admin/entregas-por-cobrar`. | 🟡 `entregas-pos.json` + 🟢 movimiento de caja |
-| Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón / **Entrega Cliente / Entrega Repartidor**) con preview en vivo. Nuevos toggles: `mostrar_casillas`, `mostrar_ficha` en formatos de entrega. | 🟡 `ticket-config.json` |
+| **Por cobrar (Contra entrega)** | **`pages/AdminEntregas.tsx`** (wrapper; bloque sidebar "clientes") | **`components/EntregasModule.tsx`** (+ `TicketsEntrega`, `FichaEntregaModal`), **`components/FletesConfigPanel.jsx`** (NEW) | **REFACTORIZADO:** Ventas a domicilio pagadas contra entrega + config de flete. Inventario sale inmediato. Lista Entregas con semáforo (antigüedad), KPIs, drawer de detalle, "Registrar pago y entregar". Tab Fletes con config (precio base, impuestos, etc.). Acceso: 4ª tarjeta en landing AdminClientes (icono lucide Truck). Ruta `/admin/entregas` (alias `/admin/entregas-por-cobrar`). | 🟡 `entregas-pos.json`, `flete-config.json` + 🟢 producto-servicio FLETE, movimiento de caja |
+| Tickets / Formatos | `pages/AdminTickets.tsx`, `pages/FormatoConfig.tsx` | — | Config de encabezado/pie/folio. Multi-formato (Nota de venta / Factura / Cupón / **Entrega Cliente / Entrega Repartidor**) con preview en vivo. Toggles: `mostrar_casillas`, `mostrar_ficha` en formatos de entrega. Opcionales nuevos de granel. | 🟡 `ticket-config.json` |
 | Periféricos | `pages/AdminPerifericos.tsx` | — | Config impresora/huella/escáner (Web Serial) + toggle confirmación de puntos + toggle monedero confirmación | navegador |
 | Generador | `pages/GeneradorTickets.tsx` (`/admin/generador`, fuera del layout) | — | Probador de tickets/periféricos | — |
 
@@ -64,16 +65,18 @@
 - **`lib/unidades-sat.ts`** — unidades SAT. Consumido por ArticleDrawer.
 - **`lib/utils.ts`** — `uuid()` (id local para keys/borradores). Consumido por PedidosModule (y otros pendientes de migrar su `uuid` v4 local).
 - **`lib/format.ts`** — `formatMXN` / `formatMXNAbs`. Consumido por SalesHistory, CashMovementsModule, CarteraCredito, ModalCobro.
-- **`lib/precio.ts`** — **NUEVO:** `pesosAAmount(pesos)`, `amountAPesos(amount)` (factor 10000 = diezmilésimas para 4 decimales exactos). Consumido por rutas/componentes de precios (articulos, productos, promociones, scripts de migración).
-- **`lib/encargos-store.ts`** — **NUEVO:** helper de persistencia JSON (`encargos-pos.json`). Funciones: `cargarEncargos`, `crearEncargo`, `actualizarStatusEncargo`, `agregarAbono`, `liquidarEncargo`. Lock propio distinto de ventas. Tipos: `EncargoFicha`, `EncargoStatus`.
-- **`lib/entregas-store.ts`** — **NUEVO:** helper de persistencia JSON (`entregas-pos.json`). Funciones: `cargarEntregas`, `crearEntregaFicha`, `actualizarStatusEntrega`, `registrarPagoEntrega`. Lock propio. Tipos: `EntregaFicha`, `EntregaStatus`, `EntregaContacto`, `EntregaArticulo`, `EntregaPago`.
+- **`lib/precio.ts`** — `pesosAAmount(pesos)`, `amountAPesos(amount)` (factor 10000 = diezmilésimas para 4 decimales exactos). Consumido por rutas/componentes de precios (articulos, productos, promociones, scripts de migración).
+- **`lib/encargos-store.ts`** — helper de persistencia JSON (`encargos-pos.json`). Funciones: `cargarEncargos`, `crearEncargo`, `actualizarStatusEncargo`, `agregarAbono`, `liquidarEncargo`. Lock propio distinto de ventas. Tipos: `EncargoFicha`, `EncargoStatus`.
+- **`lib/entregas-store.ts`** — helper de persistencia JSON (`entregas-pos.json`). Funciones: `cargarEntregas`, `crearEntregaFicha`, `actualizarStatusEntrega`, `registrarPagoEntrega`. Lock propio. Tipos: `EntregaFicha`, `EntregaStatus`, `EntregaContacto`, `EntregaArticulo`, `EntregaPago`.
+- **`lib/format.ts`** — `soloTelefono()` (valida 10 dígitos) para inputs de teléfono de personas (NUEVO 2026-07-14).
 - **`hooks/useToasts.ts`** — hook de toasts compartido `{ toasts, push }`. Consumido por SalesHistory, EmployeesModule, ArticlesModule.
 - **`components/ConfirmDialog.jsx`** — diálogo de confirmación reutilizable (reemplaza `window.confirm`). Consumido por PedidosModule.
 - **`components/VisorComprobante.jsx`** — **NUEVO:** previsualizador reutilizable de CFDI (PDF a pantalla completa + panel lateral de detalles, backdrop-filter blur). Consumido por ComprobantesPanel + FacturarBoton.
 - **`components/FichaEncargoModal.tsx`** — **NUEVO:** modal de captura de encargo al cobrar (nombre/teléfono/tiempo entrega/motivo obligatorios, anticipo). Consumido por ModalCobro en modo encargo.
 - **`components/FichaEntregaModal.tsx`** — **NUEVO:** modal de captura de entrega a domicilio (dirección, quién recibe {nombre/tel}, quién paga {nombre/tel}, comentarios). Consumido por ModalCobro en modo contra entrega.
 - **`components/ComprobanteEncargo.tsx`** — **NUEVO:** comprobante imprimible para encargos. Consumido por EncargosModule (drawer).
-- **`components/TicketsEntrega.tsx`** — **NUEVO:** tickets de entrega contra entrega (cliente + repartidor con casillas). Editables en FormatoConfig. Consumido por EntregasModule + SalesHistory (reimprimir).
+- **`components/TicketsEntrega.tsx`** — tickets de entrega contra entrega (cliente + repartidor con casillas). Editables en FormatoConfig. Consumido por EntregasModule + SalesHistory (reimprimir).
+- **`components/FletesConfigPanel.jsx`** — **NUEVO:** panel de configuración de flete (precio base, impuestos, opciones). Tab dentro de AdminEntregas.
 
 ### Backend — librerías compartidas (`packages/api/src/lib/`)
 - **`json-store.ts`** — `readJson` / `writeJsonAtomic` (tmp+rename) / `withFileLock` (mutex en-memoria por archivo) / `updateJson`. Consumido por rutas `ventas`, `usuarios`, `folio-contador`, `pedidos`, `ventas/[folio]`.
@@ -88,6 +91,7 @@
 ### Backend — JSON stores (`packages/api/data/`)
 - **`encargos-pos.json`** — Encargos persistidos (id, folio, cliente_nombre, cliente_tel, items, total, saldo_pendiente, status, abonos, fecha_creacion, etc.). Lock vía `withFileLock("encargos-pos.json")` propio. Consumido por rutas `/caja/encargos/*`.
 - **`entregas-pos.json`** — Entregas persistidas (id, folio_venta, direccion, quienRecibe, quienPaga, items, total, semáforo por antigüedad, status, pago_metodo, pago_fecha, fecha_creacion, etc.). Lock vía `withFileLock("entregas-pos.json")` propio. Consumido por rutas `/caja/entregas/*`.
+- **`flete-config.json`** — **NUEVO:** configuración global del flete (precio base, impuestos, opciones). Al guardar vía PUT, crea/actualiza producto-servicio FLETE (SKU `SERVICIO-FLETE`) en BD Medusa. Lock mutualmente exclusivo. Consumido por routes `/caja/flete-config`.
 
 ---
 
@@ -112,9 +116,20 @@ SelectorCliente ──muestra saldo de puntos + precarga monedero──► lib/m
 CorteModule ──obtenerCorte(caja_id), cerrarCorte, listarCortesPendientes──► /caja/corte, /caja/cortes-pendientes
 CorteModule ──cargar cajas + turnos-config──► /caja/cajas, /caja/turnos-config
 ArticlesModule / PedidosFiltros / FiltroBar / CatalogosModule ──listarCatalogos() (TTL 5min)──► /caja/catalogos
-SalesHistory ──listarVentas(), cancelarVenta()──► /caja/ventas (ahora con pago_tarjeta, caja_id, vendedor)
+SalesHistory ──listarVentas(), cancelarVenta()──► /caja/ventas (ahora con pago_tarjeta, caja_id, vendedor, modo, encargo_ficha, entrega_ficha, global_uuid, granel, presentacion)
 CashMovementsModule ──listarVentas(), obtenerCorte(caja_id)──► /caja/ventas, /caja/corte (por CAJA, no cajero/turno)
 PedidosModule ──listarFaltantes()──► /caja/articulos?faltantes=1
+ArticlesModule ──filtro existencia cíclico (Todos/Con/Sin)──► listarArticulos() + inventarioMin
+GridProductos ──producto esGranel → abre PresentacionSelectorModal (createPortal)──► selector presentación + cantidad + validación agotado
+Carrito ──esGranel, esFlete excluidos del tope de cantidad──► reducer SET_FLETE, ADD_ITEM con validación
+ModalCobro ──obtenerFleteConfig(), modo "Contra entrega" → FichaEntregaModal──► /caja/flete-config (GET), `/caja/entregas` POST
+AdminEntregas ──obtenerFleteConfig(), guardarFleteConfig()──► /caja/flete-config (GET/PUT); crea/actualiza producto-servicio FLETE en BD
+Ticket ──línea `esFlete` + `esGranel` con presentacion──► formato personalizado según flags
+soloTelefono() ──validación 10 dígitos──► ClienteRapidoModal, AdminClientesLista, ProveedorDrawer, FichaEncargoModal, FichaEntregaModal
+/caja/productos ──respuesta += departamento, categoria (metadata)──► tasaDeLinea() monedero + PresentacionSelectorModal
+/caja/articulos ──POST/PUT esGranel + presentaciones[], DELETE cascada──► ArticleDrawer + inventario info
+/caja/ventas POST ──persiste esGranel, presentacion, granelFactor, granelSku, esFlete, global_uuid (factura global)──► Carrito + ModalCobro + monedero (excluye granel del devengo)
+/caja/ventas PATCH ──cancelación reintegra granel_descuento, esFlete, revierte puntos monedero──► SalesHistory + Ticket
 EmployeesModule ──obtener/crear/actualizar/eliminarUsuario()──► /caja/usuarios (+ caja_id, horario)
 EmployeesModule ──listarCajasAPI(), crearCajaAPI, actualizarCajaAPI──► /caja/cajas (BD)
 EmployeesModule ──TurnosConfigModal (modo/franjas)──► /caja/turnos-config (GET/PUT)
@@ -137,6 +152,8 @@ CorteModule ──ventas_por_cobrar (suma entrega_total de vtas por_cobrar del p
 AdminClientes.tsx ──3 tarjetas de landing (Clientes/Cartera/Encargos) → 4 con Entrega (Clientes/Cartera/Encargos/Por cobrar)──► iconos lucide (Users/CreditCard/PackageCheck/Truck)
 AdminFormatos.tsx ──tabs nuevos: Entrega Cliente / Entrega Repartidor──► FormatoConfig con toggles mostrar_casillas/mostrar_ficha
 Ticket ──SalesHistory drawer en entrada contra_entrega──► botón "Reimprimir tickets" reabre TicketsEntrega (cliente + repartidor)
+FletesConfigPanel ──obtenerFleteConfig, guardarFleteConfig (con validación soloTelefono)──► /caja/flete-config (GET/PUT, mutua exclusión con Entregas)
+**`/caja/flete-config`** ──GET/PUT config flete, PUT crea/actualiza producto-servicio──► SKU `SERVICIO-FLETE` en BD Medusa (sin competencia con `entregas-pos.json`)
 ```
 
 ---

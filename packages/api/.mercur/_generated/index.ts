@@ -764,6 +764,7 @@ export type Routes = {
                 preview: typeof import("../../src/api/caja/facturama/global/preview/route");
             };
         };
+        fleteConfig: typeof import("../../src/api/caja/flete-config/route");
         folioContador: typeof import("../../src/api/caja/folio-contador/route");
         generarOc: typeof import("../../src/api/caja/generar-oc/route");
         grupos: typeof import("../../src/api/caja/grupos/route");

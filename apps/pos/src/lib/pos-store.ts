@@ -63,6 +63,19 @@ export interface CartItem {
   // `unidadVenta` = código SAT de la unidad (kg/m/L) para mostrarla junto al peso.
   granel?: boolean
   unidadVenta?: string
+  // Artículo especial (a granel): la línea se agregó eligiendo una PRESENTACIÓN
+  // (m³/carretilla/bote). `esGranel` marca que su inventario es INFORMATIVO — el
+  // carrito nunca la topa por existencia y el backend descuenta sin bloquear.
+  // `presentacion` = nombre mostrado ("Carretilla"). `granelFactor` = equivalencia
+  // en unidad base por unidad de presentación (para el descuento informativo; 0/
+  // null = no descuenta). El descuento total = cantidad × granelFactor.
+  esGranel?: boolean
+  presentacion?: string
+  granelFactor?: number | null
+  // SKU REAL del producto padre (sin el sufijo de presentación). El `sku` de la
+  // línea es compuesto (`PADRE::presId`) para que cada presentación sea su propia
+  // línea; `granelSku` es el que el backend usa para descontar inventario.
+  granelSku?: string
   // Cuando el item forma parte de un paquete vendido, `precio` ya es el precio
   // prorrateado del paquete para esa línea, `paquete_id`/`paquete_nombre` lo
   // marcan, y `paqueteCantidad` es cuántas unidades aporta el paquete por copia
@@ -76,6 +89,12 @@ export interface CartItem {
   // (LIBRE-<timestamp>) y NUNCA corresponde a un producto real de Medusa — no es
   // reportable ni reutilizable. Se marca para que ticket/carrito lo distingan.
   libre?: boolean
+  // Línea de SERVICIO DE FLETE. Es un producto Medusa real (SKU SERVICIO-FLETE)
+  // con clave SAT → suma al total y aparece en el ticket como cualquier línea, y
+  // es FACTURABLE. Pero NO genera puntos de monedero (es un servicio, no compra),
+  // y su precio lo define el vendedor en la ficha de entrega. Solo puede haber una
+  // línea de flete por venta.
+  esFlete?: boolean
 }
 
 /** Los 4 modos de la pantalla de venta (derivados de los flags del estado). */
@@ -168,6 +187,10 @@ type PosAction =
   // encargo: "vender todo lo faltante por encargo").
   | { type: "SET_ENCARGO"; sku?: string; esEncargo: boolean }
   | { type: "REMOVE"; sku: string }
+  // Agrega/actualiza (o quita, con precio<=0) la línea de SERVICIO DE FLETE del
+  // carrito. Solo hay una línea de flete por venta. La usa la ficha de entrega a
+  // domicilio: al confirmar con flete, se inserta la línea con el precio elegido.
+  | { type: "SET_FLETE"; sku: string; descripcion: string; precio: number; impuesto: boolean }
   | { type: "ADD_PAQUETE"; paqueteId: string; paqueteNombre: string; lineas: LineaPaquete[] }
   | { type: "REMOVE_PAQUETE"; paqueteId: string }
   // Vacía SOLO los productos del carrito. NO toca el cliente, el vendedor ni el
@@ -231,9 +254,13 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // inventario: se vende sobre pedido (puede quedar en negativo al cobrar).
       // El modo encargo global libera el tope para TODO el carrito.
       const esEncargo = state.modoEncargo || !!action.item.esEncargo || !!existe?.esEncargo
+      // Artículo especial (granel): inventario informativo → nunca se topa por
+      // existencia (igual que cotización/encargo). El bloqueo real es el switch
+      // "Agotado", que el front valida antes de despachar ADD_ITEM.
+      const esGranelLinea = !!action.item.esGranel || !!existe?.esGranel
       if (existe) {
-        // En cotización o encargo no se topa al inventario. En venta normal sí.
-        if (!state.modoCotizacion && !esEncargo && existe.cantidad >= existe.existencia) return state
+        // En cotización, encargo o granel no se topa al inventario. En venta normal sí.
+        if (!state.modoCotizacion && !esEncargo && !esGranelLinea && existe.cantidad >= existe.existencia) return state
         return {
           ...state,
           items: state.items.map((i) =>
@@ -250,8 +277,9 @@ function posReducer(state: PosState, action: PosAction): PosState {
       return {
         ...state,
         items: state.items.map((i) =>
-          // En cotización o modo encargo se permite exceder la existencia.
-          i.sku === action.sku && (state.modoCotizacion || state.modoEncargo || i.cantidad < i.existencia)
+          // En cotización, modo encargo o granel (inventario informativo) se
+          // permite exceder la existencia.
+          i.sku === action.sku && (state.modoCotizacion || state.modoEncargo || i.esGranel || i.cantidad < i.existencia)
             ? { ...i, cantidad: i.cantidad + 1 }
             : i
         ),
@@ -270,11 +298,14 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // la existencia); en venta normal, se limita a lo disponible en inventario.
       const linea = state.items.find(i => i.sku === action.sku)
       const existencia = linea?.existencia ?? action.cantidad
-      const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo
+      // Granel = inventario informativo → sin tope (como cotización/encargo).
+      const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo || !!linea?.esGranel
       const tope = sinTope ? action.cantidad : existencia
-      // Granel: se permite cantidad DECIMAL (ej. 0.541 kg), mínimo 0.001 y
-      // redondeada a 3 decimales. No-granel: entero, mínimo 1 (como siempre).
-      const esGranel = !!linea?.granel
+      // Granel: se permite cantidad DECIMAL (ej. 0.541 kg o 1.5 m³), mínimo 0.001
+      // y redondeada a 3 decimales. Aplica a la venta fraccionada (`granel`) y a
+      // las presentaciones de artículo especial (`esGranel`). No-granel: entero,
+      // mínimo 1 (como siempre).
+      const esGranel = !!linea?.granel || !!linea?.esGranel
       const min = esGranel ? 0.001 : 1
       const bruto = Math.max(min, Math.min(action.cantidad, tope))
       const clamped = esGranel ? Math.round(bruto * 1000) / 1000 : bruto
@@ -296,6 +327,24 @@ function posReducer(state: PosState, action: PosAction): PosState {
 
     case "REMOVE":
       return { ...state, items: state.items.filter((i) => i.sku !== action.sku) }
+
+    case "SET_FLETE": {
+      // Quita cualquier línea de flete previa (solo una por venta).
+      const sinFlete = state.items.filter((i) => !i.esFlete)
+      // Precio <= 0 = quitar el flete (no re-agregar).
+      if (!(action.precio > 0)) return { ...state, items: sinFlete }
+      const lineaFlete: CartItem = {
+        sku: action.sku,
+        descripcion: action.descripcion,
+        precio: Math.round(action.precio * 100) / 100,
+        cantidad: 1,
+        existencia: 0,
+        impuesto: action.impuesto,
+        esFlete: true,
+      }
+      // El flete va al FINAL del carrito (después de la mercancía).
+      return { ...state, items: [...sinFlete, lineaFlete] }
+    }
 
     case "ADD_PAQUETE": {
       // Agrega (o incrementa) una copia del paquete: por cada línea suma su

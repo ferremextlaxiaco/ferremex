@@ -165,6 +165,7 @@ El POS vive en `apps/pos/` (Vite, puerto 7002, `base: "/pos"`). React 18 + React
   /catalogos    → Taxonomía Dept→Cat→Marca (CatalogosModule — Miller Columns)
   /cartera-credito → Cartera de crédito (CarteraCredito.jsx — BD Medusa vía módulo ferremex_cartera; FIFO/semáforo en cliente)
   /facturacion  → **NUEVO:** Centro de control CFDI vía Facturama (AdminFacturacion → FacturacionModule: 3 tabs Global/Comprobantes/Config)
+  /entregas     → **NUEVO:** Entregas a domicilio (item propio del sidebar, salió de Clientes). AdminEntregas = shell con tabs internos Entregas | Fletes. Tab Fletes = FletesConfigPanel (config del servicio de flete). Alias histórico: /entregas-por-cobrar (deep-link ?folio=).
   /caja         → Movimientos de caja / arqueo (CashMovementsModule)
   /perifericos  → Config de hardware: impresora térmica, lector de huella, escáner
 /pos/admin/generador → Generador/probador de tickets (FUERA del layout admin — sin sidebar)
@@ -393,6 +394,7 @@ Las rutas POS viven en `packages/api/src/api/caja/` y NO bajo `/store/`. CORS lo
 | GET/POST/PUT/DELETE | `/caja/pedidos` | CRUD de pedidos a proveedor (`pedidos-pos.json`). POST genera id + folio secuencial server-side. |
 | GET/POST/PUT/DELETE | `/caja/articulos` | CRUD de artículos. POST/PUT validan clave/descripcion/precios; DELETE verifica existencia. `?faltantes=1` = items bajo `inventarioMin`. |
 | GET/PUT | `/caja/ticket-config` | Encabezado/pie/opciones del ticket. Migra campos legacy. |
+| GET/PUT | `/caja/flete-config` | **NUEVO:** Config del servicio de flete (nombre, clave SAT 78102203, unidad E48, precio base, IVA). Al guardar (PUT) crea/actualiza el producto Medusa oculto `SERVICIO-FLETE` (DRAFT, sin inventario). GOTCHA: hace ops de Medusa ANTES de escribir el JSON (el watcher reinicia con `data/*.json`). |
 | POST | `/caja/imagen` | Sube thumbnail base64 vía Medusa File Module. Devuelve `{ url }`. |
 | POST | `/caja/ajuste-inventario` | Corrección masiva de stock por SKU. Body: `{ ajustes: [{ sku, nueva_cantidad }] }`. |
 | POST | `/caja/generar-oc` | Genera PDF de orden de compra (React PDF, `OcDocument.tsx`). Contención de path traversal en thumbnails `/static/`. |
@@ -573,6 +575,9 @@ Las skills viven en `.claude/skills/`. Carga la que corresponda antes de trabajo
 - **Lanzadores PM2 deben ser `.js`**: los `.bat` causaban loops infinitos de reinicio. `launch-api.js` / `launch-admin.js` / `launch-pos.js` es lo estable.
 - **Codegen**: corre `dev:codegen` desde `packages/api` tras cambiar rutas o tipos request/response que alimentan `@acme/api/_generated`.
 - **`createProducts()` no crea inventario**: llamar `productModule.createProducts()` directo se salta la creación de inventory items. Usa el endpoint del workflow HTTP, o corre `reparar:inventario` después.
+- **`createProducts()` con `prices` inline no siempre puebla el price set**: si un variant queda sin price set (precio $0), créalo con `pricingModule.createPriceSets([{prices}])` + `remoteLink.create([{[Modules.PRODUCT]:{variant_id},[Modules.PRICING]:{price_set_id}}])` (patrón de `scripts/asignar-precios.ts`). Ya aplicado en `/caja/flete-config`.
+- **Watcher de Medusa dev reinicia al escribir `data/*.json`**: rutas que escriben un JSON en `packages/api/data/` Y hacen ops async de Medusa después (createProducts/createPriceSets/link/adjustInventory) pierden esas ops (el reinicio las aborta a media petición). Solución: hacer TODAS las ops de Medusa PRIMERO y escribir el JSON AL FINAL (ver `/caja/flete-config` PUT).
+- **Búsqueda de venta (`/caja/productos`) — texto vs código**: solo cortocircuita a 1 resultado cuando el match viene de `?sku=` explícito o código de barras escaneado. Un texto `q` que casualmente coincide con un SKU NO corta la búsqueda por nombre (se fusiona + dedup por variante). Antes "estuco" traía 1 de 5.
 - **Firma de `updateProducts()`**: `productModule.updateProducts([{id, ...}])` (forma array) lanza errores `Product.0`. Lo correcto es `updateProducts(id, data)` (forma de un item).
 - **xlsx import**: usa `require()` en vez de `import()` dinámico para el paquete `xlsx` — incompatibilidad ESM/CJS con el pipeline de build de Medusa.
 - **`/caja/*` no debe importar el paquete `cors`**: el proxy de Vite ya resuelve cross-origin en dev. Agregar `import cors from 'cors'` falla en runtime porque el paquete no está instalado en el workspace de Medusa.
@@ -590,6 +595,8 @@ Las skills viven en `.claude/skills/`. Carga la que corresponda antes de trabajo
 - **`listProducts({ category_id })` no funciona en Medusa 2.x**: pasar `{ category_id: [uuid] }` a `productModule.listProducts()` lanza error ("Trying to query by not existing property"). La solución es el patrón de dos pasos: `listProductCategories({ id: [uuid] }, { relations: ["products"] })` para obtener los product IDs, luego `listProducts({ id: productIds })`. Ya implementado en `/caja/productos` y `/caja/articulos`.
 - **Precios: factor 10000 (diezmilésimas):** desde 2026-06-19, `Price.amount` se guarda en diezmilésimas (factor 10000, 4 decimales) en lugar de centavos (factor 100, 2 decimales). Permite exactitud con IVA ($65 en lugar de 64.99). Helper central: `lib/precio.ts` (`pesosAAmount()` / `amountAPesos()`). Convención: guardados SIN IVA, devueltos a venta CON IVA (×1.16). Migración one-shot ya aplicada (19986 precios).
 - **CLI de Medusa (`db:generate`, `db:migrate`) fallando vía bun**: `bun x medusa db:generate` y afines fallan por PATH de PostgreSQL no resuelto. Workaround: usar `node "../../node_modules/.bun/@medusajs+cli@<version>/.../cli.js" db:generate <module>` directo desde `packages/api`, donde `launch-api.js` ya ha resuelto el PATH de PostgreSQL.
+- **Artículo especial (a granel)**: tipo de artículo con inventario INFORMATIVO. Metadata en producto: `esGranel`, `agotado` (padre), `agotadoBase` (unidad principal), `unidadBase`, `presentaciones[]` ({id,nombre,precio,factor,agotado}). Variante `allow_backorder=true`; `/caja/ventas` salta validación de stock para líneas granel y descuenta `granel_descuento` (cantidad×factor) sin bloquear (va a negativo). En el carrito: `esGranel`/`presentacion`/`granelFactor`/`granelSku` (SKU de línea compuesto `PADRE::presId`, `granelSku` = SKU real). Modal de venta = `PresentacionSelectorModal`. Fuera de facturación (sin clave SAT).
+- **Flete = SERVICIO facturable (LÍNEA de venta)**: el flete NO va en la ficha de entrega; es una línea de la venta con SKU `SERVICIO-FLETE` (producto Medusa oculto DRAFT, clave SAT 78102203, unidad E48, sin inventario). Suma al total, sale en el ticket, es facturable (resolver fiscal lo mapea por SKU). `CartItem.esFlete` lo excluye del devengo de puntos del monedero. Reducer `SET_FLETE` (solo una línea). Config en `/caja/flete-config` (tab Fletes del módulo Entregas). El ticket dedicado "SERVICIO DE FLETE" se eliminó.
 
 ---
 

@@ -34,6 +34,14 @@ interface ItemVenta {
   existencia?: number
   proveedor_id?: string
   proveedor?: string
+  // Artículo especial (a granel): inventario INFORMATIVO. La línea SÍ descuenta
+  // inventario (para tener un estimado de cuánto queda) pero NUNCA valida ni
+  // bloquea por número — el stock puede quedar en negativo. El único bloqueo real
+  // es el switch "Agotado" del artículo, que el front respeta antes de agregar.
+  // `granel_descuento` = cuánto descontar de la unidad base (cantidad × factor de
+  // la presentación); si no hay factor, es 0 y no toca inventario.
+  granel?: boolean
+  granel_descuento?: number
 }
 
 interface VentaBody {
@@ -437,8 +445,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
       // Validar que ningún item supere el stock disponible. Las líneas marcadas
       // como ENCARGO se exceptúan: se venden sobre pedido (inventario a negativo).
+      // Las líneas GRANEL también: su inventario es informativo (puede ir a
+      // negativo), el bloqueo real es el switch "Agotado" (validado en el front).
       for (const item of items) {
-        if (item.encargo) continue
+        if (item.encargo || item.granel) continue
         const inventoryItemId = itemPorSku.get(item.sku)
         if (!inventoryItemId) {
           // SKU sin inventory item: lo registramos pero advertimos en log en vez
@@ -509,6 +519,20 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             continue
           }
 
+          // GRANEL (inventario informativo): descuenta la equivalencia en la
+          // unidad base (cantidad × factor de la presentación, ya calculada en el
+          // front como `granel_descuento`). PUEDE dejar el stock en NEGATIVO — la
+          // variante tiene allow_backorder=true, así que adjustInventory no falla.
+          // Si no hay factor (granel_descuento=0) no toca inventario. Nunca bloquea.
+          if (item.granel) {
+            const desc = Number(item.granel_descuento) || 0
+            if (desc > 0 && inventoryItemId && nivel) {
+              await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -desc)
+              aplicados.push({ itemId: inventoryItemId, locationId: nivel.location_id, cantidad: desc })
+            }
+            continue
+          }
+
           // VENTA NORMAL: descuenta la cantidad completa (ya validada contra stock).
           if (!inventoryItemId || !nivel) continue
           await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -item.cantidad)
@@ -538,6 +562,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             // `no_descontar` se persiste para que la CANCELACIÓN no reintegre
             // inventario de líneas que nunca lo descontaron (modo encargo global).
             ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null, ...(i.no_descontar ? { no_descontar: true } : {}) } : {}),
+            // Artículo especial (a granel): guardamos la presentación (para ticket /
+            // historial) y `granel_descuento` — la cantidad EN UNIDAD BASE que se
+            // descontó — para que la cancelación reintegre exactamente eso (no la
+            // cantidad de presentaciones, que sería incorrecta).
+            ...(i.granel ? { granel: true, granel_descuento: Number(i.granel_descuento) || 0, presentacion: (i as { presentacion?: string }).presentacion ?? null } : {}),
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
           // encargo es el total normal; con encargo es parte-con-stock + anticipo;

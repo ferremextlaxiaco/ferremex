@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { ClipboardList, X, User, Phone, MessageSquare, CalendarClock, Mail, StickyNote, AlertCircle, Wallet, CreditCard } from "lucide-react"
 import { usePOS, efectivoPrecio } from "../lib/pos-store"
-import { formatMXN as fmt } from "../lib/format"
+import { formatMXN as fmt, soloTelefono } from "../lib/format"
 
 /** Datos que el cajero llena antes de cobrar una venta por encargo. */
 export interface DatosFichaEncargo {
@@ -142,7 +142,8 @@ export function FichaEncargoModal({ onCancelar, onConfirmar }: FichaEncargoModal
                 className={inputCls(tocado && faltaNombre)} placeholder="Ej. Escuela Benito Juárez" />
             </Campo>
             <Campo label="Teléfono" icon={Phone} requerido error={tocado && faltaTel}>
-              <input value={telefono} onChange={(e) => setTelefono(e.target.value)} inputMode="tel"
+              <input value={telefono} onChange={(e) => setTelefono(soloTelefono(e.target.value))} inputMode="numeric"
+                type="tel" maxLength={10}
                 className={inputCls(tocado && faltaTel)} placeholder="953 000 0000" />
             </Campo>
           </div>

@@ -98,16 +98,26 @@ export default function ArticlesModule({ vista = "articulos" }) {
   const [filterDept,   setFilterDept]   = useState("")  // dep-id
   const [filterCat,    setFilterCat]    = useState("")  // cat-id
   const [filterMarca,  setFilterMarca]  = useState("")  // mar-id
+  // Filtro de existencia (mismo que el panel de venta): cíclico todos → con
+  // existencia → sin existencia. Se aplica en cliente sobre los resultados.
+  const [filterStock,  setFilterStock]  = useState("todos") // "todos" | "con" | "sin"
 
   const [page, setPage] = useState(0)
   const listPanelRef = useRef(null)
   const claveCounter = useRef(1)
   const selected = articles.find((a) => a.id === selectedId) ?? null
 
-  const totalPages  = Math.max(1, Math.ceil(articles.length / PAGE_SIZE))
+  // Artículos visibles = resultados filtrados por existencia (con > 0 / sin ≤ 0).
+  const articlesVisibles = useMemo(() => {
+    if (filterStock === "con") return articles.filter((a) => (a.existencia ?? 0) > 0)
+    if (filterStock === "sin") return articles.filter((a) => (a.existencia ?? 0) <= 0)
+    return articles
+  }, [articles, filterStock])
+
+  const totalPages  = Math.max(1, Math.ceil(articlesVisibles.length / PAGE_SIZE))
   const pagedArticles = useMemo(
-    () => articles.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
-    [articles, page]
+    () => articlesVisibles.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [articlesVisibles, page]
   )
 
   // Cargar taxonomía al montar (para los selects en cascada)
@@ -187,6 +197,10 @@ export default function ArticlesModule({ vista = "articulos" }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterDept, filterCat, filterMarca])
 
+  // Al cambiar el filtro de existencia, volver a la primera página (el set
+  // filtrado puede tener menos páginas que la actual).
+  useEffect(() => { setPage(0) }, [filterStock])
+
   // ── Handlers de UI ───────────────────────────────────────────────────────────
 
   function handleSearch(value) {
@@ -233,6 +247,7 @@ export default function ArticlesModule({ vista = "articulos" }) {
     setFilterDept("")
     setFilterCat("")
     setFilterMarca("")
+    setFilterStock("todos")
     if (!search.trim()) {
       setArticles([])
       setHasBuscado(false)
@@ -282,7 +297,7 @@ export default function ArticlesModule({ vista = "articulos" }) {
   function subtitulo() {
     if (loading) return "Buscando…"
     if (!hasBuscado) return " "
-    const n = articles.length
+    const n = articlesVisibles.length
     if (n === 0) return "Sin resultados"
     const desde = page * PAGE_SIZE + 1
     const hasta = Math.min((page + 1) * PAGE_SIZE, n)
@@ -391,7 +406,22 @@ export default function ArticlesModule({ vista = "articulos" }) {
           ))}
         </select>
 
-        {hayFiltros && (
+        {/* Filtro de existencia CÍCLICO (igual que el panel de venta): clic alterna
+            todos → con existencia → sin existencia → todos. */}
+        <button
+          type="button"
+          className={`ar-filter-stock${filterStock !== "todos" ? " activo" : ""}`}
+          onClick={() => setFilterStock(
+            filterStock === "todos" ? "con" : filterStock === "con" ? "sin" : "todos"
+          )}
+          title="Clic para alternar: Todos → Con existencia → Sin existencia"
+        >
+          {filterStock === "con" ? "Con existencia"
+            : filterStock === "sin" ? "Sin existencia"
+            : "Existencia"}
+        </button>
+
+        {(hayFiltros || filterStock !== "todos") && (
           <button className="ar-filter-clear" onClick={limpiarFiltros} title="Limpiar filtros">
             ✕ Limpiar
           </button>
@@ -419,12 +449,13 @@ export default function ArticlesModule({ vista = "articulos" }) {
             <p className="ar-empty">Buscando artículos…</p>
           ) : !hasBuscado ? (
             <p className="ar-empty">Selecciona un filtro o escribe para buscar</p>
-          ) : articles.length === 0 ? (
+          ) : articlesVisibles.length === 0 ? (
             <p className="ar-empty">
               No se encontraron artículos
               {search ? ` para «${search}»` : ""}
               {depNombre ? ` en ${depNombre}` : ""}
               {catNombre ? ` › ${catNombre}` : ""}
+              {filterStock === "con" ? " con existencia" : filterStock === "sin" ? " sin existencia" : ""}
             </p>
           ) : (
             <>

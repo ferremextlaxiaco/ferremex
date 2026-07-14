@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { Truck, X, MapPin, User, Phone, Wallet, MessageSquare, AlertCircle, Banknote, Coins } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
-import { formatMXN as fmt } from "../lib/format"
+import { formatMXN as fmt, soloTelefono } from "../lib/format"
 
 /** Datos que el cajero llena al registrar una entrega a domicilio. */
 export interface DatosFichaEntrega {
@@ -15,9 +15,10 @@ export interface DatosFichaEntrega {
   // Con cuánto pagará el cliente al recibir (contra entrega) → cambio del repartidor.
   // Opcional; si se deja vacío, el repartidor cobra el monto exacto.
   paga_con?: number
-  // Servicio de flete (opcional). Separado del total; si `cobrar_al_entregar` es
-  // false, se cobra ahora en tienda con `metodo_tienda`.
-  flete?: { precio: number; cobrar_al_entregar: boolean; metodo_tienda?: string }
+  // Servicio de flete (opcional). Ahora es una LÍNEA de la venta (SKU
+  // SERVICIO-FLETE): suma al total, aparece en el ticket y es facturable. Aquí
+  // solo se captura el PRECIO (editable, prellenado con el precio base).
+  flete?: { precio: number }
 }
 
 interface FichaEntregaModalProps {
@@ -30,6 +31,11 @@ interface FichaEntregaModalProps {
   pagada?: boolean
   /** Abono ya capturado en tienda (solo pagada). La resta = total − abonado. */
   abonado?: number
+  /** Precio base sugerido del flete (de la config). Prellena el campo si > 0.
+   *  Si es 0 o no se pasa, el flete no se ofrece (config no lista). */
+  precioBaseFlete?: number
+  /** Nombre del servicio de flete (de la config), para el rótulo. */
+  nombreFlete?: string
   onCancelar: () => void
   onConfirmar: (datos: DatosFichaEntrega) => void
 }
@@ -46,13 +52,9 @@ interface FichaEntregaModalProps {
  *
  * Obligatorios siempre: dirección, quién recibe (nombre+tel). Comentarios opcional.
  */
-export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancelar, onConfirmar }: FichaEntregaModalProps) {
+export function FichaEntregaModal({ total, pagada = false, abonado = 0, precioBaseFlete = 0, nombreFlete = "Servicio de flete", onCancelar, onConfirmar }: FichaEntregaModalProps) {
   const { state } = usePOS()
   const cli = state.clienteActivo
-  // Resta a cobrar al entregar. Pagada = total − abono; contra entrega = total.
-  const restaEntrega = pagada
-    ? Math.max(0, Math.round((total - abonado) * 100) / 100)
-    : total
 
   const [direccion, setDireccion] = useState("")
   const [recibeNombre, setRecibeNombre] = useState(cli?.nombre ?? "")
@@ -62,14 +64,29 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
   const [pagaCon, setPagaCon] = useState("")
   const [comentarios, setComentarios] = useState("")
   // ── Flete (opcional) ──────────────────────────────────────────────────────
-  // El vendedor decide si carga flete y a qué precio, y cuándo se cobra: en tienda
-  // ahora o al entregar (con la resta). Separado del total de la venta.
+  // El flete es una LÍNEA de la venta (SKU SERVICIO-FLETE): suma al total, sale en
+  // el ticket y es facturable. El vendedor decide si lo carga y a qué precio
+  // (prellenado con el precio base de la config). Ya no hay "cuándo/método": sigue
+  // el flujo de la venta (contra entrega → lo cobra el repartidor; pagada → hoy).
   const [conFlete, setConFlete] = useState(false)
-  const [fletePrecio, setFletePrecio] = useState("")
-  const [fleteCuando, setFleteCuando] = useState<"tienda" | "entregar">("tienda")
-  const [fleteMetodo, setFleteMetodo] = useState("efectivo")
+  const [fletePrecio, setFletePrecio] = useState(precioBaseFlete > 0 ? String(precioBaseFlete) : "")
   const [tocado, setTocado] = useState(false)
   const dirRef = useRef<HTMLTextAreaElement>(null)
+
+  // Flete: precio parseado y validez. Si `conFlete` pero el precio es 0/inválido,
+  // no se envía (no bloquea el registro, simplemente no hay flete).
+  const fletePrecioNum = parseFloat(fletePrecio.replace(",", "."))
+  const fleteValido = conFlete && Number.isFinite(fletePrecioNum) && fletePrecioNum > 0
+  const montoFlete = fleteValido ? fletePrecioNum : 0
+
+  // Resta a cobrar al entregar. Pagada = total − abono; contra entrega = total.
+  // Como el flete es una LÍNEA de la venta que se cobra al entregar, se SUMA al
+  // monto mostrado en tiempo real cuando el vendedor lo activa (así el cajero ve
+  // el total real que cobrará el repartidor antes de confirmar).
+  const restaBase = pagada
+    ? Math.max(0, Math.round((total - abonado) * 100) / 100)
+    : total
+  const restaEntrega = Math.round((restaBase + montoFlete) * 100) / 100
 
   useEffect(() => { dirRef.current?.focus() }, [])
   useEffect(() => {
@@ -93,11 +110,6 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
   const pagaConValido = restaEntrega > 0.005 && Number.isFinite(pagaConNum) && pagaConNum > 0
   const cambio = pagaConValido ? Math.round((pagaConNum - restaEntrega) * 100) / 100 : null
 
-  // Flete: precio parseado y validez. Si `conFlete` pero el precio es 0/inválido,
-  // no se envía (no bloquea el registro, simplemente no hay flete).
-  const fletePrecioNum = parseFloat(fletePrecio.replace(",", "."))
-  const fleteValido = conFlete && Number.isFinite(fletePrecioNum) && fletePrecioNum > 0
-
   function confirmar() {
     setTocado(true)
     if (invalido) return
@@ -112,14 +124,8 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
       comentarios: comentarios.trim() || undefined,
       // Solo contra entrega y si es un monto válido > 0.
       ...(pagaConValido ? { paga_con: pagaConNum } : {}),
-      // Flete (opcional): precio + cuándo se cobra + método (si es en tienda).
-      ...(fleteValido ? {
-        flete: {
-          precio: fletePrecioNum,
-          cobrar_al_entregar: fleteCuando === "entregar",
-          ...(fleteCuando === "tienda" ? { metodo_tienda: fleteMetodo } : {}),
-        },
-      } : {}),
+      // Flete (opcional): solo el precio. Se agrega como línea de la venta.
+      ...(fleteValido ? { flete: { precio: fletePrecioNum } } : {}),
     })
   }
 
@@ -181,13 +187,58 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
               </div>
             )
           ) : (
-            <div className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3 flex items-center justify-between">
-              <span className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
-                <Wallet size={16} /> Monto a cobrar al entregar
-              </span>
-              <span className="text-lg font-black text-orange-700 tabular-nums">{fmt(total)}</span>
+            // Contra entrega. El monto incluye el flete si está activo (se desglosa
+            // mercancía + flete cuando aplica, para que el cajero lo vea claro).
+            <div className="rounded-xl border border-orange-100 bg-orange-50/60 px-4 py-3 flex flex-col gap-1.5">
+              {montoFlete > 0 && (
+                <>
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>Mercancía</span><span className="tabular-nums">{fmt(total)}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span className="inline-flex items-center gap-1.5"><Truck size={14} /> Flete</span>
+                    <span className="tabular-nums">{fmt(montoFlete)}</span>
+                  </div>
+                  <div className="border-t border-orange-200 my-0.5" />
+                </>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="inline-flex items-center gap-2 text-sm font-semibold text-orange-700">
+                  <Wallet size={16} /> Monto a cobrar al entregar
+                </span>
+                <span className="text-lg font-black text-orange-700 tabular-nums">{fmt(restaEntrega)}</span>
+              </div>
             </div>
           )}
+
+          {/* Flete (opcional) — HASTA ARRIBA (justo bajo el monto) porque al
+              activarlo cambia el "Monto a cobrar al entregar" en tiempo real. Es
+              una LÍNEA de la venta: suma al total, sale en el ticket y es facturable. */}
+          <div className="rounded-xl border border-orange-200 bg-orange-50/40 px-4 py-3 flex flex-col gap-3">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700">
+                <Truck size={16} className="text-orange-600" /> ¿Cargar {nombreFlete.toLowerCase()} al cliente?
+              </span>
+              <input type="checkbox" checked={conFlete} onChange={(e) => setConFlete(e.target.checked)}
+                className="w-5 h-5 accent-orange-600" />
+            </label>
+
+            {conFlete && (
+              <>
+                <Campo label="Precio del flete" icon={Banknote} requerido error={tocado && conFlete && !fleteValido}>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                    <input value={fletePrecio} onChange={(e) => setFletePrecio(e.target.value.replace(/[^0-9.,]/g, ""))}
+                      inputMode="decimal" className={`${inputCls(tocado && conFlete && !fleteValido)} pl-7`} placeholder="0.00" />
+                  </div>
+                </Campo>
+                <p className="text-[11px] text-gray-400 leading-snug">
+                  El flete se agrega como una línea de la venta: suma al total, aparece en el ticket
+                  y puede facturarse.{pagada ? " Se cobra hoy junto con la venta." : " El repartidor lo cobra junto con la mercancía."}
+                </p>
+              </>
+            )}
+          </div>
 
           {/* Paga con / cambio — cuando hay algo por cobrar al entregar (contra
               entrega, o pagada con resta > 0). El repartidor lleva el cambio. */}
@@ -234,7 +285,8 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
                   className={inputCls(tocado && faltaRecibeN)} placeholder="Quién recibe el material" />
               </Campo>
               <Campo label="Teléfono" icon={Phone} requerido error={tocado && faltaRecibeT}>
-                <input value={recibeTel} onChange={(e) => setRecibeTel(e.target.value)} inputMode="tel"
+                <input value={recibeTel} onChange={(e) => setRecibeTel(soloTelefono(e.target.value))} inputMode="numeric"
+                  type="tel" maxLength={10}
                   className={inputCls(tocado && faltaRecibeT)} placeholder="953 000 0000" />
               </Campo>
             </div>
@@ -254,64 +306,6 @@ export function FichaEntregaModal({ total, pagada = false, abonado = 0, onCancel
             <textarea value={comentarios} onChange={(e) => setComentarios(e.target.value)} rows={2}
               className={inputCls(false)} placeholder="Ej. Casa azul junto a la tienda, portón negro, entre calles…" />
           </Campo>
-
-          {/* Flete (opcional) — separado del total de la venta. */}
-          <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 flex flex-col gap-3">
-            <label className="flex items-center justify-between cursor-pointer">
-              <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-700">
-                <Truck size={16} className="text-orange-600" /> ¿Cargar flete al cliente?
-              </span>
-              <input type="checkbox" checked={conFlete} onChange={(e) => setConFlete(e.target.checked)}
-                className="w-5 h-5 accent-orange-600" />
-            </label>
-
-            {conFlete && (
-              <>
-                <Campo label="Precio del flete" icon={Banknote} requerido error={tocado && conFlete && !fleteValido}>
-                  <div className="relative">
-                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
-                    <input value={fletePrecio} onChange={(e) => setFletePrecio(e.target.value.replace(/[^0-9.,]/g, ""))}
-                      inputMode="decimal" autoFocus className={`${inputCls(tocado && conFlete && !fleteValido)} pl-7`} placeholder="0.00" />
-                  </div>
-                </Campo>
-
-                {/* ¿Cuándo se cobra el flete? */}
-                <div className="flex flex-col gap-1.5">
-                  <span className="text-xs font-medium text-gray-600">¿Cuándo se cobra el flete?</span>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => setFleteCuando("tienda")}
-                      className={`px-3 py-2.5 rounded-lg text-sm font-medium border ${
-                        fleteCuando === "tienda" ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-                      }`}>
-                      En tienda ahora
-                    </button>
-                    <button type="button" onClick={() => setFleteCuando("entregar")}
-                      className={`px-3 py-2.5 rounded-lg text-sm font-medium border ${
-                        fleteCuando === "entregar" ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-300 hover:bg-gray-50"
-                      }`}>
-                      Al entregar
-                    </button>
-                  </div>
-                </div>
-
-                {/* Método del cobro en tienda (solo si es "en tienda ahora"). */}
-                {fleteCuando === "tienda" && (
-                  <Campo label="Método del flete" icon={Wallet}>
-                    <select value={fleteMetodo} onChange={(e) => setFleteMetodo(e.target.value)}
-                      className={inputCls(false)}>
-                      <option value="efectivo">Efectivo</option>
-                      <option value="transferencia">Transferencia</option>
-                      <option value="tarjeta">Tarjeta</option>
-                    </select>
-                  </Campo>
-                )}
-                <p className="text-[11px] text-gray-400 leading-snug">
-                  El flete no aparece en el ticket de la compra; se imprime aparte.
-                  {fleteCuando === "entregar" && " El repartidor lo cobra junto con lo que reste."}
-                </p>
-              </>
-            )}
-          </div>
 
           {tocado && invalido && (
             <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-sm text-red-700">
