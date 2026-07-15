@@ -807,7 +807,9 @@ export type Routes = {
         };
         ticketConfig: typeof import("../../src/api/caja/ticket-config/route");
         turnosConfig: typeof import("../../src/api/caja/turnos-config/route");
-        usuarios: typeof import("../../src/api/caja/usuarios/route");
+        usuarios: typeof import("../../src/api/caja/usuarios/route") & {
+            validarPin: typeof import("../../src/api/caja/usuarios/validar-pin/route");
+        };
         ventas: typeof import("../../src/api/caja/ventas/route") & {
             $folio: typeof import("../../src/api/caja/ventas/[folio]/route");
         };

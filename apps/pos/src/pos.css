@@ -2072,12 +2072,15 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   background: var(--bg-card);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  padding: 24px;
+  padding: 28px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 20px;
-  max-width: 360px;
+  /* Vista previa en PANTALLA más ancha y legible que el papel real (80mm). El
+     ticket sigue imprimiéndose a 76-80mm real (ESC/POS o @media print) — este
+     ancho solo agranda la lectura en el modal antes de imprimir. */
+  max-width: 520px;
   width: 100%;
 }
 
@@ -2120,40 +2123,43 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   border-color: #bfdbfe;
 }
 
-/* El ticket en sí — mismo estilo en pantalla y en papel */
+/* El ticket en sí. EN PANTALLA se agranda (ancho + tipografía) para que sea
+   legible en el modal de vista previa; el @media print de abajo lo devuelve a
+   76mm reales (el tamaño de pantalla NO afecta el papel impreso). */
 .ticket {
-  width: 76mm;
+  width: 100%;
+  max-width: 460px;
   font-family: "Courier New", monospace;
-  font-size: 11pt;
+  font-size: 15pt;
   color: #000;
   background: #fff;
-  padding: 4mm 3mm;
+  padding: 6mm 5mm;
   border: 1px dashed #aaa;
 }
 
 .ticket-header { text-align: center; margin-bottom: 4mm; }
-.ticket-negocio { font-size: 16pt; font-weight: bold; letter-spacing: 2px; margin: 0; }
-.ticket-sub { font-size: 9pt; margin: 1mm 0 0; }
+.ticket-negocio { font-size: 21pt; font-weight: bold; letter-spacing: 2px; margin: 0; }
+.ticket-sub { font-size: 12pt; margin: 1mm 0 0; }
 
 .ticket-separador {
   text-align: center;
   margin: 3mm 0;
-  font-size: 10pt;
+  font-size: 13pt;
   letter-spacing: -1px;
 }
 
-.ticket-meta { font-size: 10pt; margin: 1mm 0; }
+.ticket-meta { font-size: 13pt; margin: 1mm 0; }
 
 .ticket-tabla {
   width: 100%;
   border-collapse: collapse;
   margin: 2mm 0;
-  font-size: 9pt;
+  font-size: 12pt;
 }
 
 .ticket-col-desc { width: 45%; }
 .ticket-col-num  { width: 18.3%; text-align: right; }
-.ticket-encargo { font-weight: bold; font-size: 8pt; }
+.ticket-encargo { font-weight: bold; font-size: 11pt; }
 /* Casilla ☐ para palomear artículos en la hoja del repartidor — grande y visible. */
 .ticket-casilla {
   display: inline-block;
@@ -2168,7 +2174,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   font-weight: bold;
   border-bottom: 1px solid #000;
   padding-bottom: 1mm;
-  font-size: 9pt;
+  font-size: 12pt;
 }
 
 .ticket-tabla td { padding: 1mm 0; vertical-align: top; }
@@ -2176,12 +2182,12 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .ticket-fila-resumen {
   display: flex;
   justify-content: space-between;
-  font-size: 11pt;
+  font-size: 15pt;
   margin: 1mm 0;
 }
 
-.ticket-cambio { font-weight: bold; font-size: 12pt; margin-top: 2mm; }
-.ticket-gracias { text-align: center; font-size: 10pt; margin-top: 2mm; }
+.ticket-cambio { font-weight: bold; font-size: 16pt; margin-top: 2mm; }
+.ticket-gracias { text-align: center; font-size: 13pt; margin-top: 2mm; }
 
 /* Impresión: ocultar todo excepto el ticket usando visibility */
 @page {
@@ -2192,15 +2198,25 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 @media print {
   body { visibility: hidden; }
 
+  /* El papel real siempre es 76mm/11pt sin importar cómo se agrandó la vista
+     previa en pantalla (.ticket-preview-box / .ticket de arriba). */
   .ticket {
     visibility: visible;
     position: fixed;
     top: 0;
     left: 0;
     width: 76mm;
+    max-width: 76mm;
+    font-size: 11pt;
     border: none;
     padding: 2mm;
   }
+  .ticket-negocio { font-size: 16pt; }
+  .ticket-sub, .ticket-meta, .ticket-tabla, .ticket-tabla th, .ticket-encargo { font-size: 9pt; }
+  .ticket-separador { font-size: 10pt; }
+  .ticket-fila-resumen { font-size: 11pt; }
+  .ticket-cambio { font-size: 12pt; }
+  .ticket-gracias { font-size: 10pt; }
 
   .ticket * { visibility: visible; }
 

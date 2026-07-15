@@ -1026,6 +1026,22 @@ export async function obtenerUsuarios(incluirPin = false): Promise<PosUsuario[]>
   return apiFetch<PosUsuario[]>("/caja/usuarios")
 }
 
+/**
+ * Valida un PIN de administrador/supervisor SIN exponer PINs al cliente (el
+ * backend compara contra usuarios-pos.json). Usado por confirmaciones sensibles
+ * (p. ej. eliminar cuenta de crédito) que necesitan autorización de rol elevado
+ * sin depender de VITE_POS_ADMIN_TOKEN para leer PINs en el navegador.
+ */
+export async function validarPinAutorizacionAPI(
+  pin: string,
+  roles?: Array<"admin" | "supervisor">
+): Promise<{ valido: boolean; nombre?: string; rol?: string }> {
+  return apiFetch("/caja/usuarios/validar-pin", {
+    method: "POST",
+    body: JSON.stringify({ pin, ...(roles ? { roles } : {}) }),
+  })
+}
+
 /** Valida el PIN de un cajero en el servidor. Devuelve el usuario sin pin, o lanza. */
 export async function login(usuario_id: string, pin: string): Promise<PosUsuario> {
   return apiFetch<PosUsuario>("/caja/login", {
