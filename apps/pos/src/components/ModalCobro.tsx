@@ -20,7 +20,7 @@ import { FichaEntregaModal, type DatosFichaEntrega } from "./FichaEntregaModal"
 import { usePOS, efectivoPrecio, type CartItem } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
-import { formatMXN as fmt } from "../lib/format"
+import { formatMXN as fmt, saneaMontoDecimal as saneaMonto } from "../lib/format"
 
 interface ModalCobroProps {
   onCerrar: () => void
@@ -82,19 +82,6 @@ const METODOS: { id: Metodo; label: string; icon: LucideIcon }[] = [
   { id: "credito",       label: "Crédito",       icon: FileText },
 ]
 
-/**
- * Sanea un monto tecleado: acepta la coma como separador decimal (la convierte a
- * punto), descarta cualquier carácter no numérico y deja a lo sumo un punto. Así
- * el campo SIEMPRE se muestra y guarda con punto, independientemente del locale
- * del navegador (que en es-MX renderizaría un input number con coma).
- */
-function saneaMonto(raw: string): string {
-  const soloNumero = raw.replace(",", ".").replace(/[^0-9.]/g, "")
-  const partes = soloNumero.split(".")
-  if (partes.length <= 1) return soloNumero
-  // Reúne todo lo posterior al primer punto en la parte decimal (un solo punto).
-  return `${partes[0]}.${partes.slice(1).join("")}`
-}
 
 export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const { state, total, dispatch, promosCarrito } = usePOS()
@@ -654,6 +641,17 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
                 presentacion: i.presentacion ?? "",
               }
             : {}),
+          // Venta por UNIDAD DE COMPRA completa (ej. "Bolsa"): `cantidad` en el
+          // carrito es el número de BOLSAS (para cobrar precio × cantidad
+          // correctamente); el backend descuenta cantidad × factor PIEZAS reales
+          // del inventario — a diferencia del granel, SÍ valida/bloquea si no
+          // alcanza (ver /caja/ventas). `unidad_compra_factor` viaja para eso.
+          ...(i.esUnidadCompra
+            ? {
+                unidad_compra_factor: i.compraVentaFactor ?? 1,
+                presentacion: i.unidadCompraNombre ?? "",
+              }
+            : {}),
           // Venta por encargo. Dos sabores:
           //  - MIXTO (esEncargo o cantidad > stock): el backend vende lo que hay y
           //    encarga el faltante. Enviamos `existencia` para que parta la línea.
@@ -1165,7 +1163,7 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               Cancelar
             </button>
             <button
-              onClick={handleConfirmar}
+              onClick={() => handleConfirmar()}
               disabled={!cubierto || procesando}
               className="flex-[2] inline-flex items-center justify-center gap-2 bg-green-600 text-white px-4 py-3 rounded-xl text-sm font-bold hover:bg-green-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
               {procesando ? "Procesando…" : <><Check size={18} /> Confirmar y ticket</>}

@@ -129,6 +129,18 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     precio2: metaNum(meta, "precio2"),
     precio3: metaNum(meta, "precio3"),
     precio4: metaNum(meta, "precio4"),
+    // Precios de la UNIDAD DE VENTA (ej. Metro), independientes de los de arriba
+    // (unidad de COMPRA, ej. Rollo). Solo tienen sentido cuando unidadVenta !=
+    // unidadCompra. Sin relación matemática automática — el admin los captura a
+    // mano. `margenVenta` = % que precioVenta1 representa de precio1 al momento
+    // de capturarlo, guardado para que una futura precarga de factura (que
+    // actualiza precio1..4) pueda recalcular precioVenta1..4 respetando la
+    // proporción que el admin ya había fijado, sin recapturar a mano.
+    precioVenta1: metaNum(meta, "precioVenta1"),
+    precioVenta2: metaNum(meta, "precioVenta2"),
+    precioVenta3: metaNum(meta, "precioVenta3"),
+    precioVenta4: metaNum(meta, "precioVenta4"),
+    margenVenta: metaNum(meta, "margenVenta"),
     claveSat: metaStr(meta, "claveSat"),
     proveedor: metaStr(meta, "proveedor"),
     proveedor_id: metaStr(meta, "proveedor_id"),
@@ -644,6 +656,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         precio2: body.precio2 ?? 0,
         precio3: body.precio3 ?? 0,
         precio4: body.precio4 ?? 0,
+        precioVenta1: body.precioVenta1 ?? 0,
+        precioVenta2: body.precioVenta2 ?? 0,
+        precioVenta3: body.precioVenta3 ?? 0,
+        precioVenta4: body.precioVenta4 ?? 0,
+        margenVenta: body.margenVenta ?? 0,
         claveSat: body.claveSat ?? "",
         proveedor: body.proveedor ?? "",
         proveedor_id: body.proveedor_id ?? "",
@@ -761,6 +778,11 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       precio2: body.precio2 ?? 0,
       precio3: body.precio3 ?? 0,
       precio4: body.precio4 ?? 0,
+      precioVenta1: body.precioVenta1 ?? 0,
+      precioVenta2: body.precioVenta2 ?? 0,
+      precioVenta3: body.precioVenta3 ?? 0,
+      precioVenta4: body.precioVenta4 ?? 0,
+      margenVenta: body.margenVenta ?? 0,
       claveSat: body.claveSat ?? "",
       proveedor: body.proveedor ?? "",
       proveedor_id: body.proveedor_id ?? "",

@@ -95,6 +95,17 @@ export interface CartItem {
   // y su precio lo define el vendedor en la ficha de entrega. Solo puede haber una
   // línea de flete por venta.
   esFlete?: boolean
+  // Línea vendida por UNIDAD DE COMPRA completa (ej. "Bolsa", cuando la unidad
+  // de compra ≠ unidad de venta — ver ArticleDrawer § Precios de Venta). A
+  // diferencia del granel, el inventario es REAL: `cantidad` = número de bolsas
+  // (para cobrar precio × cantidad correctamente), `existencia` YA viene
+  // convertida a bolsas (existencia real en piezas ÷ factor) para que el tope
+  // del carrito funcione en la misma unidad que `cantidad`. El backend usa
+  // `compraVentaFactor` para descontar cantidad × factor piezas reales del
+  // inventario (bloqueante, nunca a negativo — ver /caja/ventas).
+  esUnidadCompra?: boolean
+  unidadCompraNombre?: string
+  compraVentaFactor?: number
 }
 
 /** Los 4 modos de la pantalla de venta (derivados de los flags del estado). */
@@ -181,7 +192,12 @@ type PosAction =
   | { type: "ADD_ITEM"; item: Omit<CartItem, "cantidad"> }
   | { type: "INCREMENT"; sku: string }
   | { type: "DECREMENT"; sku: string }
-  | { type: "SET_CANTIDAD"; sku: string; cantidad: number }
+  // `precisionAlta`: evita el redondeo a milésimas de la cantidad granel. Lo usa
+  // la captura por MONTO ($) del carrito: si se redondeara a 0.001, cantidad×precio
+  // ya no cuadra al centavo con el monto tecleado (ej. $90 → $89.98). Con precisión
+  // alta, cantidad × precio SÍ da el monto exacto; el resto de ajustes (+/-, tecleo
+  // directo de cantidad) siguen redondeando a milésimas como siempre.
+  | { type: "SET_CANTIDAD"; sku: string; cantidad: number; precisionAlta?: boolean }
   // Marca/desmarca una línea como "venta por encargo" (sin stock). Si `sku` se
   // omite, aplica a TODAS las líneas que exceden su existencia (uso del modal de
   // encargo: "vender todo lo faltante por encargo").
@@ -308,7 +324,12 @@ function posReducer(state: PosState, action: PosAction): PosState {
       const esGranel = !!linea?.granel || !!linea?.esGranel
       const min = esGranel ? 0.001 : 1
       const bruto = Math.max(min, Math.min(action.cantidad, tope))
-      const clamped = esGranel ? Math.round(bruto * 1000) / 1000 : bruto
+      // Precisión alta (captura por monto): redondea a 6 decimales, suficiente
+      // para que cantidad × precio cuadre exacto al centavo con el monto tecleado.
+      // Precisión normal (tecleo directo / +−): redondea a milésimas, como siempre.
+      const clamped = esGranel
+        ? Math.round(bruto * (action.precisionAlta ? 1e6 : 1e3)) / (action.precisionAlta ? 1e6 : 1e3)
+        : bruto
       return {
         ...state,
         items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),

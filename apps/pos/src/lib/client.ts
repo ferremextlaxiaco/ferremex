@@ -34,6 +34,24 @@ export interface ProductoPOS {
   // es el código SAT de la unidad (ej. "KGM", "MTR"); se muestra abreviada.
   granel?: boolean
   unidadVenta?: string
+  // Unidad de COMPRA + factor (ej. Rollo = 50 Metros de unidadVenta). Cuando
+  // difieren de la unidad de venta, `presentaCompraVenta` (derivado por el
+  // backend) indica que el POS debe ofrecer vender también por la presentación
+  // de compra completa. Inventario REAL: se descuenta siempre en unidad de
+  // venta y SÍ bloquea si no alcanza (a diferencia del granel, informativo).
+  // Ver PresentacionSelectorModal.
+  unidadCompra?: string
+  factor?: number
+  presentaCompraVenta?: boolean
+  // Precios de la UNIDAD DE VENTA (ej. Metro) — independientes de precio1-4
+  // (unidad de COMPRA, ej. Rollo). Solo tienen sentido si unidadVenta !=
+  // unidadCompra; se capturan a mano en ArticleDrawer, sin relación matemática
+  // automática con precio1-4. El selector de "vender por unidad suelta" usa
+  // estos; el de "unidad de compra completa" usa precio1-4.
+  precioVenta1?: number
+  precioVenta2?: number
+  precioVenta3?: number
+  precioVenta4?: number
   // Artículo especial (a granel): inventario informativo + presentaciones
   // (padre→hijos) + interruptor manual de disponibilidad. Ver ArticleDrawer y
   // PresentacionSelectorModal. `esGranel` = es artículo especial; `agotado` =
@@ -364,6 +382,14 @@ export interface ArticuloPOS {
   precio2: number
   precio3: number
   precio4: number
+  // Precios de la UNIDAD DE VENTA (ej. Metro) — ver ProductoPOS. `margenVenta`
+  // = % que precioVenta1 representaba de precio1 al capturarse (informativo hoy;
+  // servirá para recalcular automático cuando exista la precarga de facturas).
+  precioVenta1?: number
+  precioVenta2?: number
+  precioVenta3?: number
+  precioVenta4?: number
+  margenVenta?: number
   claveSat: string
   proveedor?: string
   /** ID del proveedor en el catálogo (ferremex_proveedores). Vacío = sin vincular

@@ -111,8 +111,14 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
             // GRANEL: se descontó `granel_descuento` (unidad base), no `cantidad`
             // (presentaciones). Reintegramos exactamente lo que se descontó; 0 si la
             // presentación no tenía factor (nunca tocó inventario).
-            const g = it as { granel?: boolean; granel_descuento?: number }
-            const reintegro = g.granel ? (Number(g.granel_descuento) || 0) : it.cantidad
+            // UNIDAD DE COMPRA (ej. "Bolsa"): se descontó cantidad × factor piezas
+            // reales, no `cantidad` (que está en bolsas) — mismo criterio que granel.
+            const g = it as { granel?: boolean; granel_descuento?: number; unidad_compra_factor?: number }
+            const reintegro = g.granel
+              ? (Number(g.granel_descuento) || 0)
+              : g.unidad_compra_factor
+                ? it.cantidad * g.unidad_compra_factor
+                : it.cantidad
             if (reintegro > 0) {
               await inventoryModule.adjustInventory(invId, locId, +reintegro)
             }

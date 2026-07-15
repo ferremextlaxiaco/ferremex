@@ -30,3 +30,19 @@ export function formatMXNAbs(n: number): string {
 export function soloTelefono(valor: string): string {
   return (valor || "").replace(/\D/g, "").slice(0, 10)
 }
+
+/**
+ * Sanea la entrada de un monto decimal escrito a mano: deja solo dígitos y UN
+ * punto decimal (convierte comas a punto, descarta puntos/comas adicionales).
+ * Usar SIEMPRE con `type="text" inputMode="decimal"`, nunca `type="number"`:
+ * el input number en locale es-MX renderiza/acepta COMA como separador decimal
+ * (aunque el `value` HTML interno use punto), lo que confunde al cajero — el
+ * campo debe verse y capturarse siempre con punto, sin importar el locale del
+ * navegador/OS. Uso: onChange={(e) => setMonto(saneaMontoDecimal(e.target.value))}
+ */
+export function saneaMontoDecimal(raw: string): string {
+  const soloNumero = raw.replace(",", ".").replace(/[^0-9.]/g, "")
+  const partes = soloNumero.split(".")
+  if (partes.length <= 1) return soloNumero
+  return `${partes[0]}.${partes.slice(1).join("")}`
+}

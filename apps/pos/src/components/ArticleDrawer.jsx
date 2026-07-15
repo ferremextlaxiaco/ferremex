@@ -22,8 +22,12 @@ function calcCostos(form) {
     costoSinIva = base
     costoConIva = form.aplicarIva ? round2(base * 1.16) : base
   }
+  // "Por unidad de venta" es solo informativo (costo de compra ÷ factor). Precio 4
+  // (break-even real, mostrado en "Precios de Venta") es el costo de COMPRA
+  // directo, sin dividir — Precio 1-4 son precios por unidad de COMPRA, igual
+  // que el resto de esa sección (ver ArticleDrawer § Precios de Venta).
   const costoCalc = round2(costoSinIva / factor)
-  const precio4   = form.aplicarIva ? round2(costoCalc * 1.16) : costoCalc
+  const precio4   = costoSinIva
   return { costoSinIva, costoConIva, costoCalc, precio4 }
 }
 
@@ -76,6 +80,43 @@ function PrecioRow({ label, required, value, onChange, readOnly, costoCalc, apli
   )
 }
 
+// Fila de precio para la sección "Precios de Venta" (unidad de venta, ej. Metro).
+// Muestra el MARGEN real (ganancia vs costo), igual criterio que PrecioRow —
+// pero comparado contra `costoCalc` (costo de compra ya convertido a la unidad
+// de VENTA, es decir costo de compra ÷ factor), no contra el costo de compra
+// directo (que está en otra unidad y no es comparable).
+function PrecioVentaRow({ n, value, onChange, aplicarIva, costoCalc, disabled }) {
+  const sinIva = Number(value) || 0
+  const conIva = aplicarIva ? round2(sinIva * 1.16) : sinIva
+  const margen = sinIva > 0 && costoCalc > 0
+    ? round2(((sinIva - costoCalc) / sinIva) * 100) : null
+  const [texto, setTexto] = useState(null)
+  const valorMostrado = texto !== null ? texto : (conIva ? String(conIva) : "")
+  return (
+    <>
+      <span className="ar-pr-label">Precio {n}</span>
+      <input
+        type="text" inputMode="decimal" placeholder="0.00"
+        className={`ar-input${disabled ? " ar-input-ro" : ""}`}
+        value={disabled ? "" : valorMostrado}
+        disabled={disabled}
+        onChange={disabled ? undefined : (e) => {
+          let raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "")
+          const i = raw.indexOf(".")
+          if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
+          setTexto(raw)
+          const v = Number(raw) || 0
+          onChange(raw === "" ? "" : (aplicarIva ? round4(v / 1.16) : round4(v)))
+        }}
+        onBlur={disabled ? undefined : () => setTexto(null)}
+      />
+      <span className={`ar-pr-pct${margen !== null && margen < 0 ? " neg" : ""}`}>
+        {disabled ? "—" : (margen !== null ? `${margen.toFixed(1)}%` : "—")}
+      </span>
+    </>
+  )
+}
+
 function UnidadSatSelect({ value, onChange }) {
   return (
     <select
@@ -102,6 +143,11 @@ const EMPTY_FORM = {
   aplicarIva: true,
   precioCompra: "", precioNeto: false,
   precio1: "", precio2: "", precio3: "", precio4: "",
+  // Precios de la unidad de VENTA (ej. Metro), solo si difiere de la unidad de
+  // COMPRA (ej. Rollo) — independientes, capturados a mano. `margenVenta` = %
+  // guardado al capturar Precio Venta 1 (para la futura precarga de facturas).
+  precioVenta1: "", precioVenta2: "", precioVenta3: "", precioVenta4: "",
+  margenVenta: "",
   claveSat: "",
   inventarioMin: "", inventarioMax: "",
   localizacion: "", peso: "",
@@ -340,8 +386,9 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
     const errs = validate()
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
     // Los precios se guardan SIN IVA (base), igual que como entran (PrecioRow ya
-    // convirtió de c/IVA a s/IVA al teclear). precio4 = break-even s/IVA (costoCalc).
-    const { costoCalc } = calcCostos(form)
+    // convirtió de c/IVA a s/IVA al teclear). precio4 = costo de compra directo
+    // s/IVA (break-even de la unidad de COMPRA, no dividido por factor).
+    const { precio4 } = calcCostos(form)
     onSave({
       ...form,
       clave: form.clave.trim(),
@@ -351,7 +398,16 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
       precio1: Number(form.precio1) || 0,
       precio2: Number(form.precio2) || 0,
       precio3: Number(form.precio3) || 0,
-      precio4: costoCalc,   // break-even s/IVA (se muestra c/IVA en PrecioRow)
+      precio4,
+      // Precios de la unidad de VENTA — solo se persisten si U.Compra ≠ U.Venta
+      // (si son iguales, no se muestra la sección y no tiene sentido guardarlos).
+      ...(form.unidadCompra !== form.unidadVenta ? {
+        precioVenta1: Number(form.precioVenta1) || 0,
+        precioVenta2: Number(form.precioVenta2) || 0,
+        precioVenta3: Number(form.precioVenta3) || 0,
+        precioVenta4: Number(form.precioVenta4) || 0,
+        margenVenta: Number(form.margenVenta) || 0,
+      } : { precioVenta1: 0, precioVenta2: 0, precioVenta3: 0, precioVenta4: 0, margenVenta: 0 }),
       inventarioMin: Number(form.inventarioMin) || 0,
       inventarioMax: Number(form.inventarioMax) || 0,
       peso: Number(form.peso) || 0,
@@ -578,23 +634,9 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
           {/* Unidades */}
           <p className="ar-section-title">Unidades</p>
 
-          <div className="ar-grid-3">
-            <Field label="U. Compra">
-              <UnidadSatSelect value={form.unidadCompra} onChange={(v) => f("unidadCompra", v)} />
-            </Field>
-            <Field label="U. Venta">
-              <UnidadSatSelect value={form.unidadVenta} onChange={(v) => f("unidadVenta", v)} />
-            </Field>
-            <Field
-              label="Factor"
-              error={errors.factor}
-              tooltip="Unidades de venta por unidad de compra. Ej: 1 Rollo = 50 m"
-            >
-              <input type="number" min="0.001" step="any"
-                className={`ar-input${errors.factor ? " error" : ""}`}
-                value={form.factor} onChange={(e) => f("factor", e.target.value)} />
-            </Field>
-          </div>
+          <Field label="U. Compra">
+            <UnidadSatSelect value={form.unidadCompra} onChange={(v) => f("unidadCompra", v)} />
+          </Field>
 
           {/* Precios */}
           <p className="ar-section-title">Precios</p>
@@ -663,10 +705,80 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
                   />
                 ))}
                 <PrecioRow key={4}
-                  label="Precio 4" value={c.costoCalc}
+                  label="Precio 4" value={c.precio4}
                   readOnly costoCalc={c.costoCalc} aplicarIva={form.aplicarIva}
                 />
               </div>
+            )
+          })()}
+
+          {/* Precios de la UNIDAD DE VENTA (ej. Metro). U.Venta + Factor viven
+              aquí (no en "Unidades") porque solo tienen sentido junto a estos
+              precios. Si U.Venta = U.Compra, los 4 precios se bloquean (no hay
+              unidad de venta distinta que fijarles precio propio). Cuando
+              difieren, son independientes de Precio 1-4 de arriba — capturados a
+              mano, sin relación matemática automática. Al llenar Precio Venta 1
+              se guarda `margenVenta` (% vs Precio 1 de compra) para que una
+              futura precarga de facturas pueda recalcularlos solo. */}
+          <div className="ar-grid-2">
+            <Field label="U. Venta">
+              <UnidadSatSelect value={form.unidadVenta} onChange={(v) => f("unidadVenta", v)} />
+            </Field>
+            <Field
+              label="Factor"
+              error={errors.factor}
+              tooltip="Unidades de venta por unidad de compra. Ej: 1 Rollo = 50 m"
+            >
+              <input type="number" min="0.001" step="any"
+                className={`ar-input${errors.factor ? " error" : ""}`}
+                value={form.factor} onChange={(e) => f("factor", e.target.value)} />
+            </Field>
+          </div>
+
+          {(() => {
+            const unidadesIguales = !form.unidadCompra || !form.unidadVenta || form.unidadCompra === form.unidadVenta
+            return (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="ar-label" style={{ margin: 0 }}>
+                    Precios de Venta — por {(UNIDADES_SAT.find((u) => u.clave === form.unidadVenta)?.nombre ?? "unidad de venta").toLowerCase()}
+                  </span>
+                  {form.aplicarIva && <span className="ar-iva-badge">c/IVA 16%</span>}
+                </div>
+                <p className="ar-margen-hint">
+                  {unidadesIguales
+                    ? "Elige una U. Venta distinta a la U. Compra para poder fijar un precio propio por esa unidad."
+                    : `Independientes de los Precios de arriba (por ${(UNIDADES_SAT.find((u) => u.clave === form.unidadCompra)?.nombre ?? "unidad de compra").toLowerCase()}). Tú los capturas — no se calculan con el Factor.`}
+                </p>
+                <div className="ar-pr-rows">
+                  {[1, 2, 3, 4].map((n) => {
+                    const sinIvaCompra = Number(form.precio1) || 0
+                    // Margen mostrado = ganancia vs el costo de compra CONVERTIDO
+                    // a unidad de venta (costoCalc = costo compra ÷ factor), no
+                    // vs el costo de compra directo (otra unidad, no comparable).
+                    const { costoCalc } = calcCostos(form)
+                    return (
+                      <PrecioVentaRow key={n}
+                        n={n}
+                        value={form[`precioVenta${n}`]}
+                        onChange={(v) => {
+                          f(`precioVenta${n}`, v)
+                          // Guarda el % de relación SOLO al capturar Precio Venta 1
+                          // (el principal) — es el que usará la futura precarga de
+                          // facturas para recalcular. Requiere Precio 1 > 0.
+                          if (n === 1 && sinIvaCompra > 0) {
+                            const nuevoSinIva = Number(v) || 0
+                            f("margenVenta", nuevoSinIva > 0 ? round2((nuevoSinIva / sinIvaCompra) * 100) : "")
+                          }
+                        }}
+                        aplicarIva={form.aplicarIva}
+                        costoCalc={costoCalc}
+                        disabled={unidadesIguales}
+                      />
+                    )
+                  })}
+                </div>
+              </>
             )
           })()}
 

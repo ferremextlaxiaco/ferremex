@@ -6,7 +6,7 @@ import { claveLinea, promosDeArticulo, describirPromo, etiquetaPromo, contextoDe
 import { SugerenciaPaquete } from "./SugerenciaPaquete"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
 import { DetallePromoModal } from "./DetallePromoModal"
-import { formatMXN } from "../lib/format"
+import { formatMXN, saneaMontoDecimal } from "../lib/format"
 import type { Paquete, Promocion } from "../lib/client"
 
 interface CarritoProps {
@@ -99,7 +99,10 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
           precioUnit = precio2
           cant = monto / precioUnit
         }
-        dispatch({ type: "SET_CANTIDAD", sku, cantidad: cant })
+        // precisionAlta: sin este flag, el reducer redondea a milésimas y
+        // cantidad×precio deja de cuadrar exacto con el monto tecleado (ej. $90
+        // → $89.98). Con precisión alta, el importe final SÍ es el monto exacto.
+        dispatch({ type: "SET_CANTIDAD", sku, cantidad: cant, precisionAlta: true })
       }
     }
     setMontoDrafts((prev) => { const next = { ...prev }; delete next[sku]; return next })
@@ -253,10 +256,13 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
           {sueltos.map((item) => {
             const esGranel = !!item.granel
             const draft = drafts[item.sku]
-            // En granel se muestran hasta 3 decimales (ej. 0.541); en entero, tal cual.
+            // En granel se MUESTRAN hasta 3 decimales (ej. 0.541) aunque el valor
+            // real tenga más precisión internamente (ver precisionAlta en
+            // commitMonto / pos-store): así el importe cuadra exacto con el monto
+            // tecleado sin que el input se vea con decimales largos e ilegibles.
             const displayValue = draft !== undefined
               ? draft
-              : esGranel ? String(item.cantidad) : String(item.cantidad)
+              : esGranel ? String(Math.round(item.cantidad * 1000) / 1000) : String(item.cantidad)
             const unidadAbrev = abreviaturaUnidad(item.unidadVenta ?? "")
 
             const precioEfectivo = efectivoPrecio(item)
@@ -400,7 +406,7 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                       max={sinTopeCantidad ? undefined : item.existencia}
                       value={displayValue}
                       onClick={(e) => e.stopPropagation()}
-                      onFocus={(e) => { startDraft(item.sku, item.cantidad); e.target.select() }}
+                      onFocus={(e) => { startDraft(item.sku, esGranel ? Math.round(item.cantidad * 1000) / 1000 : item.cantidad); e.target.select() }}
                       onChange={(e) => setDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
                       onBlur={() => commitDraft(item.sku)}
                       onKeyDown={(e) => handleKeyDown(e, item.sku)}
@@ -422,15 +428,13 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
                       <span className="carrito-granel-monto-sign">$</span>
                       <input
                         className="carrito-granel-monto-input"
-                        type="number"
-                        min={0}
-                        step="0.01"
+                        type="text"
                         inputMode="decimal"
                         placeholder="monto"
                         value={montoDrafts[item.sku] ?? importeLinea.toFixed(2)}
                         onClick={(e) => e.stopPropagation()}
                         onFocus={(e) => { startMonto(item.sku, importeLinea); e.currentTarget.select() }}
-                        onChange={(e) => setMontoDrafts((prev) => ({ ...prev, [item.sku]: e.target.value }))}
+                        onChange={(e) => setMontoDrafts((prev) => ({ ...prev, [item.sku]: saneaMontoDecimal(e.target.value) }))}
                         onBlur={() => commitMonto(item.sku)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") { commitMonto(item.sku); e.currentTarget.blur() }

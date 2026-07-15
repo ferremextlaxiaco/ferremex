@@ -1249,7 +1249,7 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-cantidad:hover { background: var(--orange); color: #fff; }
 
 .carrito-item-cantidad-input {
-  width: 46px;
+  width: 68px;
   text-align: center;
   font-weight: 700;
   font-size: 14px;
@@ -1260,6 +1260,11 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding: 2px 4px;
   outline: none;
   -moz-appearance: textfield;
+}
+/* Granel: cantidades más largas (miles + decimales, ej. "2,432.432432") — más
+   ancho que el input estándar de cantidad entera. */
+.carrito-item-controles--granel .carrito-item-cantidad-input {
+  width: 92px;
 }
 .carrito-item-cantidad-input::-webkit-outer-spin-button,
 .carrito-item-cantidad-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -1292,30 +1297,29 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 .carrito-granel-monto {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 3px;
   border: 1px solid var(--orange);
   border-radius: 4px;
-  padding: 1px 6px;
+  padding: 2px 8px;
   background: rgba(249,99,2,0.06);
 }
 .carrito-granel-monto-sign {
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 800;
   color: var(--orange);
 }
 .carrito-granel-monto-input {
-  width: 58px;
+  width: 78px;
   text-align: right;
-  font-weight: 700;
-  font-size: 13px;
+  font-weight: 800;
+  font-size: 18px;
   color: var(--text);
   background: transparent;
   border: none;
   outline: none;
   padding: 1px 0;
+  font-variant-numeric: tabular-nums;
 }
-.carrito-granel-monto-input::-webkit-outer-spin-button,
-.carrito-granel-monto-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 .carrito-item-subtotal {
   font-weight: 800;
@@ -4423,6 +4427,17 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
   padding-bottom: 6px;
   margin-bottom: 2px;
 }
+
+.ar-margen-hint {
+  font-size: 12.5px;
+  color: var(--at-text-soft);
+  background: var(--at-bg);
+  border: 1px solid var(--at-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: -2px 0 0;
+}
+.ar-margen-hint strong { color: var(--at-text); }
 
 .ar-field { display: flex; flex-direction: column; gap: 4px; }
 

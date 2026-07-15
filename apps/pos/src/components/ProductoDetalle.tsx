@@ -8,9 +8,13 @@ import type { ProductoPOS, Promocion } from "../lib/client"
 interface ProductoDetalleProps {
   producto: ProductoPOS
   onVolver: () => void
+  /** Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros): si se pasa, el
+   *  botón "Agregar al carrito" abre el selector metro-vs-rollo en vez de
+   *  agregar directo por pieza. Ver Buscador.tsx. */
+  onSeleccionarCompraVenta?: (p: ProductoPOS) => void
 }
 
-export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
+export function ProductoDetalle({ producto, onVolver, onSeleccionarCompraVenta }: ProductoDetalleProps) {
   const { dispatch, state, promos } = usePOS()
   const [cantidad, setCantidad] = useState(1)
   // Texto crudo del input de cantidad. Se mantiene aparte de `cantidad` para
@@ -43,6 +47,9 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
   // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
   const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
   const skusEnCarrito = new Set(state.items.map((i) => i.sku))
+  // Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros): "Agregar al
+  // carrito" abre el selector metro-vs-rollo en vez de agregar directo.
+  const esCompraVenta = !!producto.presentaCompraVenta && !!onSeleccionarCompraVenta
 
   function handleAgregar(comoEncargo = false) {
     for (let i = 0; i < cantidad; i++) {
@@ -81,6 +88,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
       onVolver()
     }, 900)
   }
+
 
   return (
     <div className="detalle-wrapper">
@@ -152,7 +160,7 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
             )}
           </div>
 
-          {!bloqueadoPorStock && (
+          {!bloqueadoPorStock && !esCompraVenta && (
             <div className="detalle-cantidad">
               <span className="detalle-cantidad-label">Cantidad</span>
               <div className="detalle-cantidad-controles">
@@ -200,10 +208,12 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
             </div>
           )}
 
-          {/* Tres casos del botón principal:
+          {/* Cuatro casos del botón principal:
               1. Modo encargo + agotado → "Agregar por encargo" (sobre pedido).
               2. Venta normal + agotado → "Sin existencia" (deshabilitado, como antes).
-              3. Con stock / cotización → agregar normal. */}
+              3. Unidad de compra ≠ unidad de venta → abre el selector metro-vs-rollo
+                 (la cantidad/unidad se elige ahí, no en este stepper).
+              4. Con stock / cotización → agregar normal. */}
           {puedeEncargarDetalle ? (
             <button
               className={`btn-agregar-detalle btn-agregar-encargo ${agregado ? "btn-agregado" : ""}`}
@@ -219,6 +229,13 @@ export function ProductoDetalle({ producto, onVolver }: ProductoDetalleProps) {
           ) : bloqueadoPorStock ? (
             <button className="btn-agregar-detalle" disabled>
               <XCircle size={17} /> Sin existencia
+            </button>
+          ) : esCompraVenta ? (
+            <button
+              className="btn-agregar-detalle"
+              onClick={() => onSeleccionarCompraVenta!(producto)}
+            >
+              Elegir unidad y agregar
             </button>
           ) : (
             <button

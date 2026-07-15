@@ -16,7 +16,10 @@ import SelectorArticulosPopup from "../components/SelectorArticulosPopup"
  * posee este módulo, así persiste al cerrar/reabrir el popup mientras el módulo
  * esté montado.
  * Tabla rica (TanStack/DataTable): Localización, Stock, Nueva cantidad editable,
- * Diferencia (color), Monto $ (diferencia × precioCompra). Barra de resumen abajo.
+ * Diferencia (color), Monto $ (diferencia × costo por unidad de VENTA — el
+ * Precio de Compra del artículo se divide entre el Factor cuando U.Compra ≠
+ * U.Venta, ej. Precio de Compra por Bolsa ÷ 50 = costo por Pieza). Barra de
+ * resumen abajo.
  * Confirma vía ajustarInventario() con advertencia de cantidades negativas.
  *
  * Cumple el Contrato de Conexión: datos por client.ts, taxonomía por
@@ -64,12 +67,18 @@ export function InventarioModule() {
 
   // ── Helpers de filas ────────────────────────────────────────────────────────
   function filaDeArticulo(a) {
+    // Costo POR UNIDAD DE VENTA (la unidad en la que está "Stock actual"): el
+    // Precio de Compra del artículo es por unidad de COMPRA (ej. por Bolsa) —
+    // si difiere de la unidad de venta (Factor > 1), hay que dividir entre el
+    // Factor. Si no hay factor (artículo normal), es el mismo valor de siempre.
+    const factor = Number(a.factor) || 1
+    const costoUnidadVenta = (a.precioCompra ?? 0) / factor
     return {
       clave: a.clave,
       descripcion: a.descripcion,
       localizacion: a.localizacion || "",
       existencia: a.existencia ?? 0,
-      precioCompra: a.precioCompra ?? 0,
+      precioCompra: costoUnidadVenta,
       nueva: String(a.existencia ?? 0),
     }
   }

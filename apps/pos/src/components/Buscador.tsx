@@ -7,7 +7,8 @@ import { GridProductos } from "./GridProductos"
 import { GridPaquetes } from "./GridPaquetes"
 import { ProductoDetalle } from "./ProductoDetalle"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
-import { PresentacionSelectorModal } from "./PresentacionSelectorModal"
+import { PresentacionSelectorModal, ID_PRESENTACION_BASE } from "./PresentacionSelectorModal"
+import { nombreUnidad } from "../lib/unidades-sat"
 import type { PresentacionGranel } from "../lib/client"
 
 export function Buscador() {
@@ -32,6 +33,92 @@ export function Buscador() {
   const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
   // Artículo especial (a granel): producto cuyo selector de presentación está abierto.
   const [granelSel, setGranelSel] = useState<ProductoPOS | null>(null)
+  // Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros): producto cuyo
+  // selector "¿por metro o por rollo?" está abierto.
+  const [compraVentaSel, setCompraVentaSel] = useState<ProductoPOS | null>(null)
+
+  // Id reservado para la opción "unidad de compra completa" (ej. 1 Rollo).
+  const ID_UNIDAD_COMPRA = "__unidad_compra__"
+
+  // Presentaciones sintéticas para el selector: unidad de VENTA suelta (usa
+  // precioVenta1-4, cantidad libre) + unidad de COMPRA completa (usa precio1-4,
+  // cantidad = factor). Ambos juegos de precio son independientes — capturados a
+  // mano en ArticleDrawer, sin relación matemática (ni multiplicar por factor).
+  // Reutiliza PresentacionSelectorModal, pero a diferencia del granel el
+  // inventario es REAL — se agrega con el SKU real del producto (no compuesto),
+  // así el backend la trata como venta normal: valida y descuenta el stock real.
+  const presentacionesCompraVenta = useMemo<PresentacionGranel[]>(() => {
+    if (!compraVentaSel) return []
+    const factor = compraVentaSel.factor ?? 1
+    const precioUnidadVenta = compraVentaSel.precioVenta1 ?? 0
+    const precioUnidadCompra = compraVentaSel.precio
+    const stockAlcanzaCompra = compraVentaSel.existencia >= factor
+    return [
+      {
+        id: ID_PRESENTACION_BASE,
+        nombre: nombreUnidad(compraVentaSel.unidadVenta ?? ""),
+        precio: precioUnidadVenta,
+        factor: 1,
+        agotado: compraVentaSel.existencia <= 0,
+      },
+      {
+        id: ID_UNIDAD_COMPRA,
+        nombre: nombreUnidad(compraVentaSel.unidadCompra ?? ""),
+        precio: precioUnidadCompra,
+        factor,
+        agotado: !stockAlcanzaCompra,
+      },
+    ]
+  }, [compraVentaSel])
+
+  // Confirma la venta por unidad de venta suelta o por unidad de compra completa.
+  // AMBAS usan el SKU REAL del producto (inventario real, sin sku compuesto).
+  // "Unidad de venta": cantidad = piezas/metros sueltos, precio = precioVenta1-4,
+  // tope = existencia real tal cual. "Unidad de compra": cantidad = número de
+  // BOLSAS (no piezas — así precio × cantidad cobra correctamente), precio =
+  // precio1-4 (por bolsa), tope = existencia real ÷ factor (bolsas completas
+  // disponibles). El backend usa `compraVentaFactor` para descontar
+  // cantidad × factor piezas reales del inventario (bloqueante, ver /caja/ventas).
+  function agregarCompraVenta({ producto, presentacion, cantidad }:
+    { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) {
+    const esUnidadCompra = presentacion.id === ID_UNIDAD_COMPRA
+    const factor = producto.factor ?? 1
+    dispatch({
+      type: "ADD_ITEM",
+      item: {
+        sku: producto.sku,
+        descripcion: `${producto.descripcion} — ${presentacion.nombre}`,
+        // Unidad de compra usa precio1-4 (ya son los que trae `producto`); unidad
+        // de venta usa precioVenta1-4 en su lugar — juegos independientes.
+        precio: esUnidadCompra ? producto.precio : (producto.precioVenta1 ?? producto.precio),
+        precio2: esUnidadCompra ? producto.precio2 : producto.precioVenta2,
+        precio3: esUnidadCompra ? producto.precio3 : producto.precioVenta3,
+        precio4: esUnidadCompra ? producto.precio4 : producto.precioVenta4,
+        impuesto: producto.impuesto,
+        // Tope de cantidad en la MISMA unidad que se está capturando: piezas
+        // sueltas, o bolsas completas disponibles (piezas reales ÷ factor).
+        existencia: esUnidadCompra ? Math.floor(producto.existencia / factor) : producto.existencia,
+        // El mayoreo (Precio2/mayoreoMin) solo tiene sentido dentro del juego de
+        // precios de COMPRA — al vender por unidad de venta suelta no aplica.
+        mayoreoActivo: esUnidadCompra ? producto.mayoreoActivo : false,
+        mayoreoMin: esUnidadCompra ? producto.mayoreoMin : undefined,
+        marca: producto.marca,
+        departamento: producto.departamento,
+        categoria: producto.categoria,
+        proveedor: producto.proveedor,
+        proveedor_id: producto.proveedor_id,
+        ...(esUnidadCompra
+          ? { esUnidadCompra: true, unidadCompraNombre: presentacion.nombre, compraVentaFactor: factor }
+          : {}),
+      },
+    })
+    if (cantidad !== 1) {
+      dispatch({ type: "SET_CANTIDAD", sku: producto.sku, cantidad })
+    }
+    // Si se abrió desde el detalle del producto, regresa a resultados (mismo
+    // comportamiento que handleAgregar en ProductoDetalle).
+    setSeleccionado(null)
+  }
 
   // Agrega al carrito una línea de artículo especial con la presentación elegida.
   // El precio de la línea = precio de la presentación (ya c/IVA desde el backend).
@@ -214,6 +301,7 @@ export function Buscador() {
         <ProductoDetalle
           producto={seleccionado}
           onVolver={handleVolver}
+          onSeleccionarCompraVenta={setCompraVentaSel}
         />
       )}
 
@@ -238,6 +326,7 @@ export function Buscador() {
             cartMap={cartMap}
             skusEnPaquete={skusEnPaquete}
             onSeleccionarGranel={setGranelSel}
+            onSeleccionarCompraVenta={setCompraVentaSel}
             onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta } })}
             onEncargar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta, esEncargo: true } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
@@ -257,6 +346,15 @@ export function Buscador() {
         producto={granelSel}
         onConfirmar={agregarGranel}
         onClose={() => setGranelSel(null)}
+      />
+
+      {/* Selector metro-vs-rollo (unidad de compra ≠ unidad de venta, inventario real) */}
+      <PresentacionSelectorModal
+        producto={compraVentaSel}
+        presentacionesOverride={presentacionesCompraVenta}
+        subtitulo="¿Por unidad suelta o completa?"
+        onConfirmar={agregarCompraVenta}
+        onClose={() => setCompraVentaSel(null)}
       />
     </div>
   )

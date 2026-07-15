@@ -15,6 +15,9 @@ interface GridProductosProps {
   /** Artículo especial (a granel): abre el selector de presentación en vez de
    *  agregar directo. Si no se pasa, los granel caen al flujo normal. */
   onSeleccionarGranel?: (p: ProductoPOS) => void
+  /** Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros, inventario REAL):
+   *  abre el selector "¿por metro o por rollo?" en vez de agregar directo. */
+  onSeleccionarCompraVenta?: (p: ProductoPOS) => void
 }
 
 function stockLabel(existencia: number) {
@@ -23,7 +26,7 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete, onSeleccionarGranel }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete, onSeleccionarGranel, onSeleccionarCompraVenta }: GridProductosProps) {
   const { state } = usePOS()
   const cotizando = state.modoCotizacion
   const enEncargo = state.modoEncargo
@@ -77,6 +80,61 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                       className="btn-agregar-rapido"
                       onClick={(e) => { e.stopPropagation(); onSeleccionarGranel!(p) }}
                       title="Elegir presentación"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </button>
+          )
+        }
+
+        // ── Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros) ─────────
+        // Inventario REAL (a diferencia del granel): se topa por existencia real
+        // en unidad de venta. Clic en la tarjeta abre el DETALLE normal (como
+        // cualquier producto); solo el botón "+" abre el selector metro-vs-rollo.
+        // Bloqueado también si el SKU YA está en el carrito: ambas opciones del
+        // selector usan el mismo SKU real (sin sufijo), así que agregar una
+        // segunda vez fusionaría cantidades entre precio de compra y de venta.
+        const esCompraVenta = !!p.presentaCompraVenta && !!onSeleccionarCompraVenta
+        if (esCompraVenta) {
+          const yaEnCarrito = (cartMap?.get(p.sku) ?? 0) > 0
+          const bloqueado = (p.existencia <= 0 && !sinTopeStock) || yaEnCarrito
+          return (
+            <button
+              key={p.sku}
+              className={`tarjeta-producto${bloqueado ? " tarjeta-agotada" : ""}`}
+              onClick={() => onSeleccionar(p)}
+              disabled={bloqueado}
+              title={yaEnCarrito ? "Ya está en el carrito — quítalo para cambiar la unidad" : bloqueado ? `${p.descripcion} sin existencia` : ""}
+            >
+              <div className="tarjeta-imagen">
+                {p.thumbnail ? (
+                  <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />
+                ) : (
+                  <div className="tarjeta-sin-imagen">
+                    <Package size={34} strokeWidth={1.5} />
+                  </div>
+                )}
+                {yaEnCarrito ? (
+                  <span className="badge-stock badge-en-stock">En carrito</span>
+                ) : bloqueado ? (
+                  <span className="badge-stock badge-sin-stock">Sin stock</span>
+                ) : (
+                  <span className="badge-stock badge-granel">{stockLabel(p.existencia).texto}</span>
+                )}
+              </div>
+              <div className="tarjeta-info">
+                <p className="tarjeta-nombre">{p.descripcion}</p>
+                <p className="tarjeta-sku">{p.sku}</p>
+                <div className="tarjeta-footer">
+                  <p className="tarjeta-precio">${(p.precioVenta1 ?? p.precio).toFixed(2)}</p>
+                  {!bloqueado && (
+                    <button
+                      className="btn-agregar-rapido"
+                      onClick={(e) => { e.stopPropagation(); onSeleccionarCompraVenta!(p) }}
+                      title="Elegir unidad de venta"
                     >
                       <Plus size={18} />
                     </button>

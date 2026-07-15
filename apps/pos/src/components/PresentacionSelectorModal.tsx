@@ -26,16 +26,24 @@ export function PresentacionSelectorModal({
   producto,
   onConfirmar,
   onClose,
+  presentacionesOverride,
+  subtitulo,
 }: {
   producto: ProductoPOS | null
   onConfirmar: (args: { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) => void
   onClose: () => void
+  /** Lista de presentaciones a mostrar en vez de las derivadas de `producto`.
+   *  La usa el caso "unidad de compra ≠ unidad de venta" (Buscador.tsx) para
+   *  ofrecer metro-vs-rollo sin tocar la lógica de artículo especial (granel). */
+  presentacionesOverride?: PresentacionGranel[]
+  /** Texto bajo el nombre del producto (default "¿Cómo lo vendes?"). */
+  subtitulo?: string
 }) {
   // Formas de venta = la UNIDAD BASE del artículo (el propio producto, vendido por
   // su Unidad de Venta al Precio 1, factor 1) + las presentaciones hijas. La base
   // va primero porque es la unidad principal. Su precio ya viene CON IVA en
   // `producto.precio`. Se puede agotar por separado con `producto.agotadoBase`.
-  const presentaciones = useMemo<PresentacionGranel[]>(() => {
+  const presentacionesDerivadas = useMemo<PresentacionGranel[]>(() => {
     if (!producto) return []
     const hijas = producto.presentaciones ?? []
     // Solo mostramos la base si el artículo tiene un precio de venta (>0).
@@ -50,6 +58,7 @@ export function PresentacionSelectorModal({
       : []
     return [...base, ...hijas]
   }, [producto])
+  const presentaciones = presentacionesOverride ?? presentacionesDerivadas
 
   const [selId, setSelId] = useState<string | null>(null)
   const [cantidad, setCantidad] = useState(1)
@@ -73,7 +82,9 @@ export function PresentacionSelectorModal({
   if (!producto) return null
 
   const sel = presentaciones.find((p) => p.id === selId) ?? null
-  const unidad = abreviaturaUnidad(producto.unidadBase ?? "")
+  // "≈ N unidad" bajo cada opción: unidad BASE del granel (m³) o unidad de VENTA
+  // real cuando viene de una lista override (caso unidad de compra/venta, ej. Metro).
+  const unidad = abreviaturaUnidad((presentacionesOverride ? producto.unidadVenta : producto.unidadBase) ?? "")
   const totalLinea = sel ? sel.precio * cantidad : 0
 
   function confirmar() {
@@ -89,7 +100,7 @@ export function PresentacionSelectorModal({
         <div className="pgs-header">
           <div>
             <p className="pgs-title">{producto.descripcion}</p>
-            <p className="pgs-subtitle">¿Cómo lo vendes?</p>
+            <p className="pgs-subtitle">{subtitulo ?? "¿Cómo lo vendes?"}</p>
           </div>
           <button className="pgs-close" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
         </div>

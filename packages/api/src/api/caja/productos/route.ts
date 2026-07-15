@@ -38,7 +38,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   }
 
   type PresentacionGranel = { id: string; nombre: string; precio: number; factor: number | null; agotado: boolean }
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; granel: boolean; unidadVenta: string; esGranel: boolean; agotado: boolean; agotadoBase: boolean; unidadBase: string; presentaciones: PresentacionGranel[] }
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; precioVenta1: number; precioVenta2: number; precioVenta3: number; precioVenta4: number; granel: boolean; unidadVenta: string; unidadCompra: string; factor: number; esGranel: boolean; agotado: boolean; agotadoBase: boolean; unidadBase: string; presentaciones: PresentacionGranel[] }
   const variantesBase: VarianteBase[] = []
 
   // Sanea el array de presentaciones que viene en metadata (artículo especial).
@@ -98,8 +98,14 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let precio2 = 0
       let precio3 = 0
       let precio4 = 0
+      let precioVenta1 = 0
+      let precioVenta2 = 0
+      let precioVenta3 = 0
+      let precioVenta4 = 0
       let granel = false
       let unidadVenta = ""
+      let unidadCompra = ""
+      let factor = 1
       let esGranel = false
       let agotado = false
       let agotadoBase = false
@@ -123,9 +129,15 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           precio2 = Number(meta.precio2) || 0
           precio3 = Number(meta.precio3) || 0
           precio4 = Number(meta.precio4) || 0
+          precioVenta1 = Number(meta.precioVenta1) || 0
+          precioVenta2 = Number(meta.precioVenta2) || 0
+          precioVenta3 = Number(meta.precioVenta3) || 0
+          precioVenta4 = Number(meta.precioVenta4) || 0
           // Venta fraccionada (granel): permite capturar cantidad/monto decimal.
           granel = !!meta.granel
           unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
+          unidadCompra = meta.unidadCompra ?? "H87"
+          factor = Number(meta.factor) || 1
           // Artículo especial (a granel): presentaciones + disponibilidad manual.
           esGranel = !!meta.esGranel
           agotado = !!meta.agotado
@@ -134,7 +146,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           presentaciones = leerPresentaciones(meta)
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, granel, unidadVenta, esGranel, agotado, agotadoBase, unidadBase, presentaciones })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, precioVenta1, precioVenta2, precioVenta3, precioVenta4, granel, unidadVenta, unidadCompra, factor, esGranel, agotado, agotadoBase, unidadBase, presentaciones })
       // Solo cortocircuitamos (un único resultado, sin búsqueda por nombre) cuando
       // el match vino de un CÓDIGO REAL: un `?sku=` explícito o un código de barras
       // escaneado. Si el match vino del texto `q` que CASUALMENTE coincide con un
@@ -204,7 +216,12 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 precio2: Number(meta.precio2) || 0,
                 precio3: Number(meta.precio3) || 0,
                 precio4: Number(meta.precio4) || 0,
+                precioVenta1: Number(meta.precioVenta1) || 0,
+                precioVenta2: Number(meta.precioVenta2) || 0,
+                precioVenta3: Number(meta.precioVenta3) || 0,
+                precioVenta4: Number(meta.precioVenta4) || 0,
                 granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "H87",
+                unidadCompra: meta.unidadCompra ?? "H87", factor: Number(meta.factor) || 1,
                 esGranel: !!meta.esGranel, agotado: !!meta.agotado, agotadoBase: !!meta.agotadoBase,
                 unidadBase: meta.unidadBase ?? "", presentaciones: leerPresentaciones(meta),
               })
@@ -297,15 +314,21 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vPrecio2 = Number(meta.precio2) || 0
         const vPrecio3 = Number(meta.precio3) || 0
         const vPrecio4 = Number(meta.precio4) || 0
+        const vPrecioVenta1 = Number(meta.precioVenta1) || 0
+        const vPrecioVenta2 = Number(meta.precioVenta2) || 0
+        const vPrecioVenta3 = Number(meta.precioVenta3) || 0
+        const vPrecioVenta4 = Number(meta.precioVenta4) || 0
         const vGranel = !!meta.granel
         const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
+        const vUnidadCompra = meta.unidadCompra ?? "H87"
+        const vFactor = Number(meta.factor) || 1
         const vEsGranel = !!meta.esGranel
         const vAgotado = !!meta.agotado
         const vAgotadoBase = !!meta.agotadoBase
         const vUnidadBase = meta.unidadBase ?? ""
         const vPresentaciones = leerPresentaciones(meta)
         for (const v of p.variants ?? []) {
-          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, granel: vGranel, unidadVenta: vUnidadVenta, esGranel: vEsGranel, agotado: vAgotado, agotadoBase: vAgotadoBase, unidadBase: vUnidadBase, presentaciones: vPresentaciones })
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, precioVenta1: vPrecioVenta1, precioVenta2: vPrecioVenta2, precioVenta3: vPrecioVenta3, precioVenta4: vPrecioVenta4, granel: vGranel, unidadVenta: vUnidadVenta, unidadCompra: vUnidadCompra, factor: vFactor, esGranel: vEsGranel, agotado: vAgotado, agotadoBase: vAgotadoBase, unidadBase: vUnidadBase, presentaciones: vPresentaciones })
         }
       }
     }
@@ -374,6 +397,13 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const precio2 = v.precio2 > 0 && v.impuesto ? Math.round(v.precio2 * 1.16 * 100) / 100 : v.precio2
       const precio3 = v.precio3 > 0 && v.impuesto ? Math.round(v.precio3 * 1.16 * 100) / 100 : v.precio3
       const precio4 = v.precio4 > 0 && v.impuesto ? Math.round(v.precio4 * 1.16 * 100) / 100 : v.precio4
+      // Precios de la UNIDAD DE VENTA (ej. Metro), independientes de los de arriba
+      // (unidad de COMPRA, ej. Rollo). Capturados a mano en ArticleDrawer — sin
+      // relación matemática automática con precio1-4. Ver /caja/articulos.
+      const precioVenta1 = v.precioVenta1 > 0 && v.impuesto ? Math.round(v.precioVenta1 * 1.16 * 100) / 100 : v.precioVenta1
+      const precioVenta2 = v.precioVenta2 > 0 && v.impuesto ? Math.round(v.precioVenta2 * 1.16 * 100) / 100 : v.precioVenta2
+      const precioVenta3 = v.precioVenta3 > 0 && v.impuesto ? Math.round(v.precioVenta3 * 1.16 * 100) / 100 : v.precioVenta3
+      const precioVenta4 = v.precioVenta4 > 0 && v.impuesto ? Math.round(v.precioVenta4 * 1.16 * 100) / 100 : v.precioVenta4
       return {
         sku: v.sku ?? "",
         descripcion: v.title ?? "",
@@ -381,6 +411,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         precio2,
         precio3,
         precio4,
+        precioVenta1,
+        precioVenta2,
+        precioVenta3,
+        precioVenta4,
         // Si lleva IVA, `precio`/`precio2` ya vienen con el 16% incluido. El POS
         // usa este flag para desglosar base+IVA en el carrito y en el CFDI.
         impuesto: !!v.impuesto,
@@ -400,6 +434,14 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         // decimal en el carrito. `unidadVenta` (kg/m/L) se muestra junto a la cantidad.
         granel: v.granel,
         unidadVenta: v.unidadVenta,
+        // Unidad de COMPRA + factor (ej. Rollo = 50 Metros). Cuando difieren de la
+        // unidad de venta, el POS ofrece vender también por la presentación de
+        // compra completa (a precio de mayoreo), con inventario REAL — a diferencia
+        // del granel de abajo, aquí SÍ se valida/bloquea contra el stock (siempre
+        // llevado en unidad de venta; no se migra el almacenamiento del stock).
+        unidadCompra: v.unidadCompra,
+        factor: v.factor,
+        presentaCompraVenta: v.unidadCompra !== v.unidadVenta && v.factor > 1,
         // Artículo especial (a granel): presentaciones (padre→hijos) + disponibilidad
         // manual. El precio de cada presentación se guarda SIN IVA; se devuelve CON
         // IVA (×1.16) listo para mostrar, igual que `precio`. El descuento de

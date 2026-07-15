@@ -42,6 +42,13 @@ interface ItemVenta {
   // la presentación); si no hay factor, es 0 y no toca inventario.
   granel?: boolean
   granel_descuento?: number
+  // Venta por UNIDAD DE COMPRA completa (ej. "Bolsa" = 50 piezas). A diferencia
+  // del granel, el inventario es REAL: `cantidad` en la línea es el número de
+  // bolsas (para que precio_unitario × cantidad cobre correctamente), y se
+  // descuenta/valida `cantidad * unidad_compra_factor` PIEZAS reales del stock —
+  // bloquea igual que una línea normal si no alcanza. Ver ArticleDrawer § Precios
+  // de Venta / PresentacionSelectorModal (Buscador.tsx).
+  unidad_compra_factor?: number
 }
 
 interface VentaBody {
@@ -513,8 +520,13 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       // como ENCARGO se exceptúan: se venden sobre pedido (inventario a negativo).
       // Las líneas GRANEL también: su inventario es informativo (puede ir a
       // negativo), el bloqueo real es el switch "Agotado" (validado en el front).
+      // Unidad de COMPRA (`unidad_compra_factor`): la cantidad de la línea es
+      // BOLSAS, se valida contra el stock real en PIEZAS (cantidad × factor) — a
+      // diferencia del granel, SÍ bloquea si no alcanza.
       for (const item of items) {
         if (item.encargo || item.granel) continue
+        const factorCompra = item.unidad_compra_factor && item.unidad_compra_factor > 0 ? item.unidad_compra_factor : 1
+        const cantidadReal = item.cantidad * factorCompra
         const inventoryItemId = itemPorSku.get(item.sku)
         if (!inventoryItemId) {
           // SKU sin inventory item: lo registramos pero advertimos en log en vez
@@ -524,9 +536,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         }
         const nivel = nivelPorItemId.get(inventoryItemId)
         if (!nivel) continue
-        if (item.cantidad > nivel.stocked_quantity) {
+        if (cantidadReal > nivel.stocked_quantity) {
           return {
-            error: `Stock insuficiente para "${item.descripcion}": solicitado ${item.cantidad}, disponible ${nivel.stocked_quantity}`,
+            error: `Stock insuficiente para "${item.descripcion}": solicitado ${cantidadReal}, disponible ${nivel.stocked_quantity}`,
           } as const
         }
       }
@@ -599,6 +611,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             continue
           }
 
+          // UNIDAD DE COMPRA completa (ej. "Bolsa"): `item.cantidad` son BOLSAS,
+          // se descuenta cantidad × factor PIEZAS reales (ya validado arriba que
+          // alcanza — a diferencia del granel, esta SÍ bloquea).
+          if (item.unidad_compra_factor && item.unidad_compra_factor > 0) {
+            const cantidadReal = item.cantidad * item.unidad_compra_factor
+            if (!inventoryItemId || !nivel) continue
+            await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -cantidadReal)
+            aplicados.push({ itemId: inventoryItemId, locationId: nivel.location_id, cantidad: cantidadReal })
+            continue
+          }
+
           // VENTA NORMAL: descuenta la cantidad completa (ya validada contra stock).
           if (!inventoryItemId || !nivel) continue
           await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -item.cantidad)
@@ -633,6 +656,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             // descontó — para que la cancelación reintegre exactamente eso (no la
             // cantidad de presentaciones, que sería incorrecta).
             ...(i.granel ? { granel: true, granel_descuento: Number(i.granel_descuento) || 0, presentacion: (i as { presentacion?: string }).presentacion ?? null } : {}),
+            // Unidad de COMPRA completa (ej. "Bolsa"): guardamos el factor para
+            // que la CANCELACIÓN reintegre cantidad × factor piezas reales (no
+            // solo `cantidad`, que está en bolsas — ver ventas/[folio]/route.ts).
+            ...(i.unidad_compra_factor ? { unidad_compra_factor: i.unidad_compra_factor, presentacion: (i as { presentacion?: string }).presentacion ?? null } : {}),
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
           // encargo es el total normal; con encargo es parte-con-stock + anticipo;
