@@ -1,7 +1,7 @@
 # FERREMEX-SCHEMA.md — Esquema real de datos
 
 > Entidades de BD (Medusa), archivos JSON y claves localStorage que toca el código.
-> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-07-14.
+> Derivado de `packages/api/src/api/caja/*` y `apps/pos/src/lib/*`. Última actualización: 2026-07-14 (validación límite crédito + override PIN).
 > **Medusa:** módulos nativos + `metadata` en producto + **módulos custom ferremex_cartera + ferremex_monedero + ferremex_facturable** (Fase 3).
 
 ---
@@ -33,6 +33,10 @@
 | **MovimientoCartera** | `movimiento_cartera` | `id`, `cartera_cliente_id` (FK), `tipo` ("compra" / "pago"), `monto` (centavos), `fecha`, `folio_venta?`, `plazo?`, `descripcion`, `nota?`, **`cancelado`** (bool, default false), **`motivo_cancelacion`** (text nullable), **`fecha_cancelacion`** (timestamp ISO nullable) | Transaccional. Compras al registrar venta; pagos manuales. Soft-cancel de abonos (restituye deuda vía FIFO al excluirlo del cálculo). |
 | **NotaCartera** | `nota_cartera` | `id`, `cartera_cliente_id` (FK), `fecha`, `hora`, `autor`, `texto` | Auditoría textual |
 | **HistorialLimite** | `historial_limite` | `id`, `cartera_cliente_id` (FK), `fecha`, `usuario`, `anterior`, `nuevo`, `nota` | Auditoría de cambios de límite |
+
+**Métodos nuevos en `ferremex_cartera/service.ts` (2026-07-14):**
+- `saldoCliente(customer_id)` → `{ balance: number }` — calcula saldo FIFO real (EXCLUYE cancelados)
+- `estadoCredito(customer_id, plazoDefault=30)` → `{ balance, overdue }` — saldo + bool de mora (deuda vencida según plazo)
 
 ### Módulo custom: `ferremex_monedero` (Fase 3 continuación)
 
@@ -146,7 +150,7 @@ Mapeo `Cliente ↔ Customer` en `_mapper.ts`:
 
 | Archivo | Forma | Escrito por |
 |---|---|---|
-| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?, **esGranel?, presentacion?, granelFactor?, granelDescuento?, granelSku?, esFlete?**}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion?, global_uuid?, global_cfdi_id? }[]` | `/caja/ventas` POST (con devengo/canje transaccional en monedero, depto/cat reales, granel sin tope, flete si aplica), PATCH `/caja/ventas/:folio` (cancelación reintegra `granelDescuento`, revierte puntos, excluye FLETE/granel de factura global). |
+| `ventas-pos.json` | `{ folio, fecha, cajero, turno_id, caja_id?, caja_name?, vendedor?, cliente_id?, cliente_nombre?, plazo?, items[{sku, descripcion, cantidad, precio_unitario, subtotal, marca?, departamento?, categoria?, **esGranel?, presentacion?, granelFactor?, granelDescuento?, granelSku?, esFlete?**}], total, pago_efectivo, pago_transferencia, pago_credito, pago_tarjeta?, pago_puntos?, cambio, puntos_ganados?, puntos_canjeados?, estado?, motivo_cancelacion?, fecha_cancelacion?, global_uuid?, global_cfdi_id?, **credito_override?: {autorizado_por, pin}?** }[]` | `/caja/ventas` POST (valida crédito disponible antes del lock, rechaza 403 con credito_info si excede + hay mora; ModalCobro envía override PIN), PATCH `/caja/ventas/:folio` (cancelación reintegra granel, revierte puntos). |
 | `globales-pos.json` | `{ uuid, fecha, serie, folio, cfdi_id, estado, monto_total, articulos_incluidos, consumo_saldo, timbrado_en }[]` | `/caja/facturama/global` POST (timbra) + PATCH (cancelación reversible) |
 | `facturacion-config.json` | `{ serie_nominativa: string, serie_global: string, periodicidad_global: "diaria"|"manual", correo_contador: string }` | `/caja/facturama/config` GET/PUT |
 | `pedidos-pos.json` | `{ id, folio, fecha, proveedor?, proveedorId?, status, articulos[{clave?, descripcion?, cantidad}], ... }[]` | `/caja/pedidos` |
@@ -257,7 +261,7 @@ LineaPuntos { subtotal: number, marca?: string | null, departamento?: string | n
 | GET | `/caja/cortes-pendientes` | **NUEVO** | Lista cajas con ventas posteriores a su último corte. Consumido por banner de CorteModule. |
 | GET | `/caja/turnos-config` | **NUEVO** | Lee configuración de turnos: `{ modo: "dia"|"turnos", franjas: [{id,nombre,desde,hasta}] }`. |
 | PUT | `/caja/turnos-config` | **NUEVO** | Guarda configuración de turnos. |
-| POST | `/caja/ventas` | Extendido | Ahora persiste `caja_id`, `caja_name` (del cajero), `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items (desde producto). Devengo/canje monedero con taxonomía REAL. **NUEVO:** `global_uuid`, `global_cfdi_id` marca inclusión en factura global. |
+| POST | `/caja/ventas` | Extendido | **VALIDACIÓN CRÉDITO (2026-07-14):** valida disponible + mora ANTES del lock (rechaza 403 si excede). Body ahora incluye `credito_override:{autorizado_por, pin}` (re-validado server-side). Persiste `caja_id`, `caja_name`, `vendedor`, `pago_tarjeta`, `departamento`/`categoria` en items. Devengo/canje monedero con taxonomía REAL. `global_uuid`, `global_cfdi_id` marca inclusión en factura global. |
 | PATCH | `/caja/ventas/:folio` | Mejorado | Cancelación revierte `puntos_ganados`/`puntos_canjeados` (soft-cancel en BD). |
 | GET/PUT/DELETE | `/caja/usuarios` | Extendido | PosUsuario += `caja_id`, `horario?: {dias,entrada,salida,turno_id}`. |
 | **GET** | **`/caja/facturama/global/preview`** | **NUEVO** | Preview de factura global del día (clasificación por saldo). Query: `?depto_id=` (opcional, depto facturable), `?forzado=1` (sobregiro). Respuesta: LineaGlobal[], clasificadas. |

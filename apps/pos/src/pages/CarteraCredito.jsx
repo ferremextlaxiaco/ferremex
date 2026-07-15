@@ -4,8 +4,10 @@ import {
   TriangleAlert, Printer, FileText, Edit, Check, Trash2,
 } from "lucide-react"
 import { loadClientes, actualizarCliente, loadCartera, agregarMovimientoCredito, anularAbono } from "../lib/clientes"
-import { obtenerUsuarios, obtenerVenta, agregarNotaCarteraAPI, registrarCambioLimiteAPI } from "../lib/client"
+import { obtenerUsuarios, obtenerVenta, agregarNotaCarteraAPI, registrarCambioLimiteAPI, obtenerTicketConfig } from "../lib/client"
 import { formatMXN as fmtPeso } from "../lib/format"
+import { usePOS } from "../lib/pos-store"
+import { ComprobanteAbono } from "../components/ComprobanteAbono"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -175,6 +177,74 @@ function calcularAplicacionAbono(movimientos, pagoId) {
   return { aplicaciones: [], excedente: 0 }
 }
 
+// Folio legible del recibo de abono a partir del id del movimiento.
+// El abono (movimiento pago) no tiene folio propio en BD; lo derivamos para el
+// papel: AB-YYYYMMDD-<4 primeros hex del id>.
+function folioReciboAbono(mov) {
+  const fecha = (mov.fecha ?? "").replace(/-/g, "").slice(0, 8) || "00000000"
+  const corto = String(mov.id ?? "").replace(/[^a-zA-Z0-9]/g, "").slice(0, 4).toUpperCase() || "0000"
+  return `AB-${fecha}-${corto}`
+}
+
+// Construye el objeto AbonoRecibo (para <ComprobanteAbono />) a partir de un
+// movimiento de pago y el portfolio del cliente. Reutiliza los mismos helpers
+// FIFO que el resto del módulo: `calcularAplicacionAbono` (a qué compras se
+// aplicó) y `calcularSaldos` (saldo/vencido). El saldo ANTERIOR se obtiene
+// re-corriendo el FIFO sin este abono; el ACTUAL, con él.
+function buildReciboAbono(mov, portfolio, cajero) {
+  const { aplicaciones, excedente } = calcularAplicacionAbono(portfolio.movimientos, mov.id)
+
+  const conAbono = calcularSaldos(portfolio.movimientos, portfolio.plazo, portfolio.limite)
+  // "Sin este abono" = tratar el movimiento como cancelado en el cálculo.
+  const movsSinEste = portfolio.movimientos.map(m =>
+    m.id === mov.id ? { ...m, cancelado: true } : m
+  )
+  const sinAbono = calcularSaldos(movsSinEste, portfolio.plazo, portfolio.limite)
+
+  // Próximo vencimiento (texto corto) sobre el estado CON el abono aplicado.
+  const pendientes = conAbono.movimientosConEstado.filter(
+    m => m.tipo === "compra" && !m.cancelado && m._estado !== "pagado"
+  )
+  let proximaDue = null
+  pendientes.forEach(m => {
+    const due = new Date(m.fecha + "T12:00:00")
+    due.setDate(due.getDate() + (m.plazo ?? portfolio.plazo))
+    if (!proximaDue || due < proximaDue) proximaDue = due
+  })
+  const proximoVence = proximaDue
+    ? proximaDue.toLocaleDateString("es-MX", { day: "2-digit", month: "short" })
+    : null
+
+  // Método + referencia salen de la descripción "Abono — Método — referencia".
+  const partes = (mov.descripcion ?? "").split(" — ")
+  const metodo = partes[1] || "Efectivo"
+  const referencia = mov.nota || partes.slice(2).join(" — ") || ""
+
+  return {
+    folio: folioReciboAbono(mov),
+    fecha: mov.fecha,
+    cajero: cajero || "—",
+    cliente: portfolio.nombre,
+    telefono: portfolio.telefono || "",
+    numCliente: portfolio.numCliente ?? "",
+    monto: mov.monto,
+    metodo,
+    referencia,
+    aplicaciones: aplicaciones.map(({ compra, aplicado }) => ({
+      folio: compra.folio || "",
+      descripcion: compra.descripcion || "Compra",
+      fecha: compra.fecha,
+      aplicado,
+      montoCompra: compra.monto,
+    })),
+    excedente,
+    saldoAnterior: sinAbono.balance,
+    saldoActual: conAbono.balance,
+    deudaVencida: conAbono.overdue,
+    proximoVence,
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers: build portfolios from BD clientes + cartera
 // ─────────────────────────────────────────────────────────────────────────────
@@ -189,6 +259,7 @@ function buildPortfolios(clientes, cartera) {
         clienteId:      c.id,
         nombre:         c.nombre,
         telefono:       c.telefono,
+        numCliente:     c.num_cliente,
         limite:         c.limite_credito,
         plazo:          c.dias_credito,
         movimientos:    entry?.movimientos     ?? [],
@@ -837,7 +908,7 @@ function EliminarCuentaModal({ open, portfolio, onClose, onConfirm }) {
 // DetalleAbonoModal — FIFO allocation when clicking a pago movement
 // ─────────────────────────────────────────────────────────────────────────────
 
-function DetalleAbonoModal({ mov, portfolio, onClose, onAnular }) {
+function DetalleAbonoModal({ mov, portfolio, onClose, onAnular, onReimprimir }) {
   if (!mov || !portfolio) return null
 
   const { aplicaciones, excedente } = calcularAplicacionAbono(portfolio.movimientos, mov.id)
@@ -946,7 +1017,16 @@ function DetalleAbonoModal({ mov, portfolio, onClose, onAnular }) {
               Cancelar abono
             </button>
           )}
-          <button style={S.btnSecondary} onClick={onClose}>Cerrar</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            {/* Reimprimir el recibo de este abono (también para abonos ya cancelados). */}
+            <button
+              style={{ ...S.btnSecondary, display: "flex", alignItems: "center", gap: 5 }}
+              onClick={() => onReimprimir?.(mov)}
+            >
+              <Printer size={14} /> Imprimir recibo
+            </button>
+            <button style={S.btnSecondary} onClick={onClose}>Cerrar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1158,6 +1238,20 @@ export default function CarteraCredito() {
   const [nuevaNota, setNuevaNota] = useState("")
   const [addingNota, setAddingNota] = useState(false)
 
+  // ── Recibo de abono imprimible ────────────────────────────────────────────
+  const { state: posState } = usePOS()
+  const cajeroNombre = posState?.cajero?.nombre ?? "—"
+  const [ticketConfig, setTicketConfig] = useState(null)
+  const [reciboAbono, setReciboAbono] = useState(null)   // AbonoRecibo a imprimir
+
+  // Encabezado del negocio para el recibo (del ticketConfig, con fallback).
+  const negocioRecibo = useMemo(() => ({
+    nombre:    ticketConfig?.encabezado?.nombre    ?? "FERREMEX",
+    direccion: ticketConfig?.encabezado?.direccion ?? "Tlaxiaco, Oaxaca",
+    telefono:  ticketConfig?.encabezado?.telefono  ?? "",
+    rfc:       ticketConfig?.encabezado?.rfc        ?? "",
+  }), [ticketConfig])
+
   // ── Toast ─────────────────────────────────────────────────────────────────
   const [toast, setToast] = useState(null)
   const toastTimer = useRef(null)
@@ -1180,6 +1274,11 @@ export default function CarteraCredito() {
       } catch (e) {
         console.error("Error cargando cartera:", e)
       }
+      // Config del ticket (encabezado del negocio para el recibo de abono).
+      try {
+        const cfg = await obtenerTicketConfig()
+        if (activo) setTicketConfig(cfg)
+      } catch { /* usa fallback en negocioRecibo */ }
     })()
     return () => { activo = false }
   }, [])
@@ -1219,7 +1318,9 @@ export default function CarteraCredito() {
       // Last payment (los abonos cancelados no cuentan como "último abono")
       const pagos = p.movimientos.filter(m => m.tipo === "pago" && !m.cancelado).sort((a, b) => b.fecha.localeCompare(a.fecha))
       const ultimoPago = pagos[0] ?? null
-      return { ...p, balance, available, overdue, movimientosConEstado, semaforo, diasVence, ultimoPago }
+      // Total abonado histórico (suma de pagos vigentes; excluye cancelados).
+      const totalAbonado = pagos.reduce((s, m) => s + m.monto, 0)
+      return { ...p, balance, available, overdue, movimientosConEstado, semaforo, diasVence, ultimoPago, totalAbonado }
     })
   , [portfolios])
 
@@ -1279,6 +1380,8 @@ export default function CarteraCredito() {
         return sortDir === "asc" ? va.localeCompare(vb, "es") : vb.localeCompare(va, "es")
       } else if (sortCol === "balance") {
         va = a.balance; vb = b.balance
+      } else if (sortCol === "totalAbonado") {
+        va = a.totalAbonado; vb = b.totalAbonado
       } else if (sortCol === "limite") {
         va = a.limite; vb = b.limite
       } else if (sortCol === "diasVence") {
@@ -1351,7 +1454,8 @@ export default function CarteraCredito() {
     const monto = Number(abonoForm.monto)
     if (!monto || monto <= 0) return
 
-    await agregarMovimientoCredito(selPortfolio.clienteId, {
+    const clienteId = selPortfolio.clienteId
+    const creado = await agregarMovimientoCredito(clienteId, {
       tipo: "pago",
       monto,
       fecha: abonoForm.fecha,
@@ -1359,11 +1463,20 @@ export default function CarteraCredito() {
       nota: abonoForm.nota,
     })
     const cartera = await loadCartera()
-    setPortfolios(buildPortfolios(clientesLS, cartera))
+    const nuevos = buildPortfolios(clientesLS, cartera)
+    setPortfolios(nuevos)
     setShowAbonoConfirm(false)
     setAbonoForm({ monto: "", metodo: "Efectivo", fecha: todayISO(), nota: "", aplicarA: "fifo", movEspecifico: "" })
     setTab("movimientos")
     showToast(`Abono de ${fmtPeso(monto)} registrado correctamente`)
+
+    // Abrir el recibo imprimible del abono recién registrado. Buscamos el
+    // movimiento en el portfolio ya recargado (trae saldos y aplicación FIFO).
+    const port = nuevos.find(p => p.id === clienteId)
+    const mov = port?.movimientos.find(m => m.id === creado?.id)
+    if (port && mov) {
+      setReciboAbono(buildReciboAbono(mov, port, cajeroNombre))
+    }
   }
 
   // ── Anular abono ──────────────────────────────────────────────────────────
@@ -1387,6 +1500,14 @@ export default function CarteraCredito() {
     } finally {
       setAnulando(false)
     }
+  }
+
+  // ── Reimprimir recibo de un abono ya registrado ───────────────────────────
+  // Reconstruye el recibo desde el portfolio actual (mismos helpers FIFO) y abre
+  // el comprobante imprimible. Usado desde la lista de Movimientos y el detalle.
+  function handleReimprimirAbono(mov) {
+    if (!selPortfolio || !mov) return
+    setReciboAbono(buildReciboAbono(mov, selPortfolio, cajeroNombre))
   }
 
   // ── Agregar nota ──────────────────────────────────────────────────────────
@@ -1660,6 +1781,22 @@ export default function CarteraCredito() {
                   </span>
                 </div>
               </div>
+              {/* Reimprimir recibo del abono (solo pagos vigentes). */}
+              {isPago && !cancelado && (
+                <button
+                  title="Reimprimir recibo de abono"
+                  onClick={(e) => { e.stopPropagation(); handleReimprimirAbono(m) }}
+                  style={{
+                    background: "transparent", border: "1px solid #e4e4e7", borderRadius: 6,
+                    padding: "5px 7px", cursor: "pointer", color: "#71717a", flexShrink: 0,
+                    display: "flex", alignItems: "center",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = "#F96302"; e.currentTarget.style.color = "#F96302" }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = "#e4e4e7"; e.currentTarget.style.color = "#71717a" }}
+                >
+                  <Printer size={15} />
+                </button>
+              )}
               {!isPago && (
                 <SemaforoDot color={m._semaforo} size={10} />
               )}
@@ -1985,13 +2122,14 @@ export default function CarteraCredito() {
             <thead>
               <tr>
                 {[
-                  { col: "semaforo",  label: "",             width: 36 },
-                  { col: "nombre",    label: "Cliente",      width: "auto" },
-                  { col: "limite",    label: "Límite",       width: 110 },
-                  { col: "balance",   label: "Saldo",        width: 110 },
-                  { col: null,        label: "Disponible",   width: 120 },
-                  { col: "diasVence", label: "Vence en",     width: 130 },
-                  { col: null,        label: "Último abono", width: 130 },
+                  { col: "semaforo",     label: "",             width: 36 },
+                  { col: "nombre",       label: "Cliente",      width: "auto" },
+                  { col: "limite",       label: "Límite",       width: 110 },
+                  { col: "balance",      label: "Saldo",        width: 110 },
+                  { col: "totalAbonado", label: "Abonado",      width: 110 },
+                  { col: null,           label: "Disponible",   width: 120 },
+                  { col: "diasVence",    label: "Vence en",     width: 130 },
+                  { col: null,           label: "Último abono", width: 130 },
                 ].map(({ col, label, width }, i) => (
                   <th
                     key={i}
@@ -2015,6 +2153,7 @@ export default function CarteraCredito() {
                 <col />
                 <col style={{ width: 110 }} />
                 <col style={{ width: 110 }} />
+                <col style={{ width: 110 }} />
                 <col style={{ width: 120 }} />
                 <col style={{ width: 130 }} />
                 <col style={{ width: 130 }} />
@@ -2022,7 +2161,7 @@ export default function CarteraCredito() {
               <tbody>
                 {listaFiltrada.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "#a1a1aa", fontSize: 14 }}>
+                    <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "#a1a1aa", fontSize: 14 }}>
                       {tabCartera === "inhabilitados" ? "Módulo de inhabilitados próximamente" : "Sin clientes que coincidan con los filtros"}
                     </td>
                   </tr>
@@ -2043,6 +2182,9 @@ export default function CarteraCredito() {
                     <td style={{ ...S.td }}>{fmtPeso(p.limite)}</td>
                     <td style={{ ...S.td, fontWeight: 700, fontSize: 15, color: p.balance > 0 ? "#ef4444" : "#16a34a" }}>
                       {fmtPeso(p.balance)}
+                    </td>
+                    <td style={{ ...S.td, fontWeight: 600, fontSize: 14, color: p.totalAbonado > 0 ? "#16a34a" : "#a1a1aa" }}>
+                      {fmtPeso(p.totalAbonado)}
                     </td>
                     <td style={{ ...S.td }}>
                       <div style={{ fontSize: 13, color: "#71717a", marginBottom: 4 }}>
@@ -2137,6 +2279,7 @@ export default function CarteraCredito() {
         portfolio={selPortfolio}
         onClose={() => setMovDetalle(null)}
         onAnular={(mov) => { setAnularMov(mov); setAnularMotivo("") }}
+        onReimprimir={(mov) => { setMovDetalle(null); handleReimprimirAbono(mov) }}
       />
 
       {/* ── ANULAR ABONO (motivo obligatorio) ───────────────────────────── */}
@@ -2235,6 +2378,15 @@ export default function CarteraCredito() {
           </div>
         )}
       </ConfirmModal>
+
+      {/* ── RECIBO DE ABONO (imprimible) ─────────────────────────────────── */}
+      {reciboAbono && (
+        <ComprobanteAbono
+          recibo={reciboAbono}
+          negocio={negocioRecibo}
+          onCerrar={() => setReciboAbono(null)}
+        />
+      )}
 
       {/* ── TOAST ───────────────────────────────────────────────────────── */}
       <Toast toast={toast} />

@@ -31,6 +31,59 @@ class FerremexCarteraService extends MedusaService({
     return creada as { id: string; customer_id: string }
   }
 
+  /**
+   * Saldo (deuda) actual del cliente en cartera de crédito.
+   * = Σ(compras vigentes) − Σ(pagos vigentes), acotado a ≥ 0.
+   * Excluye movimientos cancelados (abonos anulados / compras revertidas), igual
+   * que el cálculo FIFO del front (`calcularSaldos` en CarteraCredito.jsx).
+   * Un saldo pagado de más no se vuelve "a favor": el piso es 0.
+   */
+  async saldoCliente(customer_id: string): Promise<number> {
+    const { balance } = await this.estadoCredito(customer_id)
+    return balance
+  }
+
+  /**
+   * Estado de crédito del cliente: saldo (deuda) + deuda vencida.
+   * Replica el FIFO del front (`calcularSaldos`): los pagos se aplican a las
+   * compras más antiguas primero; una compra queda "vencida" si su fecha + plazo
+   * ya pasó y aún tiene saldo sin cubrir. `plazoDefault` se usa por compra cuando
+   * el movimiento no trae su propio `plazo`.
+   */
+  async estadoCredito(
+    customer_id: string,
+    plazoDefault = 30
+  ): Promise<{ balance: number; overdue: number }> {
+    const cartera = await this.getOrCreateCartera(customer_id)
+    const movs = await this.listMovimientoCarteras({ cartera_id: cartera.id })
+    const activos = movs.filter((m) => !m.cancelado)
+    // Orden ascendente por fecha para el FIFO.
+    const sorted = [...activos].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+
+    let pool = 0
+    for (const m of sorted) if (m.tipo === "pago") pool += Number(m.monto) || 0
+
+    let balance = 0
+    let overdue = 0
+    const hoy = Date.now()
+    for (const m of sorted) {
+      if (m.tipo !== "compra") continue
+      const monto = Number(m.monto) || 0
+      const restante = pool >= monto ? 0 : monto - pool
+      pool = Math.max(0, pool - monto)
+      if (restante <= 0.005) continue
+      balance += restante
+      // ¿Está vencida? fecha de la compra + plazo < hoy.
+      const due = new Date(String(m.fecha) + "T12:00:00")
+      due.setDate(due.getDate() + (Number(m.plazo) || plazoDefault))
+      if (due.getTime() < hoy) overdue += restante
+    }
+    return {
+      balance: Math.max(0, Math.round(balance * 100) / 100),
+      overdue: Math.max(0, Math.round(overdue * 100) / 100),
+    }
+  }
+
   /** Carga la cartera completa de un cliente (movimientos + notas + historial). */
   async getCarteraCompleta(customer_id: string) {
     const cartera = await this.getOrCreateCartera(customer_id)

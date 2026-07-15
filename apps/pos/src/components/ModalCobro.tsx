@@ -11,6 +11,7 @@ import {
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
   type DetalleSaldoCambio, type FleteConfig,
 } from "../lib/client"
+import { loadCarteraCliente } from "../lib/clientes"
 import { abrirCajonLocal } from "../lib/impresora-local"
 import { healthBiometria, verificar1a1, cancelar as cancelarBiometria, BiometriaError } from "../lib/biometria"
 import HuellaAnimacion from "./HuellaAnimacion"
@@ -24,6 +25,49 @@ import { formatMXN as fmt } from "../lib/format"
 interface ModalCobroProps {
   onCerrar: () => void
   onVentaCompletada: (venta: VentaResponse) => void
+}
+
+/** Estado de crédito del cliente para la validación de límite en la venta. */
+interface CreditoInfo {
+  limite: number
+  saldo: number       // deuda actual (FIFO, excluye cancelados)
+  disponible: number  // max(0, limite - saldo)
+  vencido: number     // deuda vencida
+}
+
+/**
+ * Calcula saldo (deuda) + deuda vencida de la cartera de un cliente. Réplica del
+ * FIFO de `calcularSaldos` (CarteraCredito.jsx) y de `estadoCredito` del backend:
+ * pagos aplican a las compras más antiguas primero; una compra queda vencida si
+ * su fecha + plazo ya pasó y aún tiene saldo. Excluye movimientos cancelados.
+ * El backend es la fuente de verdad; esto es para el aviso inmediato en el POS.
+ */
+function calcularCreditoInfo(
+  movimientos: Array<{ tipo: string; monto: number; fecha: string; plazo?: number | null; cancelado?: boolean }>,
+  plazoDefault: number,
+  limite: number
+): CreditoInfo {
+  const activos = movimientos.filter((m) => !m.cancelado)
+  const sorted = [...activos].sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)))
+  let pool = 0
+  for (const m of sorted) if (m.tipo === "pago") pool += Number(m.monto) || 0
+  let saldo = 0
+  let vencido = 0
+  const hoy = Date.now()
+  for (const m of sorted) {
+    if (m.tipo !== "compra") continue
+    const monto = Number(m.monto) || 0
+    const restante = pool >= monto ? 0 : monto - pool
+    pool = Math.max(0, pool - monto)
+    if (restante <= 0.005) continue
+    saldo += restante
+    const due = new Date(String(m.fecha) + "T12:00:00")
+    due.setDate(due.getDate() + (Number(m.plazo) || plazoDefault))
+    if (due.getTime() < hoy) vencido += restante
+  }
+  saldo = Math.max(0, Math.round(saldo * 100) / 100)
+  vencido = Math.max(0, Math.round(vencido * 100) / 100)
+  return { limite, saldo, disponible: Math.max(0, Math.round((limite - saldo) * 100) / 100), vencido }
 }
 
 type Metodo = "efectivo" | "transferencia" | "tarjeta" | "credito" | "puntos"
@@ -157,6 +201,25 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     return () => { on = false }
   }, [state.clienteActivo])
 
+  // ── Crédito del cliente (para validar el límite al vender a crédito) ────────
+  // Cargamos la cartera del cliente activo para conocer su saldo, disponible y
+  // deuda vencida. Con esto el POS avisa ANTES de cobrar si un cargo a crédito
+  // excede el límite o el cliente está en mora. El backend re-valida (fuente de
+  // verdad); esto es solo UX inmediata. Se carga solo si el cliente tiene crédito.
+  const [creditoInfo, setCreditoInfo] = useState<CreditoInfo | null>(null)
+  useEffect(() => {
+    const cli = state.clienteActivo
+    if (!cli?.id || (cli.limite_credito ?? 0) <= 0) { setCreditoInfo(null); return }
+    let on = true
+    ;(async () => {
+      try {
+        const entry = await loadCarteraCliente(cli.id)
+        if (on) setCreditoInfo(calcularCreditoInfo(entry?.movimientos ?? [], cli.dias_credito || 30, cli.limite_credito))
+      } catch { if (on) setCreditoInfo(null) }
+    })()
+    return () => { on = false }
+  }, [state.clienteActivo])
+
   // Precio unitario efectivo de una línea, ya con promociones aplicadas. Para
   // NxM/volumen el descuento no es un precio uniforme, así que se reparte el
   // importe total de la línea entre sus unidades (lo que se persiste y se imprime).
@@ -168,6 +231,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [pagos, setPagos] = useState<Record<Metodo, string> & { saldoCambio: string }>({ efectivo: "", transferencia: "", tarjeta: "", credito: "", puntos: "", saldoCambio: "" })
   const [procesando, setProcesando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Override de límite de crédito: modal de PIN de supervisor + autorización ya
+  // concedida (se envía al backend, que re-valida el PIN). `null` = sin autorizar.
+  const [showPinCredito, setShowPinCredito] = useState(false)
+  const [overrideCredito, setOverrideCredito] = useState<{ autorizado_por: string; pin: string } | null>(null)
   const efectivoRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { efectivoRef.current?.focus() }, [])
@@ -194,6 +261,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const pPuntos        = parseFloat(pagos.puntos)          || 0
   const pSaldoCambio   = parseFloat(pagos.saldoCambio)     || 0
   const asignado       = pEfectivo + pTransferencia + pTarjeta + pCredito + pPuntos + pSaldoCambio
+
+  // ── Validación de límite de crédito (UX; el backend es la fuente de verdad) ──
+  // Cargo a cartera = pago a crédito + resta de encargo que se cargue a cartera.
+  const restaACartera = restaEncargo > 0.005 && !!datosFicha?.resta_a_cartera && !!state.clienteActivo
+  const cargoCartera = Math.round((pCredito + (restaACartera ? restaEncargo : 0)) * 100) / 100
+  // Excede el disponible / tiene mora. Solo aplica si hay cargo a cartera > 0.
+  const excedeCredito = cargoCartera > 0.005 && !!creditoInfo && (creditoInfo.saldo + cargoCartera) > creditoInfo.limite + 0.01
+  const tieneVencido  = cargoCartera > 0.005 && !!creditoInfo && creditoInfo.vencido > 0.005
+  const requiereAutorizacionCredito = excedeCredito || tieneVencido
 
   // Cuánto falta cubrir con efectivo una vez restados otros métodos
   const neededCash = Math.max(0, totalACobrar - pTransferencia - pTarjeta - pCredito - pPuntos - pSaldoCambio)
@@ -429,7 +505,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     await finalizarVenta()
   }
 
-  async function handleConfirmar() {
+  // `ovr` permite continuar inmediatamente tras autorizar el sobregiro (el estado
+  // `overrideCredito` puede no haberse aplicado aún en el mismo tick).
+  async function handleConfirmar(ovr?: { autorizado_por: string; pin: string } | null) {
     if (!cubierto || procesando || !state.cajero) return
     if (pCredito > 0 && !state.clienteActivo) return
     if (pPuntos > 0 && !state.clienteActivo) return
@@ -444,12 +522,29 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
       setError(`Con saldo a favor solo puedes cubrir ${fmt(saldoCambioDisponible)} de este ticket`)
       return
     }
+    // Validación de LÍMITE DE CRÉDITO: si el cargo a crédito excede el disponible
+    // o el cliente tiene deuda vencida, se exige autorización de un supervisor
+    // (PIN) antes de continuar. Si ya se autorizó (overrideCredito/ovr), pasa directo.
+    if (requiereAutorizacionCredito && !(overrideCredito || ovr)) {
+      setShowPinCredito(true)
+      return
+    }
     // Venta por encargo: la ficha se llena al ENTRAR al cobro (define el anticipo).
     // Si por algún motivo aún no está, reabrirla en vez de cobrar.
     if (hayEncargo && !datosFicha) { setFichaAbierta(true); return }
     // Si la config exige confirmación (huella/código), abrir el modal de canje.
     if (requiereConfirmCanje) { setConfirmCanje(true); return }
-    await finalizarVenta()
+    await finalizarVenta(undefined, ovr ?? overrideCredito)
+  }
+
+  // Supervisor autorizó el sobregiro de crédito con su PIN. Guardamos la
+  // autorización (se envía al backend, que RE-VALIDA el PIN) y continuamos la
+  // venta de inmediato pasando el override explícito.
+  async function autorizarCreditoOverride(autorizado_por: string, pin: string) {
+    const ovr = { autorizado_por, pin }
+    setOverrideCredito(ovr)
+    setShowPinCredito(false)
+    await handleConfirmar(ovr)
   }
 
   // La ficha de encargo quedó llena: guardamos los datos (definen el anticipo) y
@@ -501,7 +596,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     await finalizarVenta(lineaFlete)
   }
 
-  async function finalizarVenta(lineaFleteExtra?: CartItem | null) {
+  async function finalizarVenta(
+    lineaFleteExtra?: CartItem | null,
+    ovrCredito?: { autorizado_por: string; pin: string } | null
+  ) {
     if (!state.cajero) return
     setProcesando(true)
     setError(null)
@@ -591,6 +689,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
               cliente_id: ventaCliente.id,
               cliente_nombre: ventaCliente.nombre,
               ...(pCredito > 0 ? { plazo: ventaCliente.dias_credito } : {}),
+              // Sobregiro de crédito autorizado por supervisor (el backend re-valida
+              // el PIN). Solo se envía si hubo autorización explícita.
+              ...((ovrCredito ?? overrideCredito) ? { credito_override: (ovrCredito ?? overrideCredito)! } : {}),
             }
           : {}),
         // Ficha de encargo (venta sobre pedido): si el cajero la llenó, se adjunta
@@ -969,6 +1070,32 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
             })}
           </div>
 
+          {/* Estado de crédito del cliente (cuando hay cargo a crédito) */}
+          {creditoInfo && cargoCartera > 0.005 && (
+            requiereAutorizacionCredito ? (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-2.5 text-sm">
+                <div className="flex items-center gap-2 text-red-700 font-semibold mb-1">
+                  <AlertCircle size={16} className="shrink-0" />
+                  {excedeCredito && tieneVencido
+                    ? "Excede el límite y tiene deuda vencida"
+                    : excedeCredito
+                      ? "El cargo excede el crédito disponible"
+                      : "El cliente tiene deuda vencida"}
+                </div>
+                <div className="text-[12px] text-red-800/80">
+                  Límite {fmt(creditoInfo.limite)} · Saldo {fmt(creditoInfo.saldo)} · Disponible <strong>{fmt(creditoInfo.disponible)}</strong>
+                  {creditoInfo.vencido > 0.005 && <> · Vencido <strong>{fmt(creditoInfo.vencido)}</strong></>}
+                </div>
+                <div className="text-[11px] text-red-600 mt-1">Requiere autorización de un supervisor para continuar.</div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-[12px] text-gray-600">
+                <span>Crédito disponible</span>
+                <strong className="text-gray-800">{fmt(creditoInfo.disponible)}</strong>
+              </div>
+            )
+          )}
+
           {/* Preview de puntos a ganar */}
           {puntosAGanar > 0 && (
             <div className="flex items-center justify-center gap-2 bg-amber-50 border border-amber-200 rounded-xl px-4 py-2.5 text-sm text-amber-800">
@@ -1193,6 +1320,116 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         </div>
       )}
 
+      {/* ── Autorización de supervisor: sobregiro de límite de crédito ───────── */}
+      {showPinCredito && creditoInfo && (
+        <PinSupervisorModal
+          info={creditoInfo}
+          cargo={cargoCartera}
+          excede={excedeCredito}
+          vencido={tieneVencido}
+          procesando={procesando}
+          onAutorizar={autorizarCreditoOverride}
+          onCancelar={() => setShowPinCredito(false)}
+        />
+      )}
+
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PinSupervisorModal — autoriza un sobregiro de límite de crédito.
+//
+// Cuando una venta a crédito excede el disponible del cliente o hay deuda vencida,
+// un supervisor/admin ingresa su PIN para autorizar. El PIN NO se valida aquí: se
+// envía al backend (POST /caja/ventas), que lo re-valida contra los usuarios POS
+// (rol admin/supervisor). Si el PIN es incorrecto, el backend rechaza (403) y el
+// error se muestra en el modal de cobro. Así el PIN nunca requiere el token admin
+// en el cliente y la validación es autoritativa server-side.
+// ─────────────────────────────────────────────────────────────────────────────
+function PinSupervisorModal({
+  info, cargo, excede, vencido, procesando, onAutorizar, onCancelar,
+}: {
+  info: CreditoInfo
+  cargo: number
+  excede: boolean
+  vencido: boolean
+  procesando: boolean
+  onAutorizar: (autorizado_por: string, pin: string) => void
+  onCancelar: () => void
+}) {
+  const [nombre, setNombre] = useState("")
+  const [pin, setPin] = useState("")
+  const puede = nombre.trim().length > 0 && pin.trim().length > 0 && !procesando
+
+  return (
+    <div className="fixed inset-0 z-[750] flex items-center justify-center p-4 bg-black/50"
+      onClick={() => !procesando && onCancelar()}>
+      <div className="w-full max-w-sm bg-white rounded-2xl shadow-2xl border-t-4 border-red-500 p-6"
+        onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-2 mb-3">
+          <span className="w-9 h-9 p-0 inline-flex items-center justify-center rounded-lg bg-red-100 text-red-600">
+            <Lock size={18} />
+          </span>
+          <h2 className="text-lg font-bold text-gray-900">Autorización requerida</h2>
+        </div>
+
+        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4 text-sm">
+          {excede && (
+            <p className="text-red-700 mb-1">
+              El cargo a crédito (<strong>{fmt(cargo)}</strong>) excede el disponible del cliente.
+            </p>
+          )}
+          {vencido && (
+            <p className="text-red-700 mb-1">
+              El cliente tiene <strong>deuda vencida ({fmt(info.vencido)})</strong>.
+            </p>
+          )}
+          <div className="mt-2 pt-2 border-t border-red-200 text-red-800/80 text-[12px] leading-relaxed">
+            Límite: {fmt(info.limite)} · Saldo: {fmt(info.saldo)} · Disponible: <strong>{fmt(info.disponible)}</strong>
+          </div>
+        </div>
+
+        <p className="text-sm text-gray-600 mb-3">
+          Un supervisor o administrador debe autorizar este sobregiro con su PIN.
+        </p>
+
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Nombre del autorizante</label>
+        <input
+          type="text"
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value)}
+          placeholder="Nombre del supervisor"
+          className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm mb-3 focus:outline-none focus:border-orange-500"
+          autoFocus
+        />
+        <label className="block text-xs font-semibold text-gray-500 mb-1">PIN de supervisor</label>
+        <input
+          type="password"
+          inputMode="numeric"
+          value={pin}
+          onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+          onKeyDown={(e) => { if (e.key === "Enter" && puede) onAutorizar(nombre.trim(), pin.trim()) }}
+          placeholder="••••"
+          maxLength={8}
+          className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-lg text-center tracking-[0.3em] mb-4 focus:outline-none focus:border-orange-500"
+        />
+
+        <div className="flex gap-3">
+          <button
+            onClick={onCancelar}
+            disabled={procesando}
+            className="flex-1 inline-flex items-center justify-center bg-white border border-gray-300 text-gray-700 px-4 py-2.5 rounded-xl text-sm font-medium hover:bg-gray-50 disabled:opacity-40">
+            Cancelar
+          </button>
+          <button
+            onClick={() => onAutorizar(nombre.trim(), pin.trim())}
+            disabled={!puede}
+            className="flex-[2] inline-flex items-center justify-center gap-2 bg-red-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold hover:bg-red-700 disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed">
+            <Lock size={16} /> {procesando ? "Procesando…" : "Autorizar venta"}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

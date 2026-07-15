@@ -85,6 +85,15 @@ interface VentaBody {
   cliente_id?: string
   cliente_nombre?: string
   plazo?: number
+  // Override de límite de crédito: cuando la venta a crédito excede el límite
+  // disponible del cliente (o tiene deuda vencida), el backend la rechaza — SALVO
+  // que un supervisor/admin haya autorizado con su PIN en el frontend. Si viene
+  // este objeto validado (PIN correcto de rol admin/supervisor), se permite el
+  // sobregiro y se deja rastro de quién autorizó en la descripción del movimiento.
+  credito_override?: {
+    autorizado_por: string  // nombre del supervisor/admin que autorizó
+    pin: string             // PIN a re-validar server-side (no confiar en el front)
+  }
   // Venta por encargo (Fase 3): ficha del cliente que se llena al cobrar (nombre,
   // teléfono, motivo, tiempo de entrega, notas). Se persiste como EncargoFicha
   // (encargos-pos.json) para el módulo de consulta "Encargos". El anticipo NO va
@@ -428,6 +437,63 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     }
   }
 
+  // ── Validación de LÍMITE DE CRÉDITO ────────────────────────────────────────
+  // Todo cargo a cartera (pago a crédito + resta de encargo a cartera) debe caber
+  // en el crédito disponible del cliente (límite − saldo). Además, un cliente con
+  // deuda VENCIDA no puede seguir comprando a crédito. Ambas reglas se pueden
+  // sobrepasar SOLO con un override autorizado por PIN de supervisor/admin (que
+  // se re-valida aquí, no se confía en el front). Se valida ANTES del lock para
+  // fallar barato. `creditoAutorizado` viaja al lock para dejar rastro del cargo.
+  const cargoCartera = Math.round((pago_credito + (restaACartera ? restaEncargo : 0)) * 100) / 100
+  let creditoAutorizado: string | null = null
+  if (cargoCartera > 0.005 && body.cliente_id) {
+    try {
+      const customerModule = req.scope.resolve(Modules.CUSTOMER)
+      const carteraSvc = req.scope.resolve<FerremexCarteraService>(FERREMEX_CARTERA)
+      const cust = await customerModule.retrieveCustomer(body.cliente_id).catch(() => null)
+      const limite = Number((cust?.metadata as any)?.limite_credito) || 0
+      const plazoCliente = Number((cust?.metadata as any)?.dias_credito) || Number(body.plazo) || 30
+      const { balance, overdue } = await carteraSvc.estadoCredito(body.cliente_id, plazoCliente)
+
+      const excedeLimite = limite > 0 && (balance + cargoCartera) > limite + 0.01
+      const tieneVencido = overdue > 0.005
+      // Sin límite configurado (limite === 0) el crédito no está habilitado.
+      const sinCredito = limite <= 0
+
+      if (sinCredito || excedeLimite || tieneVencido) {
+        // ¿Trae override válido? Re-validamos el PIN contra usuarios admin/supervisor.
+        const ov = body.credito_override
+        let overrideValido = false
+        if (ov?.pin) {
+          const USUARIOS_FILE = path.join(__dirname, "../../../../data/usuarios-pos.json")
+          const usuarios = readJson<Array<{ pin: string; rol: string; activo: boolean; nombre: string }>>(USUARIOS_FILE, [])
+          const auth = usuarios.find(
+            (u) => u.activo && (u.rol === "admin" || u.rol === "supervisor") && u.pin && u.pin === ov.pin
+          )
+          if (auth) { overrideValido = true; creditoAutorizado = ov.autorizado_por || auth.nombre }
+        }
+
+        if (!overrideValido) {
+          const disponible = Math.max(0, limite - balance)
+          let motivo: string
+          if (sinCredito) motivo = "El cliente no tiene crédito habilitado"
+          else if (excedeLimite && tieneVencido) motivo = `Excede el crédito disponible ($${disponible.toFixed(2)}) y tiene deuda vencida ($${overdue.toFixed(2)})`
+          else if (excedeLimite) motivo = `El cargo a crédito ($${cargoCartera.toFixed(2)}) excede el disponible ($${disponible.toFixed(2)}). Límite $${limite.toFixed(2)}, saldo $${balance.toFixed(2)}`
+          else motivo = `El cliente tiene deuda vencida ($${overdue.toFixed(2)})`
+          res.status(403).json({
+            error: motivo,
+            requiere_autorizacion: true,
+            credito: { limite, saldo: balance, disponible, vencido: overdue, cargo: cargoCartera },
+          })
+          return
+        }
+      }
+    } catch (e: any) {
+      console.error("[caja/ventas] Validación de límite de crédito falló:", e?.message ?? e)
+      res.status(500).json({ error: "No se pudo validar el crédito del cliente" }); return
+    }
+  }
+
   try {
     const resultado = await withFileLock(VENTAS_FILE, async () => {
       // Cargar inventario y validar stock
@@ -637,7 +703,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             fecha: registro.fecha.slice(0, 10),
             folio: registro.folio,
             plazo: body.plazo != null ? Number(body.plazo) : null,
-            descripcion: `Venta a crédito ${registro.folio}`,
+            descripcion: `Venta a crédito ${registro.folio}` +
+              (creditoAutorizado ? ` — sobregiro autorizado por ${creditoAutorizado}` : ""),
           })
         }
 

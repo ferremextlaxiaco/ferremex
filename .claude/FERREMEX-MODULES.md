@@ -1,7 +1,7 @@
 # FERREMEX-MODULES.md — Mapa de módulos y conexiones
 
 > Mapa completo de los módulos del POS: propósito, datos que tocan, conexiones actuales y **pendientes**.
-> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-07-14.
+> Derivado del código real (`apps/pos/src/`, `packages/api/src/api/caja/`). Última actualización: 2026-07-14 (validación límite crédito + override PIN).
 >
 > Leyenda de persistencia: 🟢 BD Medusa · 🟡 JSON (`packages/api/data/`) · 🔴 localStorage (navegador).
 
@@ -41,7 +41,7 @@
 | Caja / Movimientos | `pages/AdminCaja.tsx` | `modules/CashMovementsModule.jsx` | Movimientos de caja por CAJA (no cajero/turno), resumen diario. Periodo continuo desde último corte cerrado. Ahora con `caja_id`, `periodo_desde`, `franja_id`. | 🟡 ventas + 🔴 `pos_movimientos_caja_*` |
 | Empleados / Usuarios | `pages/AdminEmpleados.tsx` (`/admin/usuarios` → redirect aquí) | `modules/EmployeesModule.jsx` | CRUD cajeros, roles/permisos, asignación de cajas + tab "Cajas y horario" (PosUsuario.horario). Botón "Turnos" en toolbar abre `TurnosConfigModal` (modo día/turnos + editor de franjas → `/caja/turnos-config`). Usa `obtenerUsuarios(true)` (con pin) | 🟡 `usuarios-pos.json` + 🟡 `turnos-config.json` + 🟢 cajas (BD) |
 | Clientes | `pages/AdminClientes.tsx` (landing), `pages/AdminClientesLista.tsx` (CRUD) | — | CRUD clientes (Customers Medusa), grupos (customer_groups). | 🟢 Customer + customer_group |
-| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO (EXCLUYEN cancelados), semáforo, notas, historial de límite. Botón "Cancelar abono" en DetalleAbonoModal, badge "Cancelado" en lista. | 🟢 módulo ferremex_cartera |
+| Cartera de crédito | `pages/CarteraCredito.jsx` (`/admin/cartera-credito`) | — | Saldos FIFO (EXCLUYEN cancelados), semáforo, notas, historial de límite. Botón "Cancelar abono" en DetalleAbonoModal, badge "Cancelado" en lista. **NUEVO:** ModalCobro valida límite de crédito al cobrar (rechaza 403 si excede disponible + hay mora); override PIN re-validado server-side. | 🟢 módulo ferremex_cartera |
 | Monedero Electrónico | `pages/AdminMonedero.tsx` (`/admin/monedero`) | `modules/MonederoModule.jsx` (4 tabs: Clientes/Reglas/Niveles/Config; drawers de inscripción/regla/nivel; ConfirmDialog para reset/baja) | Programa de lealtad por puntos: devengo por línea (según marca/categoría/departamento REALES del producto), canje, niveles/tiers con multiplicador. Devengo + canje transaccionales en POST `/caja/ventas` (cap server-side). Cancelación reversible de venta anula/reembolsa puntos. | 🟢 módulo ferremex_monedero (ConfigMonedero, ReglaPuntos, NivelMonedero, MovimientoMonedero) |
 | Proveedores | `pages/AdminProveedores.tsx` | — | Gestión de proveedores + facturas a crédito | 🟢 módulo ferremex_proveedores |
 | Compras | `pages/AdminCompras.jsx`, `AdminComprasNueva.jsx`, `AdminConsultarCompras.jsx` | `components/ComprasModule.jsx`, `modules/ConsultarCompras.jsx` (+ `ComprasTable`, `ComprasDetailPanel`, `OC*`) | Alta + historial de compras, generación OC PDF | 🟢 módulo ferremex_compras |
@@ -102,7 +102,7 @@ Buscador ──buscarProductos() con departamento+categoria──► /caja/produ
 GridPaquetes ──DesglosePaqueteModal──► cargarDesglosePaquete() ──► componentes+prorrateo+thumbnails
 Carrito ──drawer FAB──► Venta state `carritoAbierto`, cierra Escape/overlay
 ModalCobro ──registrarVenta()──► /caja/ventas ──► descuenta inventario + puntos monedero (devengo+canje transaccionales) + ventas-pos.json + caja_id/vendedor/pago_tarjeta
-ModalCobro ──método "Crédito"──► /caja/cartera (BD) [si crédito]
+ModalCobro ──método "Crédito"──► valida límite (403 + override PIN) ──► /caja/ventas (crea movimiento cartera transaccional con cliente)
 ModalCobro ──método "Tarjeta"──► /caja/ventas (pago_tarjeta, NO entra en efectivo esperado)
 ModalCobro ──método "Puntos" (si inscrito+saldo)──► canje de puntos + preview en UI + /caja/ventas pago_puntos
 ModalCobro ──abrirCajon()──► serial.ts [si efectivo]
