@@ -55,6 +55,10 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
   useEffect(() => () => { if (urlRef.current) URL.revokeObjectURL(urlRef.current) }, [])
 
   const sinCliente = !venta.cliente_id && !venta.cliente_nombre
+  // Las cotizaciones comparten este mismo documento (hoja carta, sin pagos) —
+  // se distinguen solo por el folio ("COT-...") para ajustar el wording.
+  const esCotizacion = venta.folio.startsWith("COT-")
+  const titulo = esCotizacion ? "Cotización" : "Nota de venta"
 
   // Fecha legible + forma de pago para el panel lateral del visor.
   const fechaLegible = (() => {
@@ -109,7 +113,7 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
     if (!pdfUrl) return
     const a = document.createElement("a")
     a.href = pdfUrl
-    a.download = `nota-${venta.folio}.pdf`
+    a.download = `${esCotizacion ? "cotizacion" : "nota"}-${venta.folio}.pdf`
     document.body.appendChild(a); a.click(); a.remove()
   }
 
@@ -123,13 +127,13 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
         {/* Izquierda: la nota de venta a pantalla completa sobre el fondo difuminado. */}
         <div className="fac-visor-zona" onClick={(e) => e.stopPropagation()}>
           <iframe ref={iframeRef} className="fac-visor-doc" src={pdfUrl}
-            title={`Nota de venta ${venta.folio}`} />
+            title={`${titulo} ${venta.folio}`} />
         </div>
 
         {/* Derecha: panel de datos + acciones. */}
         <div className="fac-detalle-panel" onClick={(e) => e.stopPropagation()}>
           <div className="fac-modal-head">
-            <span><FileText size={18} /> Nota de venta {venta.folio}</span>
+            <span><FileText size={18} /> {titulo} {venta.folio}</span>
             <button className="fac-btn-ghost" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
           </div>
           <div className="fac-modal-body fac-detalle-info">
@@ -141,10 +145,10 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
               {venta.vendedor && venta.vendedor !== venta.cajero && (
                 <div><b>Vendedor:</b> {venta.vendedor}</div>
               )}
-              <div><b>Forma de pago:</b> {formaPagoLabel}</div>
+              {!esCotizacion && <div><b>Forma de pago:</b> {formaPagoLabel}</div>}
               <div><b>Artículos:</b> {venta.items.length}</div>
               <div><b>Total:</b> {formatMXN(venta.total)}</div>
-              <div><b>Estado:</b> <span className="fac-chip fac-chip--nomina">Nota de venta</span></div>
+              <div><b>Estado:</b> <span className="fac-chip fac-chip--nomina">{titulo}</span></div>
             </div>
 
             {/* Acciones */}
@@ -162,7 +166,7 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
 
             {/* Aviso: no es comprobante fiscal. */}
             <div className="fac-alert fac-alert--warn">
-              <AlertTriangle size={15} /> Este documento es una nota de venta y NO es un
+              <AlertTriangle size={15} /> Este documento es {esCotizacion ? "una cotización" : "una nota de venta"} y NO es un
               comprobante fiscal digital (CFDI).
             </div>
           </div>
@@ -188,7 +192,7 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <span className="inline-flex items-center gap-2 text-base font-bold text-gray-900">
-            <FileText size={18} className="text-orange-600" /> Nota de venta · {venta.folio}
+            <FileText size={18} className="text-orange-600" /> {titulo} · {venta.folio}
           </span>
           <button onClick={onClose} aria-label="Cerrar"
             className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:bg-gray-100">
@@ -254,7 +258,7 @@ export default function NotaVentaModal({ venta, onClose, pushToast }: NotaVentaM
           </button>
           <button onClick={generar} disabled={generando}
             className="inline-flex items-center gap-2 bg-orange-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-60">
-            {generando ? <><Loader2 size={16} className="animate-spin" /> Generando…</> : <><FileText size={16} /> Generar nota</>}
+            {generando ? <><Loader2 size={16} className="animate-spin" /> Generando…</> : <><FileText size={16} /> {esCotizacion ? "Generar cotización" : "Generar nota"}</>}
           </button>
         </div>
       </div>

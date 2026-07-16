@@ -383,6 +383,7 @@ export function Venta() {
           venta={ventaCompletada}
           cliente={state.clienteActivo}
           onImpreso={handleTicketImpreso}
+          pushToast={push}
         />
       )}
 

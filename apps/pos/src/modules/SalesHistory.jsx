@@ -942,14 +942,15 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr>
-                  {["Descripción","Qty","P. unit","Subtotal"].map(h => (
-                    <th key={h} style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", padding: "3px 6px", borderBottom: "1px solid var(--border)", textAlign: h === "Descripción" ? "left" : "right" }}>{h}</th>
+                  {["SKU","Descripción","Qty","P. unit","Subtotal"].map(h => (
+                    <th key={h} style={{ fontSize: 10, fontWeight: 700, textTransform: "uppercase", color: "var(--text-muted)", padding: "3px 6px", borderBottom: "1px solid var(--border)", textAlign: (h === "Descripción" || h === "SKU") ? "left" : "right" }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {venta.items.map((it, i) => (
                   <tr key={i}>
+                    <td style={{ padding: "5px 6px", fontSize: 11, color: "#ea580c", fontWeight: 600, borderBottom: "1px solid var(--border)", whiteSpace: "nowrap" }}>{it.sku ?? "—"}</td>
                     <td style={{ padding: "5px 6px", fontSize: 12, color: "var(--text)", borderBottom: "1px solid var(--border)" }}>{it.descripcion}</td>
                     <td style={{ padding: "5px 6px", fontSize: 12, textAlign: "right", borderBottom: "1px solid var(--border)" }}>{it.cantidad}</td>
                     <td style={{ padding: "5px 6px", fontSize: 12, textAlign: "right", borderBottom: "1px solid var(--border)" }}>{fmt(it.precio_unitario)}</td>
@@ -1065,26 +1066,31 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
           {/* Marcar como pagado: solo cuando la entrega tiene cobro pendiente. El
               cobro/liquidación vive en "Entregas a domicilio" — este botón lleva
               allá y abre esa entrega directamente (folio por query string). */}
-          {cobroPendienteEntrega(venta) && (
-            <button onClick={() => navigate(`/admin/entregas-por-cobrar?folio=${encodeURIComponent(venta.folio)}`)} style={{
-              flex: "1 1 100%", background: "#16a34a", border: "1px solid #15803d", borderRadius: 6,
-              padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "#fff",
-              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-            }}>
-              <Wallet size={14} /> Marcar como pagado
-            </button>
+          {(cobroPendienteEntrega(venta) || tieneEntrega(venta)) && (
+            <div style={{ display: "flex", gap: 8, flex: "1 1 100%" }}>
+              {cobroPendienteEntrega(venta) && (
+                <button onClick={() => navigate(`/admin/entregas-por-cobrar?folio=${encodeURIComponent(venta.folio)}`)} style={{
+                  flex: 1, background: "#16a34a", border: "1px solid #15803d", borderRadius: 6,
+                  padding: "9px 0", fontSize: 12, fontWeight: 700, cursor: "pointer", color: "#fff",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+                }}>
+                  <Wallet size={14} /> Marcar como pagado
+                </button>
+              )}
+              {/* Entrega a domicilio (contra entrega o pagada): reimprime los DOS
+                  comprobantes (cliente + repartidor). */}
+              {tieneEntrega(venta) && (
+                <button onClick={reimprimirEntrega} disabled={cargandoFicha} style={{
+                  flex: 1, background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 6,
+                  padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: cargandoFicha ? "default" : "pointer", color: "#ea580c",
+                  display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: cargandoFicha ? 0.6 : 1,
+                }}>
+                  <Truck size={14} /> {cargandoFicha ? "Cargando…" : "Reimprimir"}
+                </button>
+              )}
+            </div>
           )}
-          {/* Entrega a domicilio (contra entrega o pagada): reimprime los DOS
-              comprobantes (cliente + repartidor). */}
-          {tieneEntrega(venta) ? (
-            <button onClick={reimprimirEntrega} disabled={cargandoFicha} style={{
-              flex: "1 1 100%", background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 6,
-              padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: cargandoFicha ? "default" : "pointer", color: "#ea580c",
-              display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, opacity: cargandoFicha ? 0.6 : 1,
-            }}>
-              <Truck size={14} /> {cargandoFicha ? "Cargando…" : "Reimprimir tickets de entrega"}
-            </button>
-          ) : (
+          {!tieneEntrega(venta) && (
             <button onClick={() => window.print()} style={{
               flex: 1, background: "var(--panel-bg, #f4f4f5)", border: "1px solid var(--border)", borderRadius: 6,
               padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "var(--text)",

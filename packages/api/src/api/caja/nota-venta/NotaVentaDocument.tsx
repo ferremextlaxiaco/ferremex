@@ -145,10 +145,13 @@ export interface NotaVentaProps {
   items: NotaVentaItem[]
   imageMap: Record<string, string> // sku → dataURI
   opts: NotaVentaOpts
+  // true cuando el folio es una cotización (COT-...): mismo documento, solo
+  // cambia el título/wording — una cotización no es un cobro ya realizado.
+  esCotizacion?: boolean
 }
 
 // ── Encabezado ────────────────────────────────────────────────────────────────
-function Header({ folio, fecha }: { folio: string; fecha: string }) {
+function Header({ folio, fecha, titulo }: { folio: string; fecha: string; titulo: string }) {
   return (
     <View style={s.z1}>
       <View style={{ flexDirection: "row", alignItems: "flex-start" }}>
@@ -162,7 +165,7 @@ function Header({ folio, fecha }: { folio: string; fecha: string }) {
         </View>
       </View>
       <View style={s.ocBlock}>
-        <Text style={s.ocTitle}>Nota de Venta</Text>
+        <Text style={s.ocTitle}>{titulo}</Text>
         <Text style={s.ocNum}>{folio}</Text>
         <View style={s.ocMeta}>
           <View style={s.ocMetaItem}>
@@ -260,7 +263,7 @@ function Totales({ subtotal, iva, total }: { subtotal: number; iva: number; tota
 // ── Documento ─────────────────────────────────────────────────────────────────
 export function NotaVentaDocument({
   folio, fecha, cajero, vendedor, clienteNombre, clienteRfc, metodoPago,
-  items, imageMap, opts,
+  items, imageMap, opts, esCotizacion = false,
 }: NotaVentaProps) {
   // Totales: desglose hacia atrás por línea (respeta productos exentos de IVA).
   let subtotal = 0
@@ -273,10 +276,13 @@ export function NotaVentaDocument({
   }
   const total = subtotal + iva
 
+  const titulo = esCotizacion ? "Cotización" : "Nota de Venta"
+  const tituloMin = esCotizacion ? "cotización" : "nota de venta"
+
   return (
-    <Document title={`Nota de venta ${folio}`} author="Ferremex">
+    <Document title={`${titulo} ${folio}`} author="Ferremex">
       <Page size="LETTER" style={s.page}>
-        <Header folio={folio} fecha={fecha} />
+        <Header folio={folio} fecha={fecha} titulo={titulo} />
         {opts.cliente && <ClienteBar nombre={clienteNombre} rfc={clienteRfc} />}
         <TableHeader opts={opts} />
         {items.map((item, i) => (
@@ -302,7 +308,7 @@ export function NotaVentaDocument({
               <Text style={s.payVal}>{vendedor}</Text>
             </View>
           )}
-          {metodoPago && (
+          {!esCotizacion && metodoPago && (
             <View style={s.payGroup}>
               <Text style={s.payLabel}>Forma de pago</Text>
               <Text style={s.payVal}>{metodoPago}</Text>
@@ -311,10 +317,10 @@ export function NotaVentaDocument({
         </View>
 
         <Text style={s.legal}>
-          Este documento es una nota de venta y NO es un comprobante fiscal digital (CFDI).
+          Este documento es {esCotizacion ? "una cotización" : "una nota de venta"} y NO es un comprobante fiscal digital (CFDI).
         </Text>
         <Text style={s.pgNum} render={({ pageNumber, totalPages }) => (
-          `${FERREMEX.nombre}  ·  Nota de venta ${folio}  ·  Página ${pageNumber} de ${totalPages}`
+          `${FERREMEX.nombre}  ·  ${titulo} ${folio}  ·  Página ${pageNumber} de ${totalPages}`
         )} fixed />
       </Page>
     </Document>

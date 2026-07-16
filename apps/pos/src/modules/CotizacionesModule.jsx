@@ -4,6 +4,7 @@ import { FileText, Search, RotateCcw, CheckCircle2, X, ArrowRight, Printer } fro
 import { listarCotizaciones } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import { formatMXN as fmt } from "../lib/format"
+import NotaVentaModal from "../components/NotaVentaModal"
 
 /**
  * Módulo admin de Cotizaciones — lista de cotizaciones guardadas.
@@ -230,11 +231,31 @@ export default function CotizacionesModule() {
 }
 
 function CotizacionDrawer({ c, onClose, onCargar }) {
+  const { push } = useToasts()
+  const [notaAbierta, setNotaAbierta] = useState(false)
+
   useEffect(() => {
     const fn = (e) => { if (e.key === "Escape") onClose() }
     window.addEventListener("keydown", fn)
     return () => window.removeEventListener("keydown", fn)
   }, [onClose])
+
+  // Adapta la cotización al shape que espera NotaVentaModal (mismo documento
+  // PDF que la nota de venta; sin pagos porque es un presupuesto).
+  const ventaParaNota = {
+    folio: c.folio,
+    fecha: c.fecha,
+    cajero: c.cajero,
+    items: c.items,
+    total: c.total,
+    pago_efectivo: 0,
+    pago_transferencia: 0,
+    pago_tarjeta: 0,
+    pago_credito: 0,
+    cambio: 0,
+    cliente_id: c.cliente_id,
+    cliente_nombre: c.cliente_nombre,
+  }
 
   return (
     <>
@@ -286,7 +307,7 @@ function CotizacionDrawer({ c, onClose, onCargar }) {
           </div>
         </div>
 
-        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8 }}>
+        <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={() => window.print()} style={{
             flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
             background: "var(--bg-hover,#f4f4f5)", border: "1px solid var(--border)", borderRadius: 7,
@@ -294,8 +315,18 @@ function CotizacionDrawer({ c, onClose, onCargar }) {
           }}>
             <Printer size={14} /> Imprimir
           </button>
-          <button onClick={onCargar} style={{
+          {/* Cotización en hoja carta (mismo documento de la nota de venta, con
+              toggles de imagen/SKU/precio/cliente) — para imprimir formal o
+              mandar al cliente sin cargarla en venta. */}
+          <button onClick={() => setNotaAbierta(true)} style={{
             flex: 1, display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
+            background: "rgba(234,88,12,0.08)", border: "1px solid rgba(234,88,12,0.3)", borderRadius: 7,
+            padding: "9px 0", fontSize: 13, fontWeight: 600, cursor: "pointer", color: "#ea580c",
+          }}>
+            <FileText size={14} /> Ver en carta
+          </button>
+          <button onClick={onCargar} style={{
+            flex: "1 1 100%", display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
             background: "var(--orange,#F96302)", border: "none", borderRadius: 7,
             padding: "9px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", color: "#fff",
           }}>
@@ -303,6 +334,10 @@ function CotizacionDrawer({ c, onClose, onCargar }) {
           </button>
         </div>
       </div>
+
+      {notaAbierta && (
+        <NotaVentaModal venta={ventaParaNota} onClose={() => setNotaAbierta(false)} pushToast={push} />
+      )}
     </>
   )
 }

@@ -8,9 +8,10 @@ import { readJson } from "../../../lib/json-store"
 import { NotaVentaDocument, type NotaVentaItem, type NotaVentaOpts } from "./NotaVentaDocument"
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
+const COTIZACIONES_FILE = path.join(__dirname, "../../../../data/cotizaciones-pos.json")
 const STATIC_DIR = path.resolve(__dirname, "../../../../static")
 
-interface VentaItem { sku?: string; descripcion: string; cantidad: number; precio_unitario: number; subtotal: number }
+interface VentaItem { sku?: string; descripcion: string; cantidad: number; precio_unitario: number; subtotal: number; impuesto?: boolean }
 interface Venta {
   folio: string
   fecha: string
@@ -24,6 +25,28 @@ interface Venta {
   pago_transferencia?: number
   pago_tarjeta?: number
   pago_credito?: number
+}
+
+interface CotizacionRegistro {
+  folio: string
+  fecha: string
+  cajero: string
+  items: VentaItem[]
+  cliente_id?: string | null
+  cliente_nombre?: string | null
+}
+
+/** Adapta una cotización al mismo shape de Venta que ya consume este documento
+ *  (sin pagos: es un presupuesto, no un cobro). */
+function cotizacionComoVenta(c: CotizacionRegistro): Venta {
+  return {
+    folio: c.folio,
+    fecha: c.fecha,
+    cajero: c.cajero,
+    items: c.items,
+    cliente_id: c.cliente_id ?? null,
+    cliente_nombre: c.cliente_nombre ?? null,
+  }
 }
 
 /** Convierte un thumbnail (URL absoluta o /static/…) a dataURI, con contención de
@@ -64,10 +87,17 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  const ventas = readJson<Venta[]>(VENTAS_FILE, [])
-  const venta = ventas.find((x) => x.folio === folio)
+  // Folios de cotización llevan el prefijo "COT-"; el resto son ventas. Misma
+  // plantilla PDF para ambos — una cotización se ve igual pero sin pagos.
+  const esCotizacion = folio.startsWith("COT-")
+  const venta = esCotizacion
+    ? (() => {
+        const c = readJson<CotizacionRegistro[]>(COTIZACIONES_FILE, []).find((x) => x.folio === folio)
+        return c ? cotizacionComoVenta(c) : null
+      })()
+    : readJson<Venta[]>(VENTAS_FILE, []).find((x) => x.folio === folio) ?? null
   if (!venta) {
-    res.status(404).json({ error: `No se encontró la venta ${folio}` })
+    res.status(404).json({ error: `No se encontró ${esCotizacion ? "la cotización" : "la venta"} ${folio}` })
     return
   }
 
@@ -156,14 +186,16 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       items,
       imageMap,
       opts: options,
+      esCotizacion,
     })
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const buffer = await renderToBuffer(element as any)
 
     const safeFolio = String(venta.folio).replace(/[^a-zA-Z0-9_\-]/g, "_")
+    const prefijoArchivo = esCotizacion ? "cotizacion" : "nota"
     res.setHeader("Content-Type", "application/pdf")
-    res.setHeader("Content-Disposition", `inline; filename="nota-${safeFolio}.pdf"`)
+    res.setHeader("Content-Disposition", `inline; filename="${prefijoArchivo}-${safeFolio}.pdf"`)
     res.send(buffer)
   } catch (err) {
     console.error("[caja/nota-venta] Error generando PDF:", err)

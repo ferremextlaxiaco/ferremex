@@ -5,6 +5,7 @@ import { usePOS } from "../lib/pos-store"
 import { construirBytesTicket, type TicketPrintData } from "../lib/serial"
 import { imprimirBytesLocal, impresoraElegida } from "../lib/impresora-local"
 import { FacturarBoton } from "./FacturarBoton"
+import NotaVentaModal from "./NotaVentaModal"
 
 interface TicketProps {
   venta: VentaResponse
@@ -13,6 +14,7 @@ interface TicketProps {
   /** Si true, se imprime como COTIZACIÓN (sin pago/cambio ni facturación). */
   esCotizacion?: boolean
   onImpreso: () => void
+  pushToast?: (msg: string, tipo?: "success" | "error" | "info") => void
 }
 
 /**
@@ -94,9 +96,10 @@ function ventaATicketPrintData(
   }
 }
 
-export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: TicketProps) {
+export function Ticket({ venta, cliente, esCotizacion = false, onImpreso, pushToast }: TicketProps) {
   const { state } = usePOS()
   const [imprimiendo, setImprimiendo] = useState(false)
+  const [notaVenta, setNotaVenta] = useState(false)
   // Cliente para facturar: la VENTA es la fuente de verdad (el clienteActivo del
   // estado se resetea al terminar la venta, así que no sirve aquí). Si la venta
   // trae cliente_id, construimos un cliente mínimo (el FacturarBoton hidrata el
@@ -289,11 +292,22 @@ export function Ticket({ venta, cliente, esCotizacion = false, onImpreso }: Tick
           {!esCotizacion && (
             <FacturarBoton folio={venta.folio} cliente={clienteFactura} facturaInicial={venta.factura ?? null} variant="full" />
           )}
+          {/* Nota de venta formal (hoja carta, estética factura): para imprimir más
+              rápido o mandar al cliente sin pasar por el historial de ventas. */}
+          {!esCotizacion && (
+            <button className="btn-secondary" onClick={() => setNotaVenta(true)}>
+              📄 Nota de venta
+            </button>
+          )}
           <button className="btn-confirmar" onClick={handleImprimir} disabled={imprimiendo}>
             🖨 {imprimiendo ? "Imprimiendo…" : `Imprimir ${esCotizacion ? "cotización" : "ticket"}`}
           </button>
         </div>
       </div>
+
+      {notaVenta && (
+        <NotaVentaModal venta={venta} onClose={() => setNotaVenta(false)} pushToast={pushToast} />
+      )}
     </div>
   )
 }
