@@ -182,7 +182,6 @@ export function Login() {
               onClick={() => handleSeleccionar(u)}
             >
               <span className="btn-cajero-nombre">{u.alias?.trim() || u.nombre}</span>
-              <span className={`rol-badge rol-${u.rol}`}>{u.rol}</span>
             </button>
           ))}
         </div>

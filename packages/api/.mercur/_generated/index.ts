@@ -811,6 +811,10 @@ export type Routes = {
                 };
             };
         };
+        reportes: {
+            comisiones: typeof import("../../src/api/caja/reportes/comisiones/route");
+        };
+        rolesPermisos: typeof import("../../src/api/caja/roles-permisos/route");
         saldoCambio: {
             $customerId: typeof import("../../src/api/caja/saldo-cambio/[customerId]/route");
         };
