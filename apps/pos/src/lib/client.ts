@@ -435,6 +435,55 @@ export async function listarArticulosDeCatalogo(
   return apiFetch<ArticuloPOS[]>(`/caja/articulos?${params}`)
 }
 
+export interface ArticuloPreview {
+  id: string
+  clave: string
+  descripcion: string
+  marca: string
+  thumbnail: string | null
+  existencia: number
+}
+
+export interface ArticulosPreviewPagina {
+  items: ArticuloPreview[]
+  total: number
+}
+
+/** Previsualización paginada de artículos de un nivel de catálogo (modal "Ver
+ *  artículos"). A diferencia de listarArticulosDeCatalogo, solo trae la página
+ *  pedida (evita procesar miles de artículos de golpe en deptos grandes). */
+export async function listarArticulosPreview(
+  filtro: { departamento?: string; categoria?: string; marca?: string },
+  opciones: { q?: string; limit?: number; offset?: number } = {}
+): Promise<ArticulosPreviewPagina> {
+  const params = new URLSearchParams()
+  if (filtro.departamento) params.set("departamento", filtro.departamento)
+  if (filtro.categoria)    params.set("categoria", filtro.categoria)
+  if (filtro.marca)        params.set("marca", filtro.marca)
+  if (opciones.q)          params.set("q", opciones.q)
+  params.set("limit",  String(opciones.limit  ?? 50))
+  params.set("offset", String(opciones.offset ?? 0))
+  return apiFetch<ArticulosPreviewPagina>(`/caja/catalogos/articulos?${params}`)
+}
+
+export interface ProveedoresDeNivel {
+  lista: { nombre: string; n: number }[]
+  sinAsignar: number
+  total: number
+}
+
+/** Resumen de proveedores presentes en los productos de un nivel de catálogo
+ *  (agregado en backend — nunca trae artículos completos al frontend). */
+export async function listarProveedoresDeNivel(
+  filtro: { departamento?: string; categoria?: string; marca?: string }
+): Promise<ProveedoresDeNivel> {
+  const params = new URLSearchParams()
+  if (filtro.departamento) params.set("departamento", filtro.departamento)
+  if (filtro.categoria)    params.set("categoria", filtro.categoria)
+  if (filtro.marca)        params.set("marca", filtro.marca)
+  return apiFetch<ProveedoresDeNivel>(`/caja/catalogos/proveedores?${params}`)
+}
+
 /** Lista artículos que NO tienen asignado un campo (para poder clasificarlos).
  *  Limitado server-side a 500. */
 export async function listarArticulosSinClasificar(
@@ -2700,3 +2749,68 @@ export async function cancelarCambioAPI(id: string, motivo: string): Promise<Cam
 // Tipos y `obtenerSaldoCambioAPI` del saldo a favor viven en la sección
 // "Saldo a favor por cambio" (DetalleSaldoCambio / MovimientoSaldoCambioAPI),
 // consumida también por ModalCobro.
+
+// ── Comisiones de venta por empleado (módulo ferremex_comisiones) ─────────────
+//
+// Dos entidades: ComisionEjeAPI (toggle GLOBAL — qué ámbitos de la taxonomía
+// admiten comisión, editado desde Catálogos) y ComisionReglaAPI (% que un
+// EMPLEADO recibe de un ámbito ya habilitado, editado desde Empleados). El
+// motor de resolución (marca → categoría → departamento → 0%) vive en
+// lib/comisiones.ts, compartido por el preview de UI y (a futuro) el reporte
+// de comisión generada.
+
+export type ComisionAmbito = "marca" | "categoria" | "departamento"
+
+export interface ComisionEjeAPI {
+  id: string
+  ambito: ComisionAmbito
+  ref: string
+  habilitado: boolean
+}
+
+export interface ComisionReglaAPI {
+  id: string
+  empleado_id: string
+  ambito: ComisionAmbito
+  ref: string
+  tasa: number
+  activa: boolean
+}
+
+/** Lista todos los ejes de comisión registrados (habilitados o no). */
+export async function listarEjesComisionAPI(): Promise<ComisionEjeAPI[]> {
+  return apiFetch<ComisionEjeAPI[]>("/caja/comisiones/ejes")
+}
+
+/** Crea o alterna el toggle "admite comisión" de un ámbito (upsert por ambito+ref). */
+export async function guardarEjeComisionAPI(
+  ambito: ComisionAmbito,
+  ref: string,
+  habilitado: boolean
+): Promise<ComisionEjeAPI> {
+  return apiFetch<ComisionEjeAPI>("/caja/comisiones/ejes", {
+    method: "PATCH",
+    body: JSON.stringify({ ambito, ref, habilitado }),
+  })
+}
+
+/** Reglas de comisión de un empleado (o todas si se omite empleado_id). */
+export async function listarReglasComisionAPI(empleadoId?: string): Promise<ComisionReglaAPI[]> {
+  const qs = empleadoId ? `?empleado_id=${encodeURIComponent(empleadoId)}` : ""
+  return apiFetch<ComisionReglaAPI[]>(`/caja/comisiones/reglas${qs}`)
+}
+
+export async function crearReglaComisionAPI(r: Omit<ComisionReglaAPI, "id">): Promise<ComisionReglaAPI> {
+  return apiFetch<ComisionReglaAPI>("/caja/comisiones/reglas", { method: "POST", body: JSON.stringify(r) })
+}
+
+export async function actualizarReglaComisionAPI(id: string, r: Partial<ComisionReglaAPI>): Promise<ComisionReglaAPI> {
+  return apiFetch<ComisionReglaAPI>(`/caja/comisiones/reglas/${encodeURIComponent(id)}`, {
+    method: "PUT",
+    body: JSON.stringify(r),
+  })
+}
+
+export async function eliminarReglaComisionAPI(id: string): Promise<void> {
+  await apiFetch(`/caja/comisiones/reglas/${encodeURIComponent(id)}`, { method: "DELETE" })
+}

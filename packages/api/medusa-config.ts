@@ -95,6 +95,14 @@ module.exports = defineConfig({
       resolve: "./src/modules/ferremex-saldo-cambio",
     },
     {
+      // Comisiones de venta por empleado. ComisionEje = qué ámbitos de la
+      // taxonomía (marca/categoría/departamento) admiten comisión (toggle
+      // global, se activa desde Catálogos). ComisionRegla = % que cada
+      // empleado recibe de un ámbito ya habilitado (se asigna desde
+      // Empleados y permisos). Ver src/modules/ferremex-comisiones.
+      resolve: "./src/modules/ferremex-comisiones",
+    },
+    {
       resolve: "@medusajs/medusa/file",
       options: {
         providers: [

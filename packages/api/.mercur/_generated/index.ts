@@ -721,10 +721,19 @@ export type Routes = {
                 notas: typeof import("../../src/api/caja/cartera/[customerId]/notas/route");
             };
         };
-        catalogos: typeof import("../../src/api/caja/catalogos/route");
+        catalogos: typeof import("../../src/api/caja/catalogos/route") & {
+            articulos: typeof import("../../src/api/caja/catalogos/articulos/route");
+            proveedores: typeof import("../../src/api/caja/catalogos/proveedores/route");
+        };
         categorias: typeof import("../../src/api/caja/categorias/route");
         clientes: typeof import("../../src/api/caja/clientes/route") & {
             $id: typeof import("../../src/api/caja/clientes/[id]/route");
+        };
+        comisiones: {
+            ejes: typeof import("../../src/api/caja/comisiones/ejes/route");
+            reglas: typeof import("../../src/api/caja/comisiones/reglas/route") & {
+                $id: typeof import("../../src/api/caja/comisiones/reglas/[id]/route");
+            };
         };
         compras: typeof import("../../src/api/caja/compras/route") & {
             $id: typeof import("../../src/api/caja/compras/[id]/route");
