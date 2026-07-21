@@ -3,6 +3,7 @@ import path from "path"
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { Modules, ProductStatus } from "@medusajs/framework/utils"
 import { slugify as slugifyText } from "../../../lib/text"
+import { invalidarProductosMetaCache } from "../../../lib/productos-meta-cache"
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -29,6 +30,7 @@ async function batchUpdateProducts(
     )
     count += chunk.length
   }
+  if (count > 0) invalidarProductosMetaCache()
   return count
 }
 

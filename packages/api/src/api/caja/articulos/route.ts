@@ -2,6 +2,22 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/framework/utils"
 import { slugify as slugifyText, normalizarFonetico } from "../../../lib/text"
 import { pesosAAmount, amountAPesos } from "../../../lib/precio"
+import { productosPublicadosMeta, invalidarProductosMetaCache } from "../../../lib/productos-meta-cache"
+
+// Trocea un array de IDs y ejecuta `fn` por lote de forma SECUENCIAL (no
+// Promise.all). Un solo listProducts({id: 15000 IDs}, {relations:[...]}) genera
+// una consulta con joins que multiplica filas y bloquea el event loop de Node
+// varios minutos de corrido mientras MikroORM la hidrata — eso colgaba el POS
+// entero (incluida la carga de /pos/) para todos los usuarios mientras corría.
+// Lotes chicos + await secuencial reparten el trabajo en operaciones cortas,
+// cediendo el control entre una y otra en vez de una sola operación monolítica.
+async function porLotes<T, R>(items: T[], tam: number, fn: (lote: T[]) => Promise<R[]>): Promise<R[]> {
+  const out: R[] = []
+  for (let i = 0; i < items.length; i += tam) {
+    out.push(...(await fn(items.slice(i, i + tam))))
+  }
+  return out
+}
 
 // ---------------------------------------------------------------------------
 // Helper — existencias por SKU (misma lógica que /caja/productos)
@@ -13,15 +29,20 @@ async function existenciasPorSku(
 ): Promise<Map<string, number>> {
   const map = new Map<string, number>()
   if (!skus.length) return map
-  const items = await inventoryModule.listInventoryItems(
-    { sku: skus },
-    { select: ["id", "sku"], take: skus.length + 10 }
+  const LOTE = 500
+  const items = await porLotes<string, any>(skus, LOTE, (lote) => // eslint-disable-line @typescript-eslint/no-explicit-any
+    inventoryModule.listInventoryItems(
+      { sku: lote },
+      { select: ["id", "sku"], take: lote.length + 10 }
+    )
   )
   if (!items.length) return map
   const itemIds = items.map((i: any) => i.id)
-  const niveles = await inventoryModule.listInventoryLevels(
-    { inventory_item_id: itemIds },
-    { select: ["inventory_item_id", "stocked_quantity"], take: itemIds.length + 10 }
+  const niveles = await porLotes<string, any>(itemIds, LOTE, (lote) => // eslint-disable-line @typescript-eslint/no-explicit-any
+    inventoryModule.listInventoryLevels(
+      { inventory_item_id: lote },
+      { select: ["inventory_item_id", "stocked_quantity"], take: lote.length + 10 }
+    )
   )
   const itemPorId = new Map<string, string>(items.map((i: any) => [i.id, i.sku] as [string, string]))
   for (const nivel of niveles) {
@@ -215,10 +236,7 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
   // ── Modo faltantes: artículos con existencia < inventarioMin ─────────────────
   if (faltantes && !q) {
     const [allProds, allVars] = await Promise.all([
-      productModule.listProducts(
-        { status: ProductStatus.PUBLISHED },
-        { select: ["id", "title", "thumbnail", "weight", "metadata"], take: 99999 }
-      ),
+      productosPublicadosMeta(productModule),
       productModule.listProductVariants(
         {},
         { select: ["id", "sku", "product_id"], take: 99999 }
@@ -379,11 +397,9 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         }
       ) as any[]
     } else {
-      // Solo filtro de departamento: cargar todos con metadata, filtrar en JS
-      allMeta = await productModule.listProducts(
-        { status: ProductStatus.PUBLISHED },
-        { select: ["id", "title", "thumbnail", "weight", "metadata"], take: 99999 }
-      ) as any[]
+      // Solo filtro de departamento: metadata cacheada (ver productos-meta-cache) —
+      // esta consulta sin cache tardaba minutos en departamentos grandes (15k+ arts.).
+      allMeta = await productosPublicadosMeta(productModule)
     }
 
     // Paso 3: filtrar por departamento en memoria
@@ -396,31 +412,39 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
 
     if (!filtered.length) { res.json([]); return }
 
-    // Paso 4: si vinieron sin relaciones (solo-dept), cargar con relaciones los matching
+    // Paso 4: si vinieron sin relaciones (solo-dept), cargar con relaciones los
+    // matching — EN LOTES (ver porLotes arriba: un solo IN de miles de IDs con
+    // joins bloqueaba el event loop varios minutos de corrido).
+    const LOTE = 500
     let withRelations: any[]
     if (!productIdsDeCat) {
       const matchIds = filtered.map((p: any) => p.id)
-      withRelations = await productModule.listProducts(
-        { id: matchIds },
-        {
-          select: ["id", "title", "thumbnail", "weight", "metadata"],
-          relations: ["variants", "categories", "images"],
-          take: matchIds.length + 10,
-        }
-      ) as any[]
+      withRelations = await porLotes(matchIds, LOTE, (lote) =>
+        productModule.listProducts(
+          { id: lote },
+          {
+            select: ["id", "title", "thumbnail", "weight", "metadata"],
+            relations: ["variants", "categories", "images"],
+            take: lote.length + 10,
+          }
+        )
+      )
     } else {
       withRelations = filtered
     }
 
     if (!withRelations.length) { res.json([]); return }
 
-    // Paso 5: precios y existencias
+    // Paso 5: precios y existencias (también en lotes por la misma razón)
     const fVarIds = withRelations.flatMap((p: any) => (p.variants as any[])?.map((v: any) => v.id) ?? [])
-    const { data: fVarsPrecios } = await query.graph({
-      entity: "product_variant",
-      filters: { id: fVarIds },
-      fields: ["id", "price_set.prices.amount", "price_set.prices.currency_code"],
-      pagination: { take: fVarIds.length + 10 },
+    const fVarsPrecios = await porLotes(fVarIds, LOTE, async (lote) => {
+      const { data } = await query.graph({
+        entity: "product_variant",
+        filters: { id: lote },
+        fields: ["id", "price_set.prices.amount", "price_set.prices.currency_code"],
+        pagination: { take: lote.length + 10 },
+      })
+      return data
     })
     const fPrecioMap = new Map<string, number>()
     for (const v of fVarsPrecios) {
@@ -697,6 +721,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   })
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const variant = (full.variants as any[])?.[0]
+  invalidarProductosMetaCache()
   res.status(201).json(toArticuloPOS(full, variant, body.precio1 ?? 0))
 }
 
@@ -883,6 +908,7 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
     ? (await existenciasPorSku(inventoryModule, [sku])).get(sku) ?? 0
     : 0
 
+  invalidarProductosMetaCache()
   res.json(toArticuloPOS(updated, updatedVariant, body.precio1 ?? 0, existencia))
 }
 
@@ -912,5 +938,6 @@ export async function DELETE(req: MedusaRequest, res: MedusaResponse) {
   }
 
   await productModule.deleteProducts([id])
+  invalidarProductosMetaCache()
   res.json({ ok: true })
 }

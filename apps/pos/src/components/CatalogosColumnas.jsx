@@ -1,7 +1,160 @@
 import { useState, useEffect, useRef } from "react"
-import { ChevronRight, Check, X, Factory } from "lucide-react"
+import { ChevronRight, Check, X, Factory, Percent, Package, Search } from "lucide-react"
 import { COLORES_ACENTO } from "../lib/catalogos-colores"
-import { listarArticulosDeCatalogo } from "../lib/client"
+import { listarArticulosPreview, listarProveedoresDeNivel, listarEjesComisionAPI, guardarEjeComisionAPI } from "../lib/client"
+
+// ── Modal: previsualización de artículos de un departamento/categoría/marca ──
+// Carga PAGINADA desde el backend (/caja/catalogos/articulos): nunca trae de
+// golpe los miles de artículos de un departamento grande, solo la página
+// visible + lo que el usuario pida con "Ver más".
+
+// Primera página: chica, para que se vea contenido casi al instante. Las
+// siguientes tandas de autocarga en segundo plano usan un tamaño mayor (menos
+// round-trips para llegar al total en departamentos grandes).
+const PRIMERA_PAGINA = 12
+const SIGUIENTE_TANDA = 40
+
+function ArticulosPreviewModal({ typeLabel, nombre, accentColor, filtro, onClose }) {
+  const [qInput, setQInput] = useState("")
+  const [q, setQ] = useState("")
+  const [items, setItems] = useState([])
+  const [total, setTotal] = useState(0)
+  const [cargando, setCargando] = useState(true)
+  const [autocargando, setAutocargando] = useState(false)
+
+  useEffect(() => {
+    function onKey(e) { if (e.key === "Escape") onClose() }
+    document.addEventListener("keydown", onKey)
+    return () => document.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  // Debounce de búsqueda (300ms) — evita 1 request por tecla.
+  useEffect(() => {
+    const t = setTimeout(() => setQ(qInput.trim()), 300)
+    return () => clearTimeout(t)
+  }, [qInput])
+
+  // Carga inicial (página chica, casi instantánea) al abrir o cambiar búsqueda.
+  useEffect(() => {
+    let on = true
+    setCargando(true)
+    listarArticulosPreview(filtro, { q, limit: PRIMERA_PAGINA, offset: 0 })
+      .then(({ items, total }) => { if (on) { setItems(items); setTotal(total) } })
+      .catch(() => { if (on) { setItems([]); setTotal(0) } })
+      .finally(() => { if (on) setCargando(false) })
+    return () => { on = false }
+  }, [q, filtro.departamento, filtro.categoria, filtro.marca]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Autocarga en segundo plano: sigue trayendo tandas SIN que el usuario haga
+  // clic, hasta completar `total` o hasta que cambie la búsqueda/filtro (el
+  // `on` del efecto anterior ya cortó esa cadena — aquí solo seguimos mientras
+  // los items visibles correspondan a la búsqueda actual).
+  useEffect(() => {
+    if (cargando) return
+    if (items.length >= total) return
+    let on = true
+    setAutocargando(true)
+    listarArticulosPreview(filtro, { q, limit: SIGUIENTE_TANDA, offset: items.length })
+      .then(({ items: nuevos }) => { if (on) setItems(prev => [...prev, ...nuevos]) })
+      .catch(() => {})
+      .finally(() => { if (on) setAutocargando(false) })
+    return () => { on = false }
+  }, [cargando, items.length, total, q, filtro.departamento, filtro.categoria, filtro.marca]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const hayMas = items.length < total
+
+  return (
+    <div className="ctg-overlay" onClick={onClose}>
+      <div className="ctg-modal ctg-arts-modal" onClick={e => e.stopPropagation()}>
+        <div className="ctg-modal-header">
+          <div className="ctg-modal-stripe" style={{ background: accentColor }} />
+          <div style={{ flex: 1 }}>
+            <div className="ctg-modal-title">{nombre}</div>
+            <div style={{ fontSize: 12, color: "var(--at-text-muted)" }}>
+              {typeLabel} · {total} artículo{total !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <button type="button" className="ctg-arts-close" onClick={onClose} title="Cerrar">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="ctg-arts-search-wrap">
+          <Search size={14} className="ctg-arts-search-icon" />
+          <input
+            className="ctg-arts-search"
+            placeholder="Buscar por nombre o clave…"
+            value={qInput}
+            onChange={e => setQInput(e.target.value)}
+            autoFocus
+          />
+        </div>
+        <div className="ctg-arts-list">
+          {cargando && (
+            <div className="ctg-provs-empty" style={{ padding: "24px 0", textAlign: "center" }}>
+              Cargando artículos…
+            </div>
+          )}
+          {!cargando && items.length === 0 && (
+            <div className="ctg-provs-empty" style={{ padding: "24px 0", textAlign: "center" }}>
+              {total === 0 && !q ? "Sin artículos asignados." : "Sin resultados."}
+            </div>
+          )}
+          {!cargando && items.map(a => (
+            <div key={a.id} className="ctg-arts-row">
+              <div className="ctg-arts-thumb">
+                {a.thumbnail
+                  ? <img src={a.thumbnail} alt="" />
+                  : <Package size={18} color="var(--at-text-muted)" />}
+              </div>
+              <div className="ctg-arts-info">
+                <div className="ctg-arts-name">{a.descripcion}</div>
+                <div className="ctg-arts-meta">
+                  <span className="ctg-arts-sku">{a.clave}</span>
+                  {a.marca && <span>· {a.marca}</span>}
+                </div>
+              </div>
+              <div className="ctg-arts-exist" title="Existencia">
+                {a.existencia}
+              </div>
+            </div>
+          ))}
+          {!cargando && hayMas && (
+            <div className="ctg-arts-autocarga">
+              {autocargando ? `Cargando más… (${items.length} de ${total})` : `${items.length} de ${total}`}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Toggle switch (mismo patrón visual que EmployeesModule) ───────────────────
+
+function Toggle({ checked, onChange }) {
+  return (
+    <div
+      role="switch"
+      aria-checked={checked}
+      tabIndex={0}
+      onClick={onChange}
+      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onChange() } }}
+      style={{
+        position: "relative", width: 40, height: 20, borderRadius: 10,
+        background: checked ? "#ea580c" : "#d1d5db",
+        cursor: "pointer", flexShrink: 0,
+        transition: "background .2s",
+      }}
+    >
+      <div style={{
+        position: "absolute", top: 2, left: checked ? 22 : 2,
+        width: 16, height: 16, borderRadius: "50%", background: "#fff",
+        boxShadow: "0 1px 3px rgba(0,0,0,.2)",
+        transition: "left .2s",
+      }} />
+    </div>
+  )
+}
 
 // ── Color picker ──────────────────────────────────────────────────────────────
 
@@ -93,6 +246,7 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
   const [catDepFilter, setCatDepFilter] = useState(null)
   // Proveedores presentes en los productos de este nivel (informativo, solo lectura).
   const [provs, setProvs] = useState({ cargando: false, lista: [], sinAsignar: 0 })
+  const [mostrarArticulos, setMostrarArticulos] = useState(false)
 
   // Reiniciar form al cambiar nodo seleccionado
   useEffect(() => {
@@ -111,11 +265,12 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
   }, [node?.id, type]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Carga los proveedores presentes en los productos de este nivel (informativo).
-  // Resuelve depto/categoría según el tipo de nodo y agrupa por proveedor.
+  // Resuelve depto/categoría/marca según el tipo de nodo y pide el resumen YA
+  // AGREGADO al backend (nunca artículos completos — ver /caja/catalogos/proveedores).
   useEffect(() => {
     if (!node) { setProvs({ cargando: false, lista: [], sinAsignar: 0 }); return }
     let on = true
-    let depNombre = "", catNombre = ""
+    let depNombre = "", catNombre = "", marNombre = ""
     if (type === "dep") {
       depNombre = node.nombre
     } else if (type === "cat") {
@@ -125,30 +280,56 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
       const cat = cats.find(c => c.id === node.catId)
       depNombre = depts.find(d => d.id === cat?.depId)?.nombre ?? ""
       catNombre = cat?.nombre ?? ""
+      marNombre = node.nombre
     }
-    if (!depNombre && !catNombre) { setProvs({ cargando: false, lista: [], sinAsignar: 0 }); return }
+    if (!depNombre && !catNombre && !marNombre) { setProvs({ cargando: false, lista: [], sinAsignar: 0 }); return }
 
     setProvs({ cargando: true, lista: [], sinAsignar: 0 })
-    listarArticulosDeCatalogo(depNombre, catNombre)
-      .then(arts => {
-        if (!on) return
-        // Para una marca, filtrar solo sus artículos (la ruta no filtra por marca).
-        const propios = type === "mar" ? arts.filter(a => (a.marca ?? "") === node.nombre) : arts
-        const conteo = new Map()
-        let sinAsignar = 0
-        for (const a of propios) {
-          const p = (a.proveedor ?? "").trim()
-          if (!p) { sinAsignar++; continue }
-          conteo.set(p, (conteo.get(p) ?? 0) + 1)
-        }
-        const lista = [...conteo.entries()]
-          .map(([nombre, n]) => ({ nombre, n }))
-          .sort((a, b) => b.n - a.n)
-        setProvs({ cargando: false, lista, sinAsignar })
-      })
+    listarProveedoresDeNivel({ departamento: depNombre, categoria: catNombre, marca: marNombre })
+      .then(({ lista, sinAsignar }) => { if (on) setProvs({ cargando: false, lista, sinAsignar }) })
       .catch(() => { if (on) setProvs({ cargando: false, lista: [], sinAsignar: 0 }) })
     return () => { on = false }
   }, [node?.id, type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { setMostrarArticulos(false) }, [node?.id, type])
+
+  // Comisión: toggle "admite comisión" para este ámbito (marca/categoría/
+  // departamento). Es GLOBAL (no por empleado) — el % por empleado se asigna
+  // en Empleados y permisos, solo sobre ámbitos habilitados aquí.
+  const ambito = type === "dep" ? "departamento" : type === "cat" ? "categoria" : "marca"
+  const [comisionHabilitada, setComisionHabilitada] = useState(false)
+  const [comisionCargando, setComisionCargando] = useState(false)
+  const [comisionGuardando, setComisionGuardando] = useState(false)
+
+  useEffect(() => {
+    if (!node) { setComisionHabilitada(false); return }
+    let on = true
+    setComisionCargando(true)
+    listarEjesComisionAPI()
+      .then(ejes => {
+        if (!on) return
+        const ref = node.nombre.trim().toLowerCase()
+        const eje = ejes.find(e => e.ambito === ambito && e.ref.trim().toLowerCase() === ref)
+        setComisionHabilitada(!!eje?.habilitado)
+      })
+      .catch(() => { if (on) setComisionHabilitada(false) })
+      .finally(() => { if (on) setComisionCargando(false) })
+    return () => { on = false }
+  }, [node?.id, type]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function toggleComision() {
+    if (comisionGuardando) return
+    const nuevoValor = !comisionHabilitada
+    setComisionGuardando(true)
+    setComisionHabilitada(nuevoValor) // optimista
+    try {
+      await guardarEjeComisionAPI(ambito, node.nombre.trim(), nuevoValor)
+    } catch {
+      setComisionHabilitada(!nuevoValor) // revertir si falló
+    } finally {
+      setComisionGuardando(false)
+    }
+  }
 
   if (!node) {
     return (
@@ -219,6 +400,11 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
         <div className="ctg-stat">
           <span className="ctg-stat-value">{artCount}</span>
           <span className="ctg-stat-label">Artículos</span>
+          {artCount > 0 && (
+            <button type="button" className="ctg-stat-ver-btn" onClick={() => setMostrarArticulos(true)}>
+              <Package size={11} /> Ver artículos
+            </button>
+          )}
         </div>
         {catCount !== null && (
           <div className="ctg-stat">
@@ -330,6 +516,26 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
         </>
       )}
 
+      {/* Comisión: toggle global. El % por empleado se asigna en Empleados. */}
+      <div className="ctg-field">
+        <label
+          className="ctg-label"
+          style={{ display: "flex", alignItems: "center", gap: 8, cursor: comisionCargando ? "default" : "pointer" }}
+          onClick={comisionCargando ? undefined : toggleComision}
+        >
+          <Percent size={13} />
+          Admite comisión
+        </label>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 2 }}>
+          <Toggle checked={comisionHabilitada} onChange={toggleComision} />
+          <span style={{ fontSize: 12, color: "#9ca3af" }}>
+            {comisionCargando ? "Cargando…" : comisionHabilitada
+              ? "Los empleados pueden recibir % de comisión por esta " + typeLabel.toLowerCase()
+              : "No genera comisión para ningún empleado"}
+          </span>
+        </div>
+      </div>
+
       {/* Artículos asignados (solo lectura) */}
       <div className="ctg-field">
         <label className="ctg-label">Artículos asignados</label>
@@ -361,6 +567,27 @@ function EditPanel({ type, node, depts, cats, marcas, onSave, onDelete }) {
           Guardar cambios
         </button>
       </div>
+
+      {mostrarArticulos && (
+        <ArticulosPreviewModal
+          typeLabel={typeLabel}
+          nombre={node.nombre}
+          accentColor={accentColor}
+          filtro={
+            type === "dep" ? { departamento: node.nombre }
+            : type === "cat" ? { departamento: depts.find(d => d.id === node.depId)?.nombre ?? "", categoria: node.nombre }
+            : (() => {
+                const cat = cats.find(c => c.id === node.catId)
+                return {
+                  departamento: depts.find(d => d.id === cat?.depId)?.nombre ?? "",
+                  categoria: cat?.nombre ?? "",
+                  marca: node.nombre,
+                }
+              })()
+          }
+          onClose={() => setMostrarArticulos(false)}
+        />
+      )}
     </div>
   )
 }
