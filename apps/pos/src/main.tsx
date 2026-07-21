@@ -34,6 +34,9 @@ import { AdminEmpleados } from "./pages/AdminEmpleados"
 import { AdminCaja } from "./pages/AdminCaja"
 import { AdminCorte } from "./pages/AdminCorte"
 import { AdminCambios } from "./pages/AdminCambios"
+import { AdminReportes } from "./pages/AdminReportes"
+import { AdminReportesEmpleados } from "./pages/AdminReportesEmpleados"
+import { AdminReportesComisiones } from "./pages/AdminReportesComisiones"
 import "./pos.css"
 
 createRoot(document.getElementById("root")!).render(
@@ -77,6 +80,9 @@ createRoot(document.getElementById("root")!).render(
           <Route path="caja" element={<AdminCaja />} />
           <Route path="corte" element={<AdminCorte />} />
           <Route path="cambios" element={<AdminCambios />} />
+          <Route path="reportes" element={<AdminReportes />} />
+          <Route path="reportes/empleados" element={<AdminReportesEmpleados />} />
+          <Route path="reportes/empleados/comisiones" element={<AdminReportesComisiones />} />
           </Route>
           <Route path="/admin/generador" element={<GeneradorTickets />} />
           <Route path="*" element={<Navigate to="/" replace />} />
