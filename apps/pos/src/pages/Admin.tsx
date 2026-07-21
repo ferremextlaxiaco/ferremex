@@ -3,7 +3,7 @@ import { useLocation, useNavigate, Outlet, Navigate } from "react-router-dom"
 import {
   ShoppingCart, ReceiptText, FileText, Settings, UserRound, Package,
   Boxes, Factory, ShoppingBag, ClipboardList, FolderTree, UsersRound, Banknote,
-  Coins, FileSignature, Tag, Wallet, Receipt, ArrowRightLeft, Truck,
+  Coins, FileSignature, Tag, Wallet, Receipt, ArrowRightLeft, Truck, BarChart3,
 } from "lucide-react"
 import { usePOS } from "../lib/pos-store"
 
@@ -58,7 +58,11 @@ export function Admin() {
     ? "corte"
     : path.includes("/admin/cambios")
     ? "cambios"
+    : path.includes("/admin/reportes")
+    ? "reportes"
     : ""
+  // path.includes("/admin/reportes") ya cubre /admin/reportes/empleados y
+  // /admin/reportes/empleados/comisiones (coincidencia por prefijo).
 
   return (
     <div className="admin-shell">
@@ -136,20 +140,24 @@ export function Admin() {
             <span className="admin-side-icon"><ArrowRightLeft size={18} /></span>
             Cambios de artículo
           </button>
-          <button
-            className={`admin-side-item${tab === "formatos" ? " active" : ""}`}
-            onClick={() => navigate("/admin/formatos")}
-          >
-            <span className="admin-side-icon"><FileText size={18} /></span>
-            Formatos
-          </button>
-          <button
-            className={`admin-side-item${tab === "perifericos" ? " active" : ""}`}
-            onClick={() => navigate("/admin/perifericos")}
-          >
-            <span className="admin-side-icon"><Settings size={18} /></span>
-            Periféricos
-          </button>
+          {state.cajero.permisos.puede_ver_formatos && (
+            <button
+              className={`admin-side-item${tab === "formatos" ? " active" : ""}`}
+              onClick={() => navigate("/admin/formatos")}
+            >
+              <span className="admin-side-icon"><FileText size={18} /></span>
+              Formatos
+            </button>
+          )}
+          {state.cajero.permisos.puede_ver_perifericos && (
+            <button
+              className={`admin-side-item${tab === "perifericos" ? " active" : ""}`}
+              onClick={() => navigate("/admin/perifericos")}
+            >
+              <span className="admin-side-icon"><Settings size={18} /></span>
+              Periféricos
+            </button>
+          )}
           <button
             className={`admin-side-item${tab === "clientes" ? " active" : ""}`}
             onClick={() => navigate("/admin/clientes")}
@@ -192,13 +200,15 @@ export function Admin() {
             <span className="admin-side-icon"><Tag size={18} /></span>
             Promociones
           </button>
-          <button
-            className={`admin-side-item${tab === "inventario" ? " active" : ""}`}
-            onClick={() => navigate("/admin/inventario")}
-          >
-            <span className="admin-side-icon"><Boxes size={18} /></span>
-            Ajuste de Inventario
-          </button>
+          {state.cajero.permisos.puede_ajustar_inventario && (
+            <button
+              className={`admin-side-item${tab === "inventario" ? " active" : ""}`}
+              onClick={() => navigate("/admin/inventario")}
+            >
+              <span className="admin-side-icon"><Boxes size={18} /></span>
+              Ajuste de Inventario
+            </button>
+          )}
           <button
             className={`admin-side-item${tab === "proveedores" ? " active" : ""}`}
             onClick={() => navigate("/admin/proveedores")}
@@ -227,13 +237,24 @@ export function Admin() {
             <span className="admin-side-icon"><FolderTree size={18} /></span>
             Catálogos
           </button>
-          <button
-            className={`admin-side-item${tab === "empleados" ? " active" : ""}`}
-            onClick={() => navigate("/admin/empleados")}
-          >
-            <span className="admin-side-icon"><UsersRound size={18} /></span>
-            Empleados y permisos
-          </button>
+          {state.cajero.permisos.puede_gestionar_empleados && (
+            <button
+              className={`admin-side-item${tab === "empleados" ? " active" : ""}`}
+              onClick={() => navigate("/admin/empleados")}
+            >
+              <span className="admin-side-icon"><UsersRound size={18} /></span>
+              Empleados y permisos
+            </button>
+          )}
+          {state.cajero.permisos.puede_ver_reportes && (
+            <button
+              className={`admin-side-item${tab === "reportes" ? " active" : ""}`}
+              onClick={() => navigate("/admin/reportes")}
+            >
+              <span className="admin-side-icon"><BarChart3 size={18} /></span>
+              Reportes
+            </button>
+          )}
           <button
             className={`admin-side-item${tab === "caja" ? " active" : ""}`}
             onClick={() => navigate("/admin/caja")}

@@ -1,4 +1,6 @@
 import { useState } from "react"
+import { Navigate } from "react-router-dom"
+import { usePOS } from "../lib/pos-store"
 import { AdminTickets } from "./AdminTickets"
 import { FormatoConfig } from "./FormatoConfig"
 
@@ -7,12 +9,14 @@ const TABS = [
   { key: "nota_venta", label: "Nota de venta" },
   { key: "factura",    label: "Factura" },
   { key: "cupon",      label: "Cupón" },
-  { key: "entrega_cliente",    label: "Entrega · Cliente" },
-  { key: "entrega_repartidor", label: "Entrega · Repartidor" },
 ]
 
 export function AdminFormatos() {
+  const { state } = usePOS()
   const [tab, setTab] = useState("ticket")
+
+  if (!state.cajero) return <Navigate to="/" replace />
+  if (!state.cajero.permisos.puede_ver_formatos) return <Navigate to="/admin" replace />
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -47,8 +51,6 @@ export function AdminFormatos() {
         {tab === "nota_venta" && <FormatoConfig formatoKey="nota_venta" label="Nota de venta" />}
         {tab === "factura"    && <FormatoConfig formatoKey="factura" label="Factura" />}
         {tab === "cupon"      && <FormatoConfig formatoKey="cupon" label="Cupón" />}
-        {tab === "entrega_cliente"    && <FormatoConfig formatoKey="entrega_cliente" label="Ticket del cliente (contra entrega)" />}
-        {tab === "entrega_repartidor" && <FormatoConfig formatoKey="entrega_repartidor" label="Hoja del repartidor (contra entrega)" />}
       </div>
     </div>
   )

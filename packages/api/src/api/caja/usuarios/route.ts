@@ -3,6 +3,7 @@ import * as path from "path"
 import * as crypto from "crypto"
 import { readJson, updateJson } from "../../../lib/json-store"
 import { validarPosAdminToken } from "../../../lib/pos-auth"
+import { cargarRolesPermisos, completarPermisosUsuario } from "../../../lib/roles-permisos"
 
 const USUARIOS_FILE = path.join(__dirname, "../../../../data/usuarios-pos.json")
 
@@ -40,6 +41,10 @@ export interface PosUsuario {
     puede_anular: boolean
     puede_ver_corte: boolean
     puede_ver_admin: boolean
+    puede_ver_reportes?: boolean
+    puede_autorizar_sobregiro?: boolean
+    puede_gestionar_empleados?: boolean
+    puede_cerrar_otra_caja?: boolean
   }
 }
 
@@ -87,7 +92,8 @@ function cargarUsuarios(): PosUsuario[] {
  * duplicados y sugerir PINs libres.
  */
 export async function GET(req: MedusaRequest, res: MedusaResponse) {
-  const usuarios = cargarUsuarios()
+  const plantilla = cargarRolesPermisos()
+  const usuarios = cargarUsuarios().map((u) => completarPermisosUsuario(u, plantilla))
   const quiereAdmin = (req.query as Record<string, string>).admin === "1"
   if (quiereAdmin && validarPosAdminToken(req)) {
     res.json(usuarios)

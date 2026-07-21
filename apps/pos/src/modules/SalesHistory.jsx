@@ -6,6 +6,7 @@ import {
 } from "lucide-react"
 import { listarVentas, buscarProductos, listarCatalogos, cancelarVenta, obtenerEntregaPorFolio } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
+import { usePOS } from "../lib/pos-store"
 import { formatMXNAbs as fmt } from "../lib/format"
 import { FacturarBoton } from "../components/FacturarBoton"
 import { TicketsEntrega } from "../components/TicketsEntrega"
@@ -842,6 +843,8 @@ function CompactTable({ ventas, sort, onSort, onRowClick }) {
 
 function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
   const navigate = useNavigate()
+  const { state } = usePOS()
+  const puedeAnular = !!state.cajero?.permisos?.puede_anular
   // Reimpresión de los dos tickets de entrega (solo ventas contra entrega).
   const [ticketsEntrega, setTicketsEntrega] = useState(null) // { venta, ficha } | null
   const [cargandoFicha, setCargandoFicha] = useState(false)
@@ -1120,7 +1123,7 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
             padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#ea580c",
             display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
           }}><FileText size={14} /> Nota de venta</button>
-          {vigente && (
+          {vigente && puedeAnular && (
             <button onClick={() => onCancel(venta)} style={{
               flex: 1, background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.3)", borderRadius: 6,
               padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#dc2626",

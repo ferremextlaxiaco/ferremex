@@ -480,9 +480,11 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         let overrideValido = false
         if (ov?.pin) {
           const USUARIOS_FILE = path.join(__dirname, "../../../../data/usuarios-pos.json")
-          const usuarios = readJson<Array<{ pin: string; rol: string; activo: boolean; nombre: string }>>(USUARIOS_FILE, [])
+          const usuarios = readJson<Array<{ pin: string; rol: string; activo: boolean; nombre: string; permisos?: { puede_autorizar_sobregiro?: boolean } }>>(USUARIOS_FILE, [])
+          // El permiso granular (editable en Empleados → Roles y permisos) manda
+          // sobre el rol crudo — antes esto estaba hardcodeado a admin/supervisor.
           const auth = usuarios.find(
-            (u) => u.activo && (u.rol === "admin" || u.rol === "supervisor") && u.pin && u.pin === ov.pin
+            (u) => u.activo && u.permisos?.puede_autorizar_sobregiro && u.pin && u.pin === ov.pin
           )
           if (auth) { overrideValido = true; creditoAutorizado = ov.autorizado_por || auth.nombre }
         }

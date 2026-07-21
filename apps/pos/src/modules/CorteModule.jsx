@@ -121,8 +121,9 @@ export default function CorteModule() {
   // Conteo abierto (ve el esperado en vivo) para admin/supervisor; conteo ciego
   // para cajero raso (no ve el esperado hasta confirmar). Sugerencia aprobada.
   const conteoAbierto = !!cajero?.permisos?.puede_ver_admin
-  // Un admin/supervisor puede arquear CUALQUIER caja; un cajero raso solo la suya.
-  const puedeElegirCaja = !!cajero?.permisos?.puede_ver_admin
+  // Quien tiene el permiso (configurable en Empleados → Roles y permisos) puede
+  // arquear CUALQUIER caja; sin él, solo la suya.
+  const puedeElegirCaja = !!cajero?.permisos?.puede_cerrar_otra_caja
 
   // El corte es POR CAJA. Catálogo de cajas + cuál se arquea (default: la del
   // cajero logueado). `null` = grupo "sin caja" (ventas/movs históricos sin caja).

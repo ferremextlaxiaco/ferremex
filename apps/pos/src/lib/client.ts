@@ -681,6 +681,18 @@ export interface PosUsuario {
     puede_anular: boolean
     puede_ver_corte: boolean
     puede_ver_admin: boolean
+    puede_ver_reportes: boolean
+    puede_autorizar_sobregiro: boolean
+    puede_gestionar_empleados: boolean
+    puede_cerrar_otra_caja: boolean
+    puede_ajustar_inventario: boolean
+    puede_editar_articulos: boolean
+    puede_ver_formatos: boolean
+    puede_ver_perifericos: boolean
+    puede_eliminar_cartera: boolean
+    puede_ver_reglas_monedero: boolean
+    puede_ver_niveles_monedero: boolean
+    puede_ver_config_monedero: boolean
   }
 }
 
@@ -1130,6 +1142,26 @@ export async function validarPinAutorizacionAPI(
   return apiFetch("/caja/usuarios/validar-pin", {
     method: "POST",
     body: JSON.stringify({ pin, ...(roles ? { roles } : {}) }),
+  })
+}
+
+// ── Roles y permisos (plantilla por rol) ────────────────────────────────────
+// Matriz editable en Empleados → Roles y permisos. Cambiar un permiso de un rol
+// aquí afecta a todos los empleados de ese rol sin override individual guardado
+// en su propio PosUsuario.permisos.
+
+export type Rol = "admin" | "supervisor" | "cajero"
+export type PermisosRol = PosUsuario["permisos"]
+export type RolesPermisos = Record<Rol, PermisosRol>
+
+export async function obtenerRolesPermisosAPI(): Promise<RolesPermisos> {
+  return apiFetch<RolesPermisos>("/caja/roles-permisos")
+}
+
+export async function actualizarRolPermisoAPI(rol: Rol, permisos: Partial<PermisosRol>): Promise<RolesPermisos> {
+  return apiFetch<RolesPermisos>("/caja/roles-permisos", {
+    method: "PUT",
+    body: JSON.stringify({ rol, permisos }),
   })
 }
 
@@ -2829,4 +2861,25 @@ export async function actualizarReglaComisionAPI(id: string, r: Partial<Comision
 
 export async function eliminarReglaComisionAPI(id: string): Promise<void> {
   await apiFetch(`/caja/comisiones/reglas/${encodeURIComponent(id)}`, { method: "DELETE" })
+}
+
+// ── Reportes — Comisiones (módulo Reportes) ─────────────────────────────────
+// Agrega comisión_venta por vendedor en un rango de fechas libre, cruzando
+// todas las cajas (a diferencia de /caja/corte, que agrega por período de
+// arqueo de UNA caja). Mismo criterio de "vigente" que el corte.
+
+export interface ReporteComisionVendedor {
+  vendedor: string
+  comision_total: number
+  num_ventas: number
+  comision_promedio: number
+}
+
+export async function obtenerReporteComisionesAPI(
+  desde: string,
+  hasta: string,
+  vendedor?: string
+): Promise<ReporteComisionVendedor[]> {
+  const params = new URLSearchParams({ desde, hasta, ...(vendedor ? { vendedor } : {}) })
+  return apiFetch<ReporteComisionVendedor[]>(`/caja/reportes/comisiones?${params}`)
 }

@@ -14,6 +14,7 @@ import {
 import { useToasts } from "../hooks/useToasts"
 import { formatMXN } from "../lib/format"
 import ConfirmDialog from "../components/ConfirmDialog"
+import { usePOS } from "../lib/pos-store"
 
 /* ─── Estilos compartidos (Tailwind v4, tokens Ferremex) ──────────────────── */
 const btnPrimary = "inline-flex items-center gap-2 bg-orange-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-orange-700 disabled:opacity-40 disabled:pointer-events-none"
@@ -36,14 +37,20 @@ function Toasts({ toasts }) {
 
 const TABS = [
   { id: "clientes", label: "Clientes", icon: Users },
-  { id: "reglas", label: "Reglas de puntos", icon: TrendingUp },
-  { id: "niveles", label: "Niveles", icon: Award },
-  { id: "config", label: "Configuración", icon: Coins },
+  { id: "reglas", label: "Reglas de puntos", icon: TrendingUp, permiso: "puede_ver_reglas_monedero" },
+  { id: "niveles", label: "Niveles", icon: Award, permiso: "puede_ver_niveles_monedero" },
+  { id: "config", label: "Configuración", icon: Coins, permiso: "puede_ver_config_monedero" },
 ]
 
 export default function MonederoModule() {
+  const { state } = usePOS()
   const { toasts, push } = useToasts()
   const [tab, setTab] = useState("clientes")
+  // Elevado desde TabClientes para poder disparar "Inscribir cliente" desde la
+  // barra superior (junto a las tabs), no solo desde la toolbar interna del tab.
+  const [inscribiendo, setInscribiendo] = useState(false)
+
+  const tabsVisibles = TABS.filter((t) => !t.permiso || state.cajero?.permisos?.[t.permiso])
 
   return (
     <div className="flex flex-col h-full bg-gray-50">
@@ -53,21 +60,28 @@ export default function MonederoModule() {
           <Wallet size={22} className="text-orange-600" />
           <h1 className="text-lg font-semibold text-gray-900">Monedero Electrónico</h1>
         </div>
-        <div className="flex gap-1">
-          {TABS.map(({ id, label, icon: Icon }) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium border-b-2 -mb-[1px] ${
-                tab === id ? "border-orange-600 text-orange-700 bg-orange-50" : "border-transparent text-gray-500 hover:text-gray-700"
-              }`}>
-              <Icon size={16} /> {label}
+        <div className="flex items-center justify-between">
+          <div className="flex gap-1">
+            {tabsVisibles.map(({ id, label, icon: Icon }) => (
+              <button key={id} onClick={() => setTab(id)}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-t-lg text-sm font-medium border-b-2 -mb-[1px] ${
+                  tab === id ? "border-orange-600 text-orange-700 bg-orange-50" : "border-transparent text-gray-500 hover:text-gray-700"
+                }`}>
+                <Icon size={16} /> {label}
+              </button>
+            ))}
+          </div>
+          {tab === "clientes" && (
+            <button className={btnPrimary} onClick={() => setInscribiendo(true)}>
+              <Plus size={16} /> Inscribir cliente
             </button>
-          ))}
+          )}
         </div>
       </div>
 
       {/* Contenido del tab */}
       <div className="flex-1 overflow-y-auto p-6">
-        {tab === "clientes" && <TabClientes push={push} />}
+        {tab === "clientes" && <TabClientes push={push} inscribiendo={inscribiendo} setInscribiendo={setInscribiendo} />}
         {tab === "reglas" && <TabReglas push={push} />}
         {tab === "niveles" && <TabNiveles push={push} />}
         {tab === "config" && <TabConfig push={push} />}
@@ -79,13 +93,12 @@ export default function MonederoModule() {
 }
 
 /* ══════════════════════ TAB CLIENTES ══════════════════════ */
-function TabClientes({ push }) {
+function TabClientes({ push, inscribiendo, setInscribiendo }) {
   const [resp, setResp] = useState({ clientes: [], kpis: { inscritos: 0, puntos_circulacion: 0, valor_circulacion: 0 } })
   const [cargando, setCargando] = useState(true)
   const [busqueda, setBusqueda] = useState("")
   const [soloConPuntos, setSoloConPuntos] = useState(false)
   const [detalleId, setDetalleId] = useState(null)
-  const [inscribiendo, setInscribiendo] = useState(false)
 
   const cargar = useCallback(async () => {
     setCargando(true)
@@ -127,9 +140,6 @@ function TabClientes({ push }) {
           <input type="checkbox" checked={soloConPuntos} onChange={(e) => setSoloConPuntos(e.target.checked)} />
           Solo con puntos
         </label>
-        <button className={btnPrimary} onClick={() => setInscribiendo(true)}>
-          <Plus size={16} /> Inscribir cliente
-        </button>
       </div>
 
       {/* Tabla */}

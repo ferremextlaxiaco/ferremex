@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useMemo } from "react"
+import { useState, useEffect, useRef, useMemo, Fragment } from "react"
 import {
   UserPlus, Search, ArrowLeftRight, MoreVertical, UserCog,
   Eye, EyeOff, PlusCircle, AlertTriangle, Clock, Trash2, Plus, Fingerprint,
-  Percent, X as XIcon, Pencil,
+  Percent, X as XIcon, Pencil, ShieldCheck, Users as UsersIcon,
 } from "lucide-react"
 import {
   obtenerUsuarios, crearUsuario, actualizarUsuario, eliminarUsuario,
@@ -12,6 +12,7 @@ import {
   listarCatalogos,
   listarEjesComisionAPI, listarReglasComisionAPI,
   crearReglaComisionAPI, actualizarReglaComisionAPI, eliminarReglaComisionAPI,
+  obtenerRolesPermisosAPI, actualizarRolPermisoAPI,
 } from "../lib/client"
 import { useToasts } from "../hooks/useToasts"
 import RegistroHuellaModal from "../components/RegistroHuellaModal"
@@ -29,21 +30,55 @@ import ConfirmDialog from "../components/ConfirmDialog"
 // caja (la UI trabaja con nombres). Al cargar se resuelve caja_id→nombre; al
 // guardar se traduce nombre→caja_id antes de persistir.
 
+// Fallback local usado SOLO mientras carga /caja/roles-permisos (o si falla la
+// carga) — la fuente de verdad es el backend (ver TabRolesPermisos). Debe
+// coincidir con el DEFAULT del backend (roles-permisos/route.ts).
 const ROL_PERMISOS_DEFAULT = {
-  admin:      { puede_vender: true,  puede_cotizar: true,  puede_anular: true,  puede_ver_corte: true,  puede_ver_admin: true  },
-  supervisor: { puede_vender: true,  puede_cotizar: true,  puede_anular: true,  puede_ver_corte: true,  puede_ver_admin: false },
-  cajero:     { puede_vender: true,  puede_cotizar: false, puede_anular: false, puede_ver_corte: true,  puede_ver_admin: false },
+  admin:      { puede_vender: true,  puede_cotizar: true,  puede_anular: true,  puede_ver_corte: true,  puede_ver_admin: true,  puede_ver_reportes: true,  puede_autorizar_sobregiro: true,  puede_gestionar_empleados: true,  puede_cerrar_otra_caja: true,  puede_ajustar_inventario: true,  puede_editar_articulos: true,  puede_ver_formatos: true,  puede_ver_perifericos: true,  puede_eliminar_cartera: true,  puede_ver_reglas_monedero: true,  puede_ver_niveles_monedero: true,  puede_ver_config_monedero: true  },
+  supervisor: { puede_vender: true,  puede_cotizar: true,  puede_anular: true,  puede_ver_corte: true,  puede_ver_admin: false, puede_ver_reportes: true,  puede_autorizar_sobregiro: true,  puede_gestionar_empleados: false, puede_cerrar_otra_caja: false, puede_ajustar_inventario: true,  puede_editar_articulos: true,  puede_ver_formatos: true,  puede_ver_perifericos: true,  puede_eliminar_cartera: false, puede_ver_reglas_monedero: true,  puede_ver_niveles_monedero: true,  puede_ver_config_monedero: true  },
+  cajero:     { puede_vender: true,  puede_cotizar: false, puede_anular: false, puede_ver_corte: true,  puede_ver_admin: false, puede_ver_reportes: false, puede_autorizar_sobregiro: false, puede_gestionar_empleados: false, puede_cerrar_otra_caja: false, puede_ajustar_inventario: false, puede_editar_articulos: false, puede_ver_formatos: false, puede_ver_perifericos: false, puede_eliminar_cartera: false, puede_ver_reglas_monedero: false, puede_ver_niveles_monedero: false, puede_ver_config_monedero: false },
 }
 
-const PERMISOS_LABELS = [
-  { key: "puede_vender",    label: "Registrar ventas" },
-  { key: "puede_cotizar",   label: "Crear cotizaciones" },
-  { key: "puede_anular",    label: "Anular ventas" },
-  { key: "puede_ver_corte", label: "Ver corte de caja" },
-  { key: "puede_ver_admin", label: "Acceder al panel de administración" },
+// Permisos agrupados por módulo (matriz de "Roles y permisos" + tab individual).
+const PERMISOS_GRUPOS = [
+  { grupo: "Ventas", items: [
+    { key: "puede_vender",              label: "Registrar ventas" },
+    { key: "puede_cotizar",             label: "Crear cotizaciones" },
+    { key: "puede_anular",              label: "Anular ventas" },
+    { key: "puede_autorizar_sobregiro", label: "Autorizar sobregiro de crédito" },
+  ]},
+  { grupo: "Caja", items: [
+    { key: "puede_ver_corte",       label: "Ver corte de caja" },
+    { key: "puede_cerrar_otra_caja", label: "Cerrar corte de otra caja" },
+  ]},
+  { grupo: "Inventario", items: [
+    { key: "puede_ajustar_inventario", label: "Ajustar inventario" },
+  ]},
+  { grupo: "Artículos", items: [
+    { key: "puede_editar_articulos", label: "Agregar, editar y eliminar artículos" },
+  ]},
+  { grupo: "Formatos", items: [
+    { key: "puede_ver_formatos", label: "Configurar formatos (ticket, nota, factura, cupón)" },
+  ]},
+  { grupo: "Periféricos", items: [
+    { key: "puede_ver_perifericos", label: "Configurar periféricos (impresora, huella, escáner)" },
+  ]},
+  { grupo: "Cartera de crédito", items: [
+    { key: "puede_eliminar_cartera", label: "Eliminar cuentas de crédito" },
+  ]},
+  { grupo: "Monedero Electrónico", items: [
+    { key: "puede_ver_reglas_monedero", label: "Reglas de puntos" },
+    { key: "puede_ver_niveles_monedero", label: "Niveles" },
+    { key: "puede_ver_config_monedero", label: "Configuración" },
+  ]},
+  { grupo: "Administración", items: [
+    { key: "puede_ver_admin",           label: "Acceder al panel de administración" },
+    { key: "puede_ver_reportes",        label: "Ver reportes" },
+    { key: "puede_gestionar_empleados", label: "Gestionar empleados y permisos" },
+  ]},
 ]
-
 const ROL_LABEL = { admin: "Admin", supervisor: "Supervisor", cajero: "Cajero" }
+const ROLES_ORDEN = ["cajero", "supervisor", "admin"]
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -448,7 +483,7 @@ function MoreMenu({ employee, onAction, onClose, rect }) {
 
 // ── Tab: Información ───────────────────────────────────────────────────────────
 
-function TabInfo({ form, setForm, employees, original }) {
+function TabInfo({ form, setForm, employees, original, rolesPermisos }) {
   const [showPin, setShowPin] = useState(false)
   const [pinModified, setPinMod] = useState(false)
   const [errors, setErrors] = useState({})
@@ -457,7 +492,7 @@ function TabInfo({ form, setForm, employees, original }) {
   function set(k, v) {
     setForm(f => {
       const next = { ...f, [k]: v }
-      if (k === "rol") next.permisos = { ...ROL_PERMISOS_DEFAULT[v] }
+      if (k === "rol") next.permisos = { ...(rolesPermisos?.[v] ?? ROL_PERMISOS_DEFAULT[v]) }
       return next
     })
     setErrors(e => ({ ...e, [k]: "" }))
@@ -518,6 +553,8 @@ function TabInfo({ form, setForm, employees, original }) {
           </div>
         )}
       </div>
+
+      <HuellaEmpleado empleadoId={form.id} nombre={form.nombre} esNuevo={!form.id} />
     </div>
   )
 }
@@ -618,37 +655,107 @@ function HorarioEmpleado({ form, setForm, franjas }) {
   )
 }
 
-// ── Tab: Permisos ──────────────────────────────────────────────────────────────
+// ── Tab: Roles y permisos (matriz por rol, nivel MÓDULO no empleado) ───────────
+// Edita la plantilla server-side (/caja/roles-permisos). Afecta a todos los
+// empleados del rol que NO tengan override individual en su propio `permisos`.
 
-function TabPermisos({ form, setForm }) {
-  function toggle(key) {
-    setForm(f => ({ ...f, permisos: { ...f.permisos, [key]: !f.permisos?.[key] } }))
+function TabRolesPermisos({ rolesPermisos, setRolesPermisos, employees, pushToast }) {
+  const [guardando, setGuardando] = useState(null) // `${rol}:${key}` en vuelo
+  const [confirmar, setConfirmar] = useState(null) // { rol, key, valor, afectados }
+
+  function conteoAfectados(rol) {
+    // Empleados de ese rol SIN override individual en este permiso (heredan la
+    // plantilla) — son los que un cambio aquí modifica en la práctica.
+    return employees.filter(e => e.rol === rol).length
   }
 
+  function pedirCambio(rol, key, valorActual) {
+    const afectados = conteoAfectados(rol)
+    setConfirmar({ rol, key, valor: !valorActual, afectados })
+  }
+
+  async function confirmarCambio() {
+    const { rol, key, valor } = confirmar
+    setConfirmar(null)
+    setGuardando(`${rol}:${key}`)
+    try {
+      const actualizado = await actualizarRolPermisoAPI(rol, { [key]: valor })
+      setRolesPermisos(actualizado)
+      pushToast("Permiso de rol actualizado ✓")
+    } catch (err) {
+      pushToast(err?.message || "No se pudo guardar", "error")
+    } finally {
+      setGuardando(null)
+    }
+  }
+
+  if (!rolesPermisos) return <p style={{ fontSize: 13, color: "#9ca3af" }}>Cargando…</p>
+
   return (
-    <div>
-      <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0, marginBottom: 16 }}>
-        Permisos de acceso para <strong>{form.nombre || "este empleado"}</strong>. Al cambiar el Rol en Información se aplican los valores predeterminados automáticamente, pero puedes ajustarlos individualmente aquí.
+    <div style={{ padding: "20px 24px", overflowY: "auto", flex: 1 }}>
+      <p style={{ fontSize: 13, color: "#6b7280", marginTop: 0, marginBottom: 20, maxWidth: 640 }}>
+        Configura qué puede hacer cada <strong>rol</strong> por defecto. Un cambio aquí afecta a todos los
+        empleados que tengan ese rol.
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {PERMISOS_LABELS.map(({ key, label }) => (
-          <label key={key} onClick={() => toggle(key)}
-            style={{
-              display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
-              borderRadius: 8, cursor: "pointer", userSelect: "none",
-              background: form.permisos?.[key] ? "#fff7ed" : "#f9fafb",
-              border: `1px solid ${form.permisos?.[key] ? "#fed7aa" : "#e5e7eb"}`,
-            }}>
-            <Toggle checked={!!form.permisos?.[key]} onChange={() => {}} />
-            <span style={{ fontSize: 14, color: "#374151", flex: 1 }}>{label}</span>
-            {form.permisos?.[key]
-              ? <span style={{ fontSize: 11, color: "#ea580c", fontWeight: 500 }}>Habilitado</span>
-              : <span style={{ fontSize: 11, color: "#9ca3af" }}>Desactivado</span>}
-          </label>
-        ))}
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 10, overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "#f9fafb" }}>
+              <th style={{ textAlign: "left", padding: "10px 14px", fontSize: 11.5, fontWeight: 700, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.03em", borderBottom: "1px solid #e5e7eb" }}>
+                Permiso
+              </th>
+              {ROLES_ORDEN.map(rol => (
+                <th key={rol} style={{ textAlign: "center", padding: "10px 14px", fontSize: 12, fontWeight: 700, color: "#111827", borderBottom: "1px solid #e5e7eb", minWidth: 100 }}>
+                  {ROL_LABEL[rol]}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {PERMISOS_GRUPOS.map(({ grupo, items }) => (
+              <Fragment key={grupo}>
+                <tr>
+                  <td colSpan={ROLES_ORDEN.length + 1} style={{ padding: "8px 14px 4px", fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", background: "#fcfcfd" }}>
+                    {grupo}
+                  </td>
+                </tr>
+                {items.map(({ key, label }) => (
+                  <tr key={key}>
+                    <td style={{ padding: "8px 14px", fontSize: 13.5, color: "#374151", borderBottom: "1px solid #f3f4f6" }}>{label}</td>
+                    {ROLES_ORDEN.map(rol => {
+                      const valor = !!rolesPermisos[rol]?.[key]
+                      const enVuelo = guardando === `${rol}:${key}`
+                      return (
+                        <td key={rol} style={{ textAlign: "center", padding: "8px 14px", borderBottom: "1px solid #f3f4f6" }}>
+                          <div style={{ display: "inline-flex", opacity: enVuelo ? 0.5 : 1, pointerEvents: enVuelo ? "none" : "auto" }}>
+                            <Toggle checked={valor} onChange={() => pedirCambio(rol, key, valor)} />
+                          </div>
+                        </td>
+                      )
+                    })}
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
       </div>
 
-      <HuellaEmpleado empleadoId={form.id} nombre={form.nombre} esNuevo={!form.id} />
+      {confirmar && (
+        <ConfirmDialog
+          open
+          title={`${confirmar.valor ? "Habilitar" : "Deshabilitar"} permiso para ${ROL_LABEL[confirmar.rol]}`}
+          message={
+            confirmar.afectados > 0
+              ? `Esto afectará a ${confirmar.afectados} empleado${confirmar.afectados === 1 ? "" : "s"} con rol ${ROL_LABEL[confirmar.rol]}.`
+              : `No hay empleados con rol ${ROL_LABEL[confirmar.rol]} todavía, pero el cambio se aplicará a los que se creen o cambien a este rol.`
+          }
+          confirmLabel="Sí, aplicar"
+          onConfirm={confirmarCambio}
+          onClose={() => setConfirmar(null)}
+        />
+      )}
     </div>
   )
 }
@@ -965,7 +1072,7 @@ function HuellaEmpleado({ empleadoId, nombre, esNuevo }) {
 
 // ── Detail Panel ───────────────────────────────────────────────────────────────
 
-function DetailPanel({ employee, employees, setEmployees, registers, setRegisters, onSave, onToggleActive, isNew, onCancel, pushToast, saving, franjas }) {
+function DetailPanel({ employee, employees, setEmployees, registers, setRegisters, onSave, onToggleActive, isNew, onCancel, pushToast, saving, franjas, rolesPermisos }) {
   const [tab, setTab]           = useState("info")
   const [form, setForm]         = useState(null)
   const [original, setOriginal] = useState(null)
@@ -1014,7 +1121,6 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
   const TABS = [
     { id: "info",       label: "Información" },
     { id: "cajas",      label: "Cajas y horario" },
-    { id: "permisos",   label: "Permisos" },
     { id: "comisiones", label: "Comisiones" },
   ]
 
@@ -1058,9 +1164,8 @@ function DetailPanel({ employee, employees, setEmployees, registers, setRegister
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
-        {tab === "info"     && <TabInfo form={form} setForm={setForm} employees={employees} original={original} />}
+        {tab === "info"     && <TabInfo form={form} setForm={setForm} employees={employees} original={original} rolesPermisos={rolesPermisos} />}
         {tab === "cajas"    && <TabCajas form={form} setForm={setForm} employees={employees} registers={registers} franjas={franjas} />}
-        {tab === "permisos"   && <TabPermisos form={form} setForm={setForm} />}
         {tab === "comisiones" && <TabComisiones form={form} pushToast={pushToast} />}
       </div>
 
@@ -1085,10 +1190,12 @@ const NEW_EMP = {
 }
 
 export default function EmployeesModule() {
+  const [vista, setVista]         = useState("empleados") // "empleados" | "roles"
   const [employees, setEmployees] = useState([])
   const [registers, setRegisters] = useState([])
   const [franjas, setFranjas]     = useState([])  // franjas de turnos (para el horario del empleado)
   const [turnosCfg, setTurnosCfg] = useState(null) // { modo, franjas } — config global de turnos
+  const [rolesPermisos, setRolesPermisos] = useState(null) // plantilla server-side por rol (/caja/roles-permisos)
   const [loading, setLoading]     = useState(true)
   const [saving, setSaving]       = useState(false)
   const [selected, setSelected]   = useState(null)
@@ -1123,14 +1230,16 @@ export default function EmployeesModule() {
     try {
       // Catálogo de cajas + usuarios (modo admin: incluye pin con token admin
       // para validar duplicados). La asignación viaja en u.caja_id.
-      const [cajas, users, turnos] = await Promise.all([
+      const [cajas, users, turnos, roles] = await Promise.all([
         listarCajasAPI().catch(() => []),
         obtenerUsuarios(true),
         obtenerConfigTurnos().catch(() => null),
+        obtenerRolesPermisosAPI().catch(() => null),
       ])
       setRegisters(cajas)
       setEmployees(users.map(u => ({ ...u, caja: nombreDeCaja(u.caja_id, cajas) })))
       if (turnos) { setFranjas(turnos.franjas ?? []); setTurnosCfg(turnos) }
+      if (roles) setRolesPermisos(roles)
     } catch {
       pushToast("Error al cargar empleados", "error")
     } finally {
@@ -1261,7 +1370,11 @@ export default function EmployeesModule() {
     }
   }
 
-  const displayEmployee = isNew ? NEW_EMP : selectedEmp
+  // Nuevo empleado: usa la plantilla server-side del rol "cajero" si ya cargó
+  // (/caja/roles-permisos), o el fallback estático mientras tanto.
+  const displayEmployee = isNew
+    ? { ...NEW_EMP, permisos: { ...(rolesPermisos?.cajero ?? ROL_PERMISOS_DEFAULT.cajero) } }
+    : selectedEmp
   const reassignEmp     = reassignData ? employees.find(e => e.id === reassignData.empId) : null
   const menuEmp         = menuData     ? employees.find(e => e.id === menuData.empId)     : null
 
@@ -1271,30 +1384,66 @@ export default function EmployeesModule() {
 
         {/* Toolbar */}
         <div style={{ height: 56, borderBottom: "1px solid #e5e7eb", background: "#fff", padding: "0 16px", display: "flex", alignItems: "center", justifyContent: "space-between", flexShrink: 0 }}>
-          <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>Empleados y permisos</h1>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
-              onClick={() => setModal("turnos")}
-              style={{ display: "flex", alignItems: "center", gap: 6, ...btnSecondary, borderRadius: 8 }}
-            >
-              <Clock size={15} />
-              Turnos
-            </button>
-            <button
-              onClick={() => {
-                if (isNew) return
-                if (selected !== null) { setPendingSelect("new"); setModal("unsaved"); return }
-                setIsNew(true); setSelected(null)
-              }}
-              style={{ display: "flex", alignItems: "center", gap: 6, ...btnPrimary, borderRadius: 8 }}
-            >
-              <UserPlus size={15} />
-              Nuevo empleado
-            </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 20 }}>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: "#111827" }}>Empleados y permisos</h1>
+            <div style={{ display: "flex", gap: 4 }}>
+              <button
+                onClick={() => setVista("empleados")}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8,
+                  fontSize: 13.5, fontWeight: 500, cursor: "pointer", border: "none",
+                  background: vista === "empleados" ? "#fff7ed" : "transparent",
+                  color: vista === "empleados" ? "#c2410c" : "#6b7280",
+                }}
+              >
+                <UsersIcon size={14} /> Empleados
+              </button>
+              <button
+                onClick={() => setVista("roles")}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "7px 12px", borderRadius: 8,
+                  fontSize: 13.5, fontWeight: 500, cursor: "pointer", border: "none",
+                  background: vista === "roles" ? "#fff7ed" : "transparent",
+                  color: vista === "roles" ? "#c2410c" : "#6b7280",
+                }}
+              >
+                <ShieldCheck size={14} /> Roles y permisos
+              </button>
+            </div>
           </div>
+          {vista === "empleados" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <button
+                onClick={() => setModal("turnos")}
+                style={{ display: "flex", alignItems: "center", gap: 6, ...btnSecondary, borderRadius: 8 }}
+              >
+                <Clock size={15} />
+                Turnos
+              </button>
+              <button
+                onClick={() => {
+                  if (isNew) return
+                  if (selected !== null) { setPendingSelect("new"); setModal("unsaved"); return }
+                  setIsNew(true); setSelected(null)
+                }}
+                style={{ display: "flex", alignItems: "center", gap: 6, ...btnPrimary, borderRadius: 8 }}
+              >
+                <UserPlus size={15} />
+                Nuevo empleado
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Body */}
+        {vista === "roles" ? (
+          <TabRolesPermisos
+            rolesPermisos={rolesPermisos}
+            setRolesPermisos={setRolesPermisos}
+            employees={employees}
+            pushToast={pushToast}
+          />
+        ) : (
+        /* Body */
         <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
 
           {/* List panel */}
@@ -1401,9 +1550,11 @@ export default function EmployeesModule() {
               pushToast={pushToast}
               saving={saving}
               franjas={franjas}
+              rolesPermisos={rolesPermisos}
             />
           </div>
         </div>
+        )}
       </div>
 
       {/* Fixed dropdowns */}

@@ -1791,17 +1791,19 @@ export default function CarteraCredito() {
         </div>
 
         {/* Danger zone */}
-        <div style={{ borderTop: "1px solid #f4f4f5", paddingTop: 12, marginBottom: 14 }}>
-          <button
-            style={{
-              ...S.btnGhost, border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6,
-              width: "100%", justifyContent: "center", color: "#dc2626", gap: 6,
-            }}
-            onClick={() => setShowEliminar(true)}
-          >
-            <Trash2 size={13} /> Eliminar cuenta de crédito
-          </button>
-        </div>
+        {posState?.cajero?.permisos?.puede_eliminar_cartera && (
+          <div style={{ borderTop: "1px solid #f4f4f5", paddingTop: 12, marginBottom: 14 }}>
+            <button
+              style={{
+                ...S.btnGhost, border: "1px solid rgba(239,68,68,0.3)", borderRadius: 6,
+                width: "100%", justifyContent: "center", color: "#dc2626", gap: 6,
+              }}
+              onClick={() => setShowEliminar(true)}
+            >
+              <Trash2 size={13} /> Eliminar cuenta de crédito
+            </button>
+          </div>
+        )}
 
         {/* Audit log */}
         <div style={{ fontSize: 12, fontWeight: 700, color: "#71717a", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>

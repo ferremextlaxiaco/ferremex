@@ -1,6 +1,7 @@
 import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import * as path from "path"
 import { readJson } from "../../../lib/json-store"
+import { cargarRolesPermisos, completarPermisosUsuario } from "../../../lib/roles-permisos"
 
 /**
  * POST /caja/login — valida el PIN de un cajero en el servidor.
@@ -50,6 +51,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  const { pin: _pin, ...sinPin } = usuario
+  // Completa flags de permiso que no existían cuando este usuario fue creado
+  // (p. ej. puede_ver_reportes) con el default de su rol, sin pisar overrides
+  // individuales ya guardados.
+  const completo = completarPermisosUsuario(usuario, cargarRolesPermisos())
+  const { pin: _pin, ...sinPin } = completo
   res.json(sinPin)
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Navigate } from "react-router-dom"
 import {
   obtenerTicketConfig,
   guardarTicketConfig,
@@ -51,8 +51,11 @@ const DEFAULT_CONFIG: TicketConfig = {
 }
 
 export function AdminTickets() {
-  const { dispatch } = usePOS()
+  const { state, dispatch } = usePOS()
   const navigate = useNavigate()
+
+  if (!state.cajero) return <Navigate to="/" replace />
+  if (!state.cajero.permisos.puede_ver_formatos) return <Navigate to="/admin" replace />
   const [config, setConfig] = useState<TicketConfig>(DEFAULT_CONFIG)
   const [tipoActivo, setTipoActivo] = useState<PreviewTab>("venta")
   const [guardando, setGuardando] = useState(false)

@@ -4,7 +4,7 @@ import {
   CheckCircle2, XCircle, RefreshCw, Save, RotateCcw, ExternalLink,
   PlusCircle, AlertTriangle,
 } from "lucide-react"
-import { useNavigate } from "react-router-dom"
+import { useNavigate, Navigate } from "react-router-dom"
 import { usePOS } from "../lib/pos-store"
 import { useToasts } from "../hooks/useToasts"
 import { construirBytesTicket, type TicketPrintData } from "../lib/serial"
@@ -598,5 +598,10 @@ function PerifericosPanel() {
 }
 
 export function AdminPerifericos() {
+  const { state } = usePOS()
+
+  if (!state.cajero) return <Navigate to="/" replace />
+  if (!state.cajero.permisos.puede_ver_perifericos) return <Navigate to="/admin" replace />
+
   return <PerifericosPanel />
 }

@@ -14,6 +14,7 @@ import ArticleDeleteModal from "./ArticleDeleteModal"
 import PaquetesPanel from "./PaquetesPanel"
 import FacturablePanel from "./FacturablePanel"
 import { useToasts } from "../hooks/useToasts"
+import { usePOS } from "../lib/pos-store"
 
 // ── Iconos inline ─────────────────────────────────────────────────────────────
 
@@ -73,6 +74,8 @@ const PAGE_SIZE = 40
 export default function ArticlesModule({ vista = "articulos" }) {
   const { toasts, push: pushToast } = useToasts()
   const navigate = useNavigate()
+  const { state } = usePOS()
+  const puedeEditar = !!state.cajero?.permisos?.puede_editar_articulos
   // La vista activa (articulos | paquetes) la determina la ruta; las pestañas
   // viven en el topbar del panel (Admin.tsx), no aquí.
   const tab = vista
@@ -348,22 +351,30 @@ export default function ArticlesModule({ vista = "articulos" }) {
         </div>
 
         <div className="ar-header-actions">
-          <button className="ar-btn-add" onClick={() => { setDrawerMode("add"); setDrawerOpen(true) }}>
-            <IconPlus /> Agregar
-          </button>
-          <button className="ar-btn-action" disabled={!selectedId}
-            onClick={() => { setDrawerMode("edit"); setDrawerOpen(true) }}>
-            <IconPencil /> Editar
-          </button>
+          {puedeEditar && (
+            <button className="ar-btn-add" onClick={() => { setDrawerMode("add"); setDrawerOpen(true) }}>
+              <IconPlus /> Agregar
+            </button>
+          )}
+          {puedeEditar && (
+            <button className="ar-btn-action" disabled={!selectedId}
+              onClick={() => { setDrawerMode("edit"); setDrawerOpen(true) }}>
+              <IconPencil /> Editar
+            </button>
+          )}
           <button className="ar-btn-action" onClick={handleRefresh}
             disabled={!hasBuscado || loading}>
             <IconRefresh spinning={refreshing} /> Refrescar
           </button>
-          <div className="ar-toolbar-divider" />
-          <button className="ar-btn-action ar-btn-danger" disabled={!selectedId}
-            onClick={() => setDeleteOpen(true)}>
-            <IconTrash /> Eliminar
-          </button>
+          {puedeEditar && (
+            <>
+              <div className="ar-toolbar-divider" />
+              <button className="ar-btn-action ar-btn-danger" disabled={!selectedId}
+                onClick={() => setDeleteOpen(true)}>
+                <IconTrash /> Eliminar
+              </button>
+            </>
+          )}
         </div>
       </div>
 
