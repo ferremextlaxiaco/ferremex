@@ -8,7 +8,7 @@ import ConfirmDialog from "../components/ConfirmDialog"
 import {
   ArrowLeft, Banknote, CreditCard, ArrowLeftRight, Wallet, FileText,
   TrendingUp, TrendingDown, Calculator, Eye, EyeOff, Printer,
-  CheckCircle2, AlertTriangle, Lock, Truck, ChevronDown,
+  CheckCircle2, AlertTriangle, Lock, Truck, ChevronDown, Percent,
 } from "lucide-react"
 
 // ─── CONSTANTES ────────────────────────────────────────────────────────────────
@@ -38,6 +38,31 @@ function StatCard({ icon, label, valor, color = "text-gray-900" }) {
       <div className="min-w-0">
         <div className="text-xs text-gray-500">{label}</div>
         <div className={`text-base font-semibold ${color}`}>{valor}</div>
+      </div>
+    </div>
+  )
+}
+
+// Comisiones generadas por vendedor en el período (ferremex_comisiones). Se
+// muestra tanto en el corte abierto como en el ya cerrado (mismo shape).
+function ComisionesVendedorCard({ comisiones }) {
+  if (!comisiones || comisiones.length === 0) return null
+  const total = comisiones.reduce((s, c) => s + c.total, 0)
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-sm font-semibold text-gray-700 flex items-center gap-1.5">
+          <Percent size={14} className="text-orange-500" /> Comisiones del turno
+        </h3>
+        <span className="text-sm font-bold font-mono text-gray-900">{formatMXN(total)}</span>
+      </div>
+      <div className="divide-y divide-gray-100">
+        {comisiones.map((c) => (
+          <div key={c.vendedor} className="flex items-center justify-between py-1.5 text-sm">
+            <span className="text-gray-600">{c.vendedor}</span>
+            <span className="font-mono text-gray-800">{formatMXN(c.total)}</span>
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -402,6 +427,9 @@ export default function CorteModule() {
                 </div>
               )}
 
+              {/* Comisiones generadas por vendedor en el período (informativo). */}
+              <ComisionesVendedorCard comisiones={corte.comisiones_por_vendedor} />
+
               {/* Desglose del efectivo esperado */}
               <div className="bg-white border border-gray-200 rounded-lg p-4">
                 <h3 className="text-sm font-semibold text-gray-700 mb-2">Efectivo esperado en caja</h3>
@@ -601,6 +629,12 @@ function CorteCerradoView({ resultado, onImprimir }) {
           <Row label="Crédito" valor={resultado.ventas_credito} />
           <Row label={`Total ventas (${resultado.num_ventas})`} valor={resultado.total_ventas} bold />
         </div>
+
+        {resultado.comisiones_por_vendedor && resultado.comisiones_por_vendedor.length > 0 && (
+          <div className="border-t border-gray-200 mt-3 pt-3 corte-no-print">
+            <ComisionesVendedorCard comisiones={resultado.comisiones_por_vendedor} />
+          </div>
+        )}
 
         <div className="border-t border-gray-200 mt-3 pt-3 space-y-1 text-sm">
           <Row label="Fondo inicial" valor={resultado.fondo_inicial} signo="+" />

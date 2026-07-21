@@ -127,6 +127,10 @@ export interface VentaRequest {
   // saldo del canje y registra ambos movimientos transaccionalmente.
   pago_puntos?: number
   puntos_ganados?: number
+  // Comisión (MXN) que ganará el vendedor de esta venta. La calcula el motor
+  // del frontend (lib/comisiones.ts) con la taxonomía real del carrito y las
+  // reglas del vendedor; el backend solo la persiste (mismo patrón que puntos).
+  comision_venta?: number
   // Saldo a favor por cambio (módulo ferremex_saldo_cambio, en MXN, 1:1 con
   // pesos — sin tasa de conversión). El backend valida saldo y registra el
   // consumo transaccionalmente. Requiere cliente_id. Concepto de negocio
@@ -193,6 +197,8 @@ export interface VentaResponse {
   pago_puntos?: number
   puntos_canjeados?: number
   puntos_ganados?: number
+  // Comisión (MXN) del vendedor de esta venta (presente solo si generó algo).
+  comision_venta?: number
   // Saldo a favor por cambio consumido en esta venta (presente solo si aplicó).
   pago_saldo_cambio?: number
   cambio: number
@@ -289,6 +295,12 @@ export interface CorteMovItem {
   category?: string
 }
 
+/** Comisión total generada por un vendedor en el período de un corte. */
+export interface ComisionVendedor {
+  vendedor: string
+  total: number
+}
+
 /** Snapshot persistido de un corte ya cerrado. */
 export interface CorteCerrado {
   cajero: string
@@ -308,6 +320,8 @@ export interface CorteCerrado {
   salidas_manuales: number
   efectivo_esperado: number
   efectivo_contado: number
+  /** Comisión por vendedor congelada al momento del cierre. */
+  comisiones_por_vendedor?: ComisionVendedor[]
   diferencia: number
   fondo_dejado: number
   motivo?: string
@@ -334,6 +348,8 @@ export interface CorteResponse {
   entradas_manuales: number
   salidas_manuales: number
   efectivo_esperado: number
+  /** Comisión total generada por cada vendedor en el período (informativo). */
+  comisiones_por_vendedor?: ComisionVendedor[]
   ventas: CorteVentaItem[]
   movimientos: CorteMovItem[]
   /** Snapshot si este período ya fue cerrado; null si sigue abierto. */

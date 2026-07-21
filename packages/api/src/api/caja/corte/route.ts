@@ -36,7 +36,12 @@ interface VentaRegistro {
   estado?: string
   // Venta contra entrega (por_cobrar): monto real que se cobrará al liquidar.
   entrega_total?: number
+  // Comisión (MXN) del vendedor de esta venta (ver /caja/ventas — comision_venta).
+  comision_venta?: number
 }
+
+/** Comisión total generada por cada vendedor en un set de ventas (vigentes). */
+export interface ComisionVendedor { vendedor: string; total: number }
 
 interface Movimiento {
   id: string
@@ -87,6 +92,9 @@ interface CorteCerrado {
   fondo_dejado: number
   motivo?: string
   denominaciones?: Record<string, number> | null
+  // Comisión por vendedor congelada en el momento del cierre (no depende de
+  // recalcular después — mismo espíritu que el resto de los totales del snapshot).
+  comisiones_por_vendedor?: ComisionVendedor[]
 }
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
@@ -181,6 +189,19 @@ function calcularResumen(caja_id?: string | null, desde?: string | null, filtroF
   const ventas_credito = ventas.reduce((s, v) => s + Number(v.pago_credito ?? 0), 0)
   const total_ventas = ventas.reduce((s, v) => s + Number(v.total ?? 0), 0)
 
+  // Comisión total por vendedor (solo ventas vigentes del período — una venta
+  // cancelada deja de sumar automáticamente, sin necesidad de revertir nada).
+  const comisionPorVendedor = new Map<string, number>()
+  for (const v of ventas) {
+    const monto = Number(v.comision_venta ?? 0)
+    if (monto <= 0) continue
+    const nombre = v.vendedor ?? v.cajero
+    comisionPorVendedor.set(nombre, (comisionPorVendedor.get(nombre) ?? 0) + monto)
+  }
+  const comisiones_por_vendedor: ComisionVendedor[] = [...comisionPorVendedor.entries()]
+    .map(([vendedor, total]) => ({ vendedor, total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => b.total - a.total)
+
   // Movimientos de la MISMA caja en el período (fondo, entradas, salidas). No se
   // subdividen por franja: el fondo y los movimientos son del cajón físico (no
   // tienen franja natural) y el fondo inicial se registra al borde del período.
@@ -212,6 +233,9 @@ function calcularResumen(caja_id?: string | null, desde?: string | null, filtroF
     entradas_manuales,
     salidas_manuales,
     efectivo_esperado,
+    // Comisión total generada por cada vendedor en el período (informativo —
+    // no afecta el arqueo de caja). Vacío si nadie tiene reglas de comisión.
+    comisiones_por_vendedor,
     ventas: ventas
       .sort((a, b) => (a.fecha ?? "").localeCompare(b.fecha ?? ""))
       .map((v) => ({
@@ -358,6 +382,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
       fondo_dejado,
       ...(body.motivo ? { motivo: String(body.motivo).trim() } : {}),
       denominaciones: body.denominaciones ?? null,
+      comisiones_por_vendedor: resumen.comisiones_por_vendedor,
     }
     return [registro, ...cortes]
   })

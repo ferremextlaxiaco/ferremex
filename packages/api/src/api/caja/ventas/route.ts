@@ -80,6 +80,11 @@ interface VentaBody {
   // (lib/monedero.ts) que tiene la taxonomía y la config cargadas. El backend
   // los persiste como movimiento "ganado" transaccional. 0/omitido = sin puntos.
   puntos_ganados?: number
+  // Comisión (MXN) que ganó el VENDEDOR de esta venta, calculada por el motor
+  // del frontend (lib/comisiones.ts) con las reglas de ese empleado y la
+  // taxonomía real del carrito. El backend solo la persiste (no re-deriva),
+  // mismo espíritu que puntos_ganados. 0/omitido = sin comisión.
+  comision_venta?: number
   // Pago con "saldo a favor por cambio" (módulo ferremex_saldo_cambio, en MXN,
   // 1:1 con pesos — sin tasa de conversión, a diferencia de los puntos). El
   // backend valida saldo y registra el consumo transaccionalmente. Requiere
@@ -239,6 +244,8 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const pago_credito = Number(body.pago_credito ?? 0)
   const pago_puntos = Number(body.pago_puntos ?? 0)
   const puntos_ganados = Math.max(0, Math.round(Number(body.puntos_ganados ?? 0)))
+  // Comisión: 2 decimales (es dinero, no puntos) — sin redondear a entero.
+  const comision_venta = Math.max(0, Math.round(Number(body.comision_venta ?? 0) * 100) / 100)
   const pago_saldo_cambio = Number(body.pago_saldo_cambio ?? 0)
 
   if (!cajero || !turno_id || !items?.length) {
@@ -701,6 +708,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           pago_puntos,
           puntos_canjeados,
           puntos_ganados: puntos_ganados_final,
+          // Comisión del vendedor (MXN), calculada en el frontend. Se persiste
+          // para el corte de caja y el historial; se revierte al cancelar.
+          ...(comision_venta > 0 ? { comision_venta } : {}),
           // Saldo a favor por cambio (ferremex_saldo_cambio, 1:1 con pesos). Se
           // persiste para el ticket, el historial y para revertirlo al cancelar.
           pago_saldo_cambio,

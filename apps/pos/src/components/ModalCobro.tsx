@@ -7,9 +7,9 @@ import {
 import {
   registrarVenta, marcarCotizacionConvertida, obtenerDetalleMonederoAPI,
   listarReglasMonederoAPI, listarCatalogos, listarHuellasAPI, registrarVerificacionAPI,
-  obtenerSaldoCambioAPI, obtenerFleteConfig, SKU_FLETE,
+  obtenerSaldoCambioAPI, obtenerFleteConfig, SKU_FLETE, listarReglasComisionAPI,
   type VentaResponse, type DetalleMonedero, type ReglaPuntosAPI, type CatalogosData,
-  type DetalleSaldoCambio, type FleteConfig,
+  type DetalleSaldoCambio, type FleteConfig, type ComisionReglaAPI,
 } from "../lib/client"
 import { loadCarteraCliente } from "../lib/clientes"
 import { abrirCajonLocal } from "../lib/impresora-local"
@@ -20,6 +20,7 @@ import { FichaEntregaModal, type DatosFichaEntrega } from "./FichaEntregaModal"
 import { usePOS, efectivoPrecio, type CartItem } from "../lib/pos-store"
 import { claveLinea } from "../lib/promociones"
 import { calcularPuntosGanados, topeCanjePesos, type LineaPuntos } from "../lib/monedero"
+import { comisionDeVenta, type LineaComision } from "../lib/comisiones"
 import { formatMXN as fmt, saneaMontoDecimal as saneaMonto } from "../lib/format"
 
 interface ModalCobroProps {
@@ -96,6 +97,10 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const [catMon, setCatMon] = useState<CatalogosData | null>(null)
   const [confirmCanje, setConfirmCanje] = useState(false)
   const [codigoConfirm, setCodigoConfirm] = useState("")
+  // ── Comisiones (ferremex_comisiones) ──────────────────────────────────────
+  // Reglas del VENDEDOR de la venta (atribución: vendedorVenta, o el cajero
+  // logueado si no se eligió otro). Se recargan si cambia el vendedor.
+  const [reglasComision, setReglasComision] = useState<ComisionReglaAPI[]>([])
   // ── Saldo a favor por cambio (ferremex_saldo_cambio) ──────────────────────
   // Concepto de negocio DISTINTO al Monedero de lealtad: se acredita cuando el
   // cliente cambia un artículo por otro de menor valor. Se consume 1:1 en pesos
@@ -172,6 +177,17 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
     })()
     return () => { on = false }
   }, [state.clienteActivo])
+
+  // Reglas de comisión del vendedor de esta venta (atribución o cajero logueado).
+  useEffect(() => {
+    const empleadoId = state.vendedorVenta?.id ?? state.cajero.id
+    if (!empleadoId) { setReglasComision([]); return }
+    let on = true
+    listarReglasComisionAPI(empleadoId)
+      .then((reglas) => { if (on) setReglasComision(reglas) })
+      .catch(() => { if (on) setReglasComision([]) })
+    return () => { on = false }
+  }, [state.vendedorVenta, state.cajero.id])
 
   // Saldo a favor por cambio: independiente del Monedero (no requiere inscripción,
   // cualquier cliente identificado puede tener saldo generado por un cambio previo).
@@ -294,6 +310,15 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         cfgMon, reglasMon, catMon, monedero?.nivel_actual ?? null
       )
     : 0
+  // Comisión que ganará el VENDEDOR de esta venta (preview). El flete es un
+  // servicio, no un artículo comisionable — se excluye igual que en puntos.
+  const comisionAGanar = comisionDeVenta(
+    state.items.filter((i) => !i.esFlete).map<LineaComision>((i) => ({
+      subtotal: precioUnitEfectivo(i) * i.cantidad, impuesto: i.impuesto,
+      marca: i.marca, departamento: i.departamento, categoria: i.categoria,
+    })),
+    reglasComision
+  )
   // Si la config exige confirmar el canje (huella/código), se gatea con un modal.
   const requiereConfirmCanje = !!cfgMon && pPuntos > 0 && (cfgMon.confirmar_huella || cfgMon.confirmar_codigo)
   // Puntos que representa el monto canjeado en pesos (2 decimales). Es el valor
@@ -674,6 +699,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         // del frontend; el backend valida el canje y registra ambos movimientos).
         ...(pPuntos > 0 ? { pago_puntos: pPuntos } : {}),
         ...(puntosAGanar > 0 ? { puntos_ganados: puntosAGanar } : {}),
+        // Comisión del vendedor (calculada en el frontend con la taxonomía real
+        // del carrito, mismo patrón que puntos_ganados). El backend solo persiste.
+        ...(comisionAGanar > 0 ? { comision_venta: comisionAGanar } : {}),
         // Saldo a favor por cambio (ferremex_saldo_cambio): 1:1 con pesos, sin
         // tasa de conversión. El backend valida saldo disponible y registra el
         // consumo transaccionalmente.
