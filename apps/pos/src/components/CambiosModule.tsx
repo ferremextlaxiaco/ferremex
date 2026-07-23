@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react"
-import { ArrowRightLeft, X, Ban, Loader2, AlertCircle } from "lucide-react"
+import { ArrowRightLeft, X, Ban, Loader2, AlertCircle, Printer } from "lucide-react"
 import { listarCambiosAPI, obtenerCambioAPI, cancelarCambioAPI, type Cambio } from "../lib/client"
 import { formatMXN as fmt } from "../lib/format"
+import { usePOS } from "../lib/pos-store"
+import { ComprobanteCambio } from "./ComprobanteCambio"
 
 function fmtFecha(iso: string): string {
   try {
@@ -12,10 +14,12 @@ function fmtFecha(iso: string): string {
 }
 
 function CambioPreview({ cambio, onClose, onCancelado }: { cambio: Cambio; onClose: () => void; onCancelado: (c: Cambio) => void }) {
+  const { state } = usePOS()
   const [motivo, setMotivo] = useState("")
   const [confirmando, setConfirmando] = useState(false)
   const [cancelando, setCancelando] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [imprimiendo, setImprimiendo] = useState(false)
 
   async function confirmarCancelacion() {
     if (!motivo.trim()) return
@@ -104,6 +108,27 @@ function CambioPreview({ cambio, onClose, onCancelado }: { cambio: Cambio; onClo
           </div>
         )}
 
+        <button
+          onClick={() => setImprimiendo(true)}
+          className="w-full mb-3 px-4 py-2 text-sm font-semibold text-orange-600 bg-orange-50 border border-orange-200 rounded-lg hover:bg-orange-100 inline-flex items-center justify-center gap-1.5"
+        >
+          <Printer size={14} /> Imprimir comprobante
+        </button>
+
+        {imprimiendo && (
+          <ComprobanteCambio
+            cambio={cambio}
+            negocio={{
+              nombre: state.ticketConfig?.encabezado?.nombre ?? "FERREMEX",
+              direccion: state.ticketConfig?.encabezado?.direccion ?? "",
+              telefono: state.ticketConfig?.encabezado?.telefono ?? "",
+              rfc: state.ticketConfig?.encabezado?.rfc ?? "",
+            }}
+            titulo={state.ticketConfig?.formatos?.cambio_devolucion?.titulo}
+            onCerrar={() => setImprimiendo(false)}
+          />
+        )}
+
         {cambio.estado === "completado" && (
           confirmando ? (
             <div className="space-y-2">
@@ -173,11 +198,11 @@ export function CambiosModule() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h1 className="text-lg font-bold text-gray-900">Cambios de artículo</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Devoluciones con cambio de mercancía. {cambios.length} registrado{cambios.length !== 1 ? "s" : ""}.</p>
+          <h1 className="text-xl font-bold text-gray-900">Cambios de artículo</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Devoluciones con cambio de mercancía. {cambios.length} registrado{cambios.length !== 1 ? "s" : ""}.</p>
         </div>
       </div>
 
@@ -187,14 +212,14 @@ export function CambiosModule() {
         <p className="text-sm text-gray-400 py-8 text-center">No hay cambios registrados. Se inician desde el detalle de una venta en "Consulta de ventas".</p>
       ) : (
         <div className="border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
+          <table className="w-full text-base">
+            <thead className="bg-gray-50 text-sm uppercase tracking-wide text-gray-500">
               <tr>
-                <th className="text-left px-4 py-2">Folio</th>
-                <th className="text-left px-4 py-2">Fecha</th>
-                <th className="text-left px-4 py-2">Cliente</th>
-                <th className="text-right px-4 py-2">Diferencia</th>
-                <th className="text-left px-4 py-2">Estado</th>
+                <th className="text-left px-5 py-3">Folio</th>
+                <th className="text-left px-5 py-3">Fecha</th>
+                <th className="text-left px-5 py-3">Cliente</th>
+                <th className="text-right px-5 py-3">Saldo/Diferencia</th>
+                <th className="text-left px-5 py-3">Estado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -204,17 +229,24 @@ export function CambiosModule() {
                   onClick={() => abrirDetalle(c.id)}
                   className={`cursor-pointer hover:bg-gray-50 ${cargandoDetalle === c.id ? "opacity-50" : ""}`}
                 >
-                  <td className="px-4 py-2 font-mono text-xs">{c.folio_cambio}</td>
-                  <td className="px-4 py-2 text-gray-500 text-xs">{fmtFecha(c.fecha)}</td>
-                  <td className="px-4 py-2 flex items-center gap-1.5">
+                  <td className="px-5 py-3 font-mono text-sm">{c.folio_cambio}</td>
+                  <td className="px-5 py-3 text-gray-500 text-sm">{fmtFecha(c.fecha)}</td>
+                  <td className="px-5 py-3 flex items-center gap-1.5">
                     {c.cliente_nombre || "Público en general"}
-                    {cargandoDetalle === c.id && <Loader2 size={12} className="animate-spin text-gray-400" />}
+                    {cargandoDetalle === c.id && <Loader2 size={14} className="animate-spin text-gray-400" />}
                   </td>
-                  <td className={`px-4 py-2 text-right font-medium ${c.diferencia > 0 ? "text-orange-600" : c.diferencia < 0 ? "text-green-600" : "text-gray-500"}`}>
-                    {c.diferencia === 0 ? "—" : fmt(Math.abs(c.diferencia))}
+                  <td className={`px-5 py-3 text-right font-medium ${c.diferencia > 0 ? "text-orange-600" : c.diferencia < 0 ? "text-green-600" : "text-gray-500"}`}>
+                    {c.diferencia === 0 ? "—" : (
+                      <>
+                        {fmt(Math.abs(c.diferencia))}
+                        <span className="block text-xs font-normal text-gray-400">
+                          {c.diferencia > 0 ? "Diferencia" : "Saldo a favor"}
+                        </span>
+                      </>
+                    )}
                   </td>
-                  <td className="px-4 py-2">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.estado === "cancelado" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+                  <td className="px-5 py-3">
+                    <span className={`text-sm font-semibold px-2.5 py-1 rounded-full ${c.estado === "cancelado" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
                       {c.estado === "cancelado" ? "Cancelado" : "Completado"}
                     </span>
                   </td>

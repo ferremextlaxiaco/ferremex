@@ -1114,7 +1114,7 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
               flex: 1, background: "rgba(37,99,235,0.08)", border: "1px solid rgba(37,99,235,0.3)", borderRadius: 6,
               padding: "8px 0", fontSize: 12, fontWeight: 600, cursor: "pointer", color: "#2563eb",
               display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6,
-            }}><ArrowRightLeft size={14} /> Cambiar artículo</button>
+            }}><ArrowRightLeft size={14} /> Devolución o cambio</button>
           )}
           {/* Nota de venta formal (hoja carta, estética factura sin sellos). Para
               cualquier venta: convierte el ticket en un documento imprimible. */}
@@ -1154,15 +1154,14 @@ function SaleDrawer({ venta, onClose, onCancel, onCambio, onToast }) {
   )
 }
 
-// ── Cancellation modal (2-step) ────────────────────────────────────────────────
+// ── Cancellation modal ──────────────────────────────────────────────────────
+// Solo cancelación TOTAL: la devolución de artículos específicos ya se
+// resuelve con el flujo de "Cambio de artículo" (CambioWizard), así que este
+// modal no necesita ofrecer una segunda ruta paralela.
 
 function CancelModal({ venta, onClose, onConfirm }) {
-  const [step, setStep] = useState(1)
-  const [tipo, setTipo] = useState("total") // "total" | "parcial"
   const [motivo, setMotivo] = useState("")
   const [refund, setRefund] = useState("efectivo")
-  const [sel, setSel] = useState({}) // item index → qty
-  const [motivoParcial, setMotivoParcial] = useState("")
 
   useEffect(() => {
     function esc(e) { if (e.key === "Escape") onClose() }
@@ -1172,10 +1171,6 @@ function CancelModal({ venta, onClose, onConfirm }) {
 
   if (!venta) return null
 
-  const btnPrimary = {
-    background: "var(--orange)", color: "#fff", border: "none", borderRadius: 6,
-    padding: "8px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer",
-  }
   const btnSecondary = {
     background: "transparent", border: "1px solid var(--border)", borderRadius: 6,
     padding: "8px 18px", fontSize: 13, fontWeight: 600, cursor: "pointer", color: "var(--text-muted)",
@@ -1192,14 +1187,8 @@ function CancelModal({ venta, onClose, onConfirm }) {
   }
 
   function handleConfirm() {
-    if (tipo === "total") {
-      if (!motivo.trim()) return
-      onConfirm({ tipo: "total", motivo, refund })
-    } else {
-      const itemsSel = Object.entries(sel).filter(([, q]) => q > 0)
-      if (!itemsSel.length || !motivoParcial.trim()) return
-      onConfirm({ tipo: "parcial", items: itemsSel, motivo: motivoParcial })
-    }
+    if (!motivo.trim()) return
+    onConfirm({ tipo: "total", motivo, refund })
   }
 
   return (
@@ -1216,98 +1205,37 @@ function CancelModal({ venta, onClose, onConfirm }) {
             <div style={{ fontSize: 14, fontWeight: 700, color: "#dc2626" }}>Cancelar venta</div>
             <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace" }}>{venta.folio}</div>
           </div>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            {[1, 2].map(s => (
-              <div key={s} style={{
-                width: 24, height: 24, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 11, fontWeight: 700,
-                background: step >= s ? "#dc2626" : "var(--panel-bg, #f4f4f5)",
-                color: step >= s ? "#fff" : "var(--text-muted)",
-              }}>{s}</div>
-            ))}
-            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--text-muted)", marginLeft: 8 }}>×</button>
-          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--text-muted)" }}>×</button>
         </div>
 
         {/* Body */}
         <div style={{ padding: "20px" }}>
-          {step === 1 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div>
-              <div style={{ fontSize: 13, color: "var(--text)", marginBottom: 16 }}>¿Qué tipo de cancelación deseas realizar?</div>
-              <div style={{ display: "flex", gap: 10 }}>
-                {[
-                  { k: "total", label: "Cancelación total", desc: "Cancela todos los artículos de la venta" },
-                  { k: "parcial", label: "Devolución parcial", desc: "Selecciona artículos específicos a devolver" },
-                ].map(op => (
-                  <button key={op.k} onClick={() => setTipo(op.k)} style={{
-                    flex: 1, background: tipo === op.k ? "rgba(220,38,38,0.07)" : "transparent",
-                    border: tipo === op.k ? "2px solid #dc2626" : "1px solid var(--border)",
-                    borderRadius: 8, padding: "12px", cursor: "pointer", textAlign: "left",
-                  }}>
-                    <div style={{ fontSize: 12, fontWeight: 700, color: tipo === op.k ? "#dc2626" : "var(--text)", marginBottom: 4 }}>{op.label}</div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{op.desc}</div>
-                  </button>
-                ))}
-              </div>
+              <label style={labelStyle}>Motivo de cancelación *</label>
+              <input value={motivo} onChange={e => setMotivo(e.target.value)}
+                placeholder="Ej. Artículo equivocado, cliente desistió..." style={inputStyle} autoFocus />
             </div>
-          )}
-
-          {step === 2 && tipo === "total" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div>
-                <label style={labelStyle}>Motivo de cancelación *</label>
-                <input value={motivo} onChange={e => setMotivo(e.target.value)}
-                  placeholder="Ej. Artículo equivocado, cliente desistió..." style={inputStyle} autoFocus />
-              </div>
-              <div>
-                <label style={labelStyle}>Tipo de devolución</label>
-                <select value={refund} onChange={e => setRefund(e.target.value)} style={inputStyle}>
-                  <option value="efectivo">Efectivo</option>
-                  <option value="transferencia">Transferencia</option>
-                  <option value="tarjeta">Tarjeta</option>
-                  <option value="nota_credito">Nota de crédito</option>
-                </select>
-              </div>
-              <div style={{ background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.2)", borderRadius: 8, padding: 12 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>Se cancelarán {venta.items.length} artículo(s)</div>
-                <div style={{ fontSize: 12, color: "#dc2626" }}>Total: {fmt(venta.total)}</div>
-              </div>
+            <div>
+              <label style={labelStyle}>Tipo de devolución</label>
+              <select value={refund} onChange={e => setRefund(e.target.value)} style={inputStyle}>
+                <option value="efectivo">Efectivo</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="nota_credito">Nota de crédito</option>
+              </select>
             </div>
-          )}
-
-          {step === 2 && tipo === "parcial" && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>Selecciona los artículos a devolver:</div>
-              <div style={{ maxHeight: 200, overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8 }}>
-                {venta.items.map((it, i) => (
-                  <label key={i} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 12px", borderBottom: i < venta.items.length - 1 ? "1px solid var(--border)" : "none", cursor: "pointer" }}>
-                    <input type="checkbox" checked={!!sel[i]} onChange={e => setSel(s => ({ ...s, [i]: e.target.checked ? it.cantidad : 0 }))} />
-                    <span style={{ flex: 1, fontSize: 12, color: "var(--text)" }}>{it.descripcion}</span>
-                    {sel[i] > 0 && (
-                      <input type="number" min={1} max={it.cantidad} value={sel[i] || ""}
-                        onChange={e => setSel(s => ({ ...s, [i]: Number(e.target.value) }))}
-                        style={{ width: 52, border: "1px solid var(--border)", borderRadius: 4, padding: "2px 5px", fontSize: 12, textAlign: "center" }} />
-                    )}
-                    <span style={{ fontSize: 11, color: "var(--text-muted)", minWidth: 60, textAlign: "right" }}>{fmt(it.subtotal)}</span>
-                  </label>
-                ))}
-              </div>
-              <div>
-                <label style={labelStyle}>Motivo *</label>
-                <input value={motivoParcial} onChange={e => setMotivoParcial(e.target.value)}
-                  placeholder="Ej. Artículo defectuoso..." style={inputStyle} />
-              </div>
+            <div style={{ background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.2)", borderRadius: 8, padding: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#dc2626", marginBottom: 4 }}>Se cancelarán {venta.items.length} artículo(s)</div>
+              <div style={{ fontSize: 12, color: "#dc2626" }}>Total: {fmt(venta.total)}</div>
             </div>
-          )}
+          </div>
         </div>
 
         {/* Footer */}
         <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <button onClick={onClose} style={btnSecondary}>Cancelar</button>
-          {step === 1
-            ? <button onClick={() => setStep(2)} style={btnPrimary}>Continuar →</button>
-            : <button onClick={handleConfirm} style={btnDanger}>Confirmar cancelación</button>
-          }
+          <button onClick={handleConfirm} style={btnDanger}>Confirmar cancelación</button>
         </div>
       </div>
     </>

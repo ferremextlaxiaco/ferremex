@@ -5,10 +5,11 @@ import { AdminTickets } from "./AdminTickets"
 import { FormatoConfig } from "./FormatoConfig"
 
 const TABS = [
-  { key: "ticket",     label: "Ticket" },
-  { key: "nota_venta", label: "Nota de venta" },
-  { key: "factura",    label: "Factura" },
-  { key: "cupon",      label: "Cupón" },
+  { key: "ticket",             label: "Ticket" },
+  { key: "nota_venta",         label: "Nota de venta" },
+  { key: "factura",            label: "Factura" },
+  { key: "cupon",              label: "Cupón" },
+  { key: "cambio_devolucion",  label: "Cambio/Devolución" },
 ]
 
 export function AdminFormatos() {
@@ -47,10 +48,11 @@ export function AdminFormatos() {
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: "auto" }}>
-        {tab === "ticket"     && <AdminTickets />}
-        {tab === "nota_venta" && <FormatoConfig formatoKey="nota_venta" label="Nota de venta" />}
-        {tab === "factura"    && <FormatoConfig formatoKey="factura" label="Factura" />}
-        {tab === "cupon"      && <FormatoConfig formatoKey="cupon" label="Cupón" />}
+        {tab === "ticket"            && <AdminTickets />}
+        {tab === "nota_venta"        && <FormatoConfig formatoKey="nota_venta" label="Nota de venta" />}
+        {tab === "factura"           && <FormatoConfig formatoKey="factura" label="Factura" />}
+        {tab === "cupon"             && <FormatoConfig formatoKey="cupon" label="Cupón" />}
+        {tab === "cambio_devolucion" && <FormatoConfig formatoKey="cambio_devolucion" label="Cambio/Devolución" />}
       </div>
     </div>
   )

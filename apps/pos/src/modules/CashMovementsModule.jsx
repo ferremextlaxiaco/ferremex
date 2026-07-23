@@ -42,11 +42,18 @@ function ventaToMovement(venta, cajerosList, cajasList) {
   const fecha = new Date(venta.fecha);
   const timeStr = `${String(fecha.getHours()).padStart(2, "0")}:${String(fecha.getMinutes()).padStart(2, "0")}`;
 
+  const cancelada = venta.estado === "cancelada";
+  const pagoPuntos = venta.pago_puntos ?? 0;
+  const puntosGanados = venta.puntos_ganados ?? 0;
+  const puntosCanjeados = venta.puntos_canjeados ?? 0;
+  const pagoSaldoCambio = venta.pago_saldo_cambio ?? 0;
+
   const methods = [];
   if (venta.pago_efectivo > 0) methods.push("efectivo");
   if (venta.pago_transferencia > 0) methods.push("transferencia");
   if ((venta.pago_tarjeta ?? 0) > 0) methods.push("tarjeta");
   if (venta.pago_credito > 0) methods.push("credito");
+  if (pagoPuntos > 0 || pagoSaldoCambio > 0) methods.push("monedero");
   const method = methods.length === 1 ? methods[0] : methods.length > 1 ? "mixto" : "efectivo";
 
   const firstItem = venta.items[0]?.descripcion ?? "";
@@ -59,17 +66,28 @@ function ventaToMovement(venta, cajerosList, cajasList) {
     origin: "VENTA",
     desc: `${venta.folio} — ${firstItem}${extra}`,
     method,
-    amount: venta.total,
+    // El monto cancelado se muestra en $0 (no afecta el neto de caja) pero
+    // conserva el total original para el desglose del detalle expandido.
+    amount: cancelada ? 0 : venta.total,
+    montoOriginal: venta.total,
     cajaId: cajaObj ? String(cajaObj.id) : null,
     cajaName: cajaNombre ?? "—",
     cajeroId: employee?.id ?? venta.cajero,
     cajeroName: employee?.alias?.trim() || venta.cajero,
     folio: venta.folio,
     estado: venta.estado,
+    cancelada,
+    motivoCancelacion: venta.motivo_cancelacion ?? null,
+    fechaCancelacion: venta.fecha_cancelacion ?? null,
+    clienteNombre: venta.cliente_nombre ?? null,
     pago_efectivo: venta.pago_efectivo,
     pago_transferencia: venta.pago_transferencia,
     pago_tarjeta: venta.pago_tarjeta ?? 0,
     pago_credito: venta.pago_credito,
+    pago_puntos: pagoPuntos,
+    puntos_ganados: puntosGanados,
+    puntos_canjeados: puntosCanjeados,
+    pago_saldo_cambio: pagoSaldoCambio,
     cambio: venta.cambio,
     items: venta.items,
   };
@@ -111,7 +129,7 @@ function calcMethodTotal(movements, method) {
 
 // ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
 
-function OriginBadge({ origin }) {
+function OriginBadge({ origin, cancelada }) {
   const map = {
     VENTA:   { label: "VENTA",   cls: "bg-green-100 text-green-700" },
     DEVOL:   { label: "DEVOL.",  cls: "bg-red-100 text-red-700" },
@@ -120,7 +138,14 @@ function OriginBadge({ origin }) {
     FONDO:   { label: "FONDO",   cls: "bg-indigo-100 text-indigo-700" },
   };
   const { label, cls } = map[origin] || { label: origin, cls: "bg-gray-100 text-gray-700" };
-  return <span className={`rounded-full px-2 py-1 text-xs font-semibold ${cls}`}>{label}</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className={`rounded-full px-2 py-1 text-xs font-semibold ${cls}`}>{label}</span>
+      {cancelada && (
+        <span className="rounded-full px-2 py-1 text-xs font-semibold bg-red-100 text-red-700">Cancelada</span>
+      )}
+    </span>
+  );
 }
 
 function MethodIcon({ method, size = 14 }) {
@@ -135,6 +160,70 @@ function MethodIcon({ method, size = 14 }) {
   };
   const { icon, label } = map[method] || { icon: null, label: method };
   return <span className="text-base text-gray-600 flex items-center">{icon}{label}</span>;
+}
+
+/**
+ * Desglose completo de una venta dentro del detalle expandido: forma(s) de
+ * pago con su monto, puntos/saldo a favor usados o ganados, y — si la venta
+ * fue cancelada — motivo/fecha + qué se revirtió (crédito, puntos, saldo).
+ * Todos los datos ya vienen en la venta (VentaListItem); no requiere backend
+ * adicional (ver ventaToMovement más arriba).
+ */
+function DetalleVenta({ m }) {
+  const formas = [
+    m.pago_efectivo > 0 && { label: "Efectivo", monto: m.pago_efectivo },
+    m.pago_transferencia > 0 && { label: "Transferencia", monto: m.pago_transferencia },
+    m.pago_tarjeta > 0 && { label: "Tarjeta", monto: m.pago_tarjeta },
+    m.pago_credito > 0 && { label: "Crédito", monto: m.pago_credito },
+    m.pago_puntos > 0 && { label: "Puntos (monedero)", monto: m.pago_puntos },
+    m.pago_saldo_cambio > 0 && { label: "Saldo a favor", monto: m.pago_saldo_cambio },
+  ].filter(Boolean);
+
+  return (
+    <>
+      {m.clienteNombre && <p><span className="font-medium">Cliente:</span> {m.clienteNombre}</p>}
+      {m.cambio > 0 && <p><span className="font-medium">Cambio entregado:</span> {formatMXN(m.cambio)}</p>}
+
+      {formas.length > 0 && (
+        <div className="col-span-2 mt-1">
+          <p className="font-medium mb-0.5">Formas de pago</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+            {formas.map(f => (
+              <span key={f.label} className="text-gray-600">{f.label}: <span className="font-medium text-gray-800">{formatMXN(f.monto)}</span></span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(m.puntos_ganados > 0 || m.puntos_canjeados > 0) && (
+        <div className="col-span-2 mt-1">
+          <p className="font-medium mb-0.5">Monedero (puntos)</p>
+          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+            {m.puntos_ganados > 0 && <span>Ganados: <span className="font-medium text-gray-800">{m.puntos_ganados}</span></span>}
+            {m.puntos_canjeados > 0 && <span>Canjeados: <span className="font-medium text-gray-800">{m.puntos_canjeados}</span></span>}
+          </div>
+        </div>
+      )}
+
+      {m.cancelada && (
+        <div className="col-span-2 mt-1.5 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-red-700">
+          <p className="font-medium">Venta cancelada{m.fechaCancelacion ? ` · ${new Date(m.fechaCancelacion).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" })}` : ""}</p>
+          {m.motivoCancelacion && <p>Motivo: {m.motivoCancelacion}</p>}
+          <p className="text-red-600 mt-0.5">
+            Se revirtió: inventario reintegrado
+            {m.pago_credito > 0 && `, ${formatMXN(m.pago_credito)} de crédito`}
+            {m.puntos_ganados > 0 && `, ${m.puntos_ganados} puntos ganados anulados`}
+            {m.puntos_canjeados > 0 && `, ${m.puntos_canjeados} puntos canjeados devueltos`}
+            {m.pago_saldo_cambio > 0 && `, ${formatMXN(m.pago_saldo_cambio)} de saldo a favor devuelto`}
+          </p>
+        </div>
+      )}
+
+      {formas.length === 0 && !m.cancelada && (
+        <p className="col-span-2 text-gray-500 italic mt-1">Registrado automáticamente desde el módulo de Ventas</p>
+      )}
+    </>
+  );
 }
 
 // ─── CALENDAR POPOVER ─────────────────────────────────────────────────────────
@@ -602,7 +691,7 @@ export default function CashMovementsModule() {
   useEffect(() => {
     let on = true;
     listarVentas(dateStart, dateEnd)
-      .then(ventas => { if (on) setRawVentas(ventas.filter(v => !v.estado || v.estado === "Vigente")); })
+      .then(ventas => { if (on) setRawVentas(ventas); })
       .catch(() => { if (on) setRawVentas([]); });
     listarMovimientos({ desde: dateStart, hasta: dateEnd })
       .then(movs => { if (on) setManualMovements(movs); })
@@ -652,6 +741,13 @@ export default function CashMovementsModule() {
   const filteredEntradas = filteredMovements.filter(m => m.amount > 0).reduce((s, m) => s + m.amount, 0);
   const filteredSalidas  = filteredMovements.filter(m => m.amount < 0).reduce((s, m) => s + m.amount, 0);
   const filteredNeto = filteredEntradas + filteredSalidas;
+
+  // Puntos/saldo a favor usados en ventas VIGENTES del período filtrado (las
+  // canceladas se revierten, así que no cuentan hacia el consumo real del día).
+  const ventasVigentesFiltradas = filteredMovements.filter(m => m.origin === "VENTA" && !m.cancelada);
+  const totalPuntosCanjeados = ventasVigentesFiltradas.reduce((s, m) => s + (m.puntos_canjeados ?? 0), 0);
+  const totalPuntosGanados   = ventasVigentesFiltradas.reduce((s, m) => s + (m.puntos_ganados ?? 0), 0);
+  const totalSaldoUsado      = ventasVigentesFiltradas.reduce((s, m) => s + (m.pago_saldo_cambio ?? 0), 0);
 
   const filtersActive = {
     date:          !(dateStart === todayStr && dateEnd === todayStr),
@@ -925,7 +1021,7 @@ export default function CashMovementsModule() {
                     <tr key={m.id} onClick={() => setExpandedId(isExpanded ? null : m.id)}
                       className="border-b border-gray-200 hover:bg-gray-50 cursor-pointer">
                       <td className="py-3.5 px-4 text-base text-gray-500 font-mono">{m.time}</td>
-                      <td className="py-3.5 px-4"><OriginBadge origin={m.origin} /></td>
+                      <td className="py-3.5 px-4"><OriginBadge origin={m.origin} cancelada={m.cancelada} /></td>
                       <td className="py-3.5 px-4">
                         <div className="text-base text-gray-900">{m.desc}</div>
                         {(showCajaInRow || showCajeroInRow || m.supplier) && (
@@ -943,8 +1039,14 @@ export default function CashMovementsModule() {
                         )}
                       </td>
                       <td className="py-3.5 px-4"><MethodIcon method={m.method} size={16} /></td>
-                      <td className={`py-3.5 px-4 text-base font-semibold text-right ${m.amount > 0 ? "text-green-600" : "text-red-600"}`}>
-                        {m.amount > 0 ? "+" : ""}{formatMXN(m.amount)}
+                      <td className="py-3.5 px-4 text-right">
+                        {m.cancelada ? (
+                          <span className="text-base font-semibold text-gray-400 line-through">{formatMXN(m.montoOriginal)}</span>
+                        ) : (
+                          <span className={`text-base font-semibold ${m.amount > 0 ? "text-green-600" : "text-red-600"}`}>
+                            {m.amount > 0 ? "+" : ""}{formatMXN(m.amount)}
+                          </span>
+                        )}
                       </td>
                       <td className="py-3.5 px-4">
                         <ChevronDown size={16} className={`text-gray-400 transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
@@ -952,13 +1054,13 @@ export default function CashMovementsModule() {
                     </tr>
                     <tr key={`exp-${m.id}`}>
                       <td colSpan={6} className="p-0">
-                        <div style={{ maxHeight: isExpanded ? "200px" : "0", overflow: "hidden", transition: "max-height 0.2s ease" }}>
+                        <div style={{ maxHeight: isExpanded ? "500px" : "0", overflow: "hidden", transition: "max-height 0.2s ease" }}>
                           <div className="bg-gray-50 px-4 py-3 text-sm border-b border-gray-200">
                             <div className="grid grid-cols-2 gap-x-8 gap-y-1 text-gray-600">
                               <p><span className="font-medium">Caja:</span> {m.cajaName}</p>
                               <p><span className="font-medium">Cajero:</span> {m.cajeroName}</p>
                               {(m.origin === "VENTA" || m.origin === "DEVOL") ? (
-                                <p className="col-span-2 text-gray-500 italic mt-1">Registrado automáticamente desde el módulo de Ventas</p>
+                                <DetalleVenta m={m} />
                               ) : (
                                 <>
                                   {m.category && <p><span className="font-medium">Categoría:</span> {m.category}</p>}
@@ -980,16 +1082,25 @@ export default function CashMovementsModule() {
       </div>
 
       {/* TABLE FOOTER */}
-      <div className="border-t-2 border-gray-200 bg-white px-6 py-3 flex justify-between items-center flex-shrink-0">
-        <span className="text-sm text-gray-500">
-          {filteredMovements.length} movimiento{filteredMovements.length !== 1 ? "s" : ""}
-          {anyFilter && rangeMovements.length !== filteredMovements.length && ` (filtrados de ${rangeMovements.length})`}
-        </span>
-        <div className="flex gap-6 text-sm">
-          <span className="text-gray-600">Entradas: <span className="text-green-600 font-semibold">+{formatMXN(filteredEntradas)}</span></span>
-          <span className="text-gray-600">Salidas: <span className="text-red-600 font-semibold">{formatMXN(filteredSalidas)}</span></span>
-          <span className="text-gray-600">Neto: <span className={`font-semibold ${filteredNeto >= 0 ? "text-green-600" : "text-red-600"}`}>{filteredNeto >= 0 ? "+" : ""}{formatMXN(filteredNeto)}</span></span>
+      <div className="border-t-2 border-gray-200 bg-white px-6 py-3 flex flex-col gap-1.5 flex-shrink-0">
+        <div className="flex justify-between items-center">
+          <span className="text-sm text-gray-500">
+            {filteredMovements.length} movimiento{filteredMovements.length !== 1 ? "s" : ""}
+            {anyFilter && rangeMovements.length !== filteredMovements.length && ` (filtrados de ${rangeMovements.length})`}
+          </span>
+          <div className="flex gap-6 text-sm">
+            <span className="text-gray-600">Entradas: <span className="text-green-600 font-semibold">+{formatMXN(filteredEntradas)}</span></span>
+            <span className="text-gray-600">Salidas: <span className="text-red-600 font-semibold">{formatMXN(filteredSalidas)}</span></span>
+            <span className="text-gray-600">Neto: <span className={`font-semibold ${filteredNeto >= 0 ? "text-green-600" : "text-red-600"}`}>{filteredNeto >= 0 ? "+" : ""}{formatMXN(filteredNeto)}</span></span>
+          </div>
         </div>
+        {(totalPuntosGanados > 0 || totalPuntosCanjeados > 0 || totalSaldoUsado > 0) && (
+          <div className="flex justify-end gap-6 text-sm">
+            {totalPuntosGanados > 0 && <span className="text-gray-500">Puntos ganados: <span className="font-semibold text-gray-700">{totalPuntosGanados}</span></span>}
+            {totalPuntosCanjeados > 0 && <span className="text-gray-500">Puntos canjeados: <span className="font-semibold text-gray-700">{totalPuntosCanjeados}</span></span>}
+            {totalSaldoUsado > 0 && <span className="text-gray-500">Saldo a favor usado: <span className="font-semibold text-gray-700">{formatMXN(totalSaldoUsado)}</span></span>}
+          </div>
+        )}
       </div>
 
       {/* MODAL */}

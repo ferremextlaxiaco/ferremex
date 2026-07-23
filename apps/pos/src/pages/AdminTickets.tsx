@@ -12,10 +12,10 @@ import {
 import { usePOS } from "../lib/pos-store"
 
 type TipoTicket = keyof TicketConfig["tipos"]
-// El preview admite además los dos comprobantes de entrega (venta contra entrega),
-// que NO viven en config.tipos sino en config.formatos. Se editan en el módulo de
-// Formatos; aquí solo se previsualizan junto a los tickets normales.
-type PreviewTab = TipoTicket | "entrega_cliente" | "entrega_repartidor"
+// El preview admite además los comprobantes que NO viven en config.tipos sino en
+// config.formatos (venta contra entrega + cambio/devolución). Se editan en el
+// módulo de Formatos; aquí solo se previsualizan junto a los tickets normales.
+type PreviewTab = TipoTicket | "entrega_cliente" | "entrega_repartidor" | "cambio_devolucion"
 
 const TIPOS: { key: TipoTicket; label: string }[] = [
   { key: "venta", label: "Venta" },
@@ -158,10 +158,14 @@ export function AdminTickets() {
 
   const total = ITEMS_EJEMPLO.reduce((s, i) => s + i.subtotal, 0)
   const esEntrega = tipoActivo === "entrega_cliente" || tipoActivo === "entrega_repartidor"
+  const esCambio = tipoActivo === "cambio_devolucion"
   const docEntrega = esEntrega ? config.formatos?.[tipoActivo] : undefined
-  // Título mostrado en el encabezado del preview (tipos normales vs. formatos de entrega).
+  const docCambio = esCambio ? config.formatos?.cambio_devolucion : undefined
+  // Título mostrado en el encabezado del preview (tipos normales vs. formatos de entrega/cambio).
   const tituloPreview = esEntrega
     ? (docEntrega?.titulo || (tipoActivo === "entrega_cliente" ? "PAGO CONTRA ENTREGA" : "HOJA DE ENTREGA"))
+    : esCambio
+    ? (docCambio?.titulo || "DEVOLUCIÓN O CAMBIO")
     : config.tipos[tipoActivo as TipoTicket].titulo
   const enc = config.encabezado
   const fmt = config.formato_folio ?? DEFAULT_CONFIG.formato_folio!
@@ -425,6 +429,13 @@ export function AdminTickets() {
               {label}
             </button>
           ))}
+          {/* Comprobante de devolución/cambio de artículo (se edita en Formatos) */}
+          <button
+            className={`at-preview-tab ${tipoActivo === "cambio_devolucion" ? "at-tab-active" : ""}`}
+            onClick={() => setTipoActivo("cambio_devolucion")}
+          >
+            Cambio/Devolución
+          </button>
         </div>
 
         <div className="at-ticket-doctype">{tituloPreview}</div>
@@ -439,6 +450,13 @@ export function AdminTickets() {
               folio={previewFolio}
               total={total}
               items={ITEMS_EJEMPLO}
+            />
+          ) : esCambio && docCambio ? (
+            <PreviewCambio
+              doc={docCambio}
+              nombre={enc.nombre}
+              logo={enc.logo}
+              folio={previewFolio}
             />
           ) : (
           <div className="at-ticket">
@@ -512,6 +530,11 @@ export function AdminTickets() {
         {esEntrega && (
           <p className="at-col-subtitle" style={{ marginTop: 10 }}>
             Este formato se edita en <strong>Formatos → {tipoActivo === "entrega_cliente" ? "Entrega · Cliente" : "Entrega · Repartidor"}</strong>. Aquí solo se previsualiza.
+          </p>
+        )}
+        {esCambio && (
+          <p className="at-col-subtitle" style={{ marginTop: 10 }}>
+            Este formato se edita en <strong>Formatos → Cambio/Devolución</strong>. Aquí solo se previsualiza.
           </p>
         )}
       </div>
@@ -630,6 +653,89 @@ function PreviewEntrega({
           <hr className="at-tk-sep" />
         </>
       )}
+
+      {(doc.pie ?? []).filter(Boolean).map((linea, i) => (
+        <div key={i} className="at-tk-footer">{linea}</div>
+      ))}
+    </div>
+  )
+}
+
+const DEVUELTOS_EJEMPLO = [
+  { descripcion: "Conector hembra de CPVC 1/2', Foset", cantidad: 3, subtotal: 12.0 },
+  { descripcion: "Tapón de CPVC 1/2', Foset", cantidad: 1, subtotal: 1.45 },
+]
+const NUEVOS_EJEMPLO = [
+  { descripcion: "Codo 90° de CPVC 1/2', Foset", cantidad: 2, subtotal: 7.0 },
+]
+
+/**
+ * Preview del comprobante de devolución/cambio de artículo (CambioWizard +
+ * CambiosModule). Refleja el layout de ComprobanteCambio con datos de ejemplo.
+ */
+function PreviewCambio({
+  doc, nombre, logo, folio,
+}: {
+  doc: FormatoDoc
+  nombre: string
+  logo: string | null
+  folio: string
+}) {
+  const valorDevuelto = DEVUELTOS_EJEMPLO.reduce((s, i) => s + i.subtotal, 0)
+  const valorNuevo = NUEVOS_EJEMPLO.reduce((s, i) => s + i.subtotal, 0)
+  const diferencia = Math.round((valorNuevo - valorDevuelto) * 100) / 100
+
+  return (
+    <div className="at-ticket">
+      {/* Logo */}
+      <div className="at-tk-logo">
+        {logo
+          ? <img src={logo} alt="logo" style={{ maxWidth: 120, maxHeight: 60 }} />
+          : <div className="at-tk-logo-placeholder">[ LOGO ]</div>}
+      </div>
+
+      <div className="at-tk-center at-tk-bold at-tk-business">{nombre || "NEGOCIO"}</div>
+      {(doc.encabezado ?? []).slice(1).map((l, i) => <div key={i} className="at-tk-center at-tk-meta">{l}</div>)}
+
+      <hr className="at-tk-sep" />
+      <div className="at-tk-center at-tk-bold">{doc.titulo || "DEVOLUCIÓN O CAMBIO"}</div>
+      <hr className="at-tk-sep-thin" />
+
+      <div className="at-tk-meta">Folio: CAM-{folio.replace(/^POS-/, "")}</div>
+      <div className="at-tk-meta">Venta origen: {folio}</div>
+      <div className="at-tk-meta">Fecha: 02/05/2026 10:32 a.m.</div>
+      <div className="at-tk-meta">Cliente: Público en general</div>
+
+      <hr className="at-tk-sep" />
+
+      <div className="at-tk-bold" style={{ marginBottom: 4 }}>DEVUELTO</div>
+      {DEVUELTOS_EJEMPLO.map((item, i) => (
+        <div key={i} className="at-tk-row">
+          <span>{item.cantidad}× {item.descripcion}</span>
+          {doc.mostrar_precios && <span>${item.subtotal.toFixed(2)}</span>}
+        </div>
+      ))}
+
+      <div className="at-tk-bold" style={{ marginTop: 8, marginBottom: 4 }}>NUEVO</div>
+      {NUEVOS_EJEMPLO.map((item, i) => (
+        <div key={i} className="at-tk-row">
+          <span>{item.cantidad}× {item.descripcion}</span>
+          {doc.mostrar_precios && <span>${item.subtotal.toFixed(2)}</span>}
+        </div>
+      ))}
+
+      <hr className="at-tk-sep" />
+
+      <div className="at-tk-totales">
+        <div className="at-tk-row"><span>Valor devuelto</span><span>${valorDevuelto.toFixed(2)}</span></div>
+        <div className="at-tk-row"><span>Valor nuevo</span><span>${valorNuevo.toFixed(2)}</span></div>
+        <div className="at-tk-row at-tk-total">
+          <span>{diferencia > 0 ? "Diferencia cobrada" : "Saldo a favor"}</span>
+          <span>${Math.abs(diferencia).toFixed(2)}</span>
+        </div>
+      </div>
+
+      <hr className="at-tk-sep" />
 
       {(doc.pie ?? []).filter(Boolean).map((linea, i) => (
         <div key={i} className="at-tk-footer">{linea}</div>

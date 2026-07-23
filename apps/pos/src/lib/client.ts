@@ -759,6 +759,8 @@ export interface TicketConfig {
     // desde el módulo de Formatos como los demás.
     entrega_cliente: FormatoDoc
     entrega_repartidor: FormatoDoc
+    // Comprobante de devolución/cambio de artículo (CambioWizard + CambiosModule).
+    cambio_devolucion: FormatoDoc
   }
 }
 
@@ -776,7 +778,7 @@ export interface FormatoDoc {
   mostrar_ficha?: boolean
 }
 
-export type FormatoKey = "nota_venta" | "factura" | "cupon" | "entrega_cliente" | "entrega_repartidor"
+export type FormatoKey = "nota_venta" | "factura" | "cupon" | "entrega_cliente" | "entrega_repartidor" | "cambio_devolucion"
 
 const FORMATOS_DEFAULT: NonNullable<TicketConfig["formatos"]> = {
   nota_venta: {
@@ -810,6 +812,12 @@ const FORMATOS_DEFAULT: NonNullable<TicketConfig["formatos"]> = {
     mostrar_precios: false, mostrar_vigencia: false, vigencia_dias: 0,
     mostrar_casillas: true, mostrar_ficha: true,
   },
+  cambio_devolucion: {
+    activo: true, titulo: "DEVOLUCIÓN O CAMBIO",
+    encabezado: ["FERREMEX", "Tlaxiaco, Oaxaca"],
+    pie: ["Conserve este comprobante", "Gracias por su preferencia"],
+    mostrar_precios: true, mostrar_vigencia: false, vigencia_dias: 0,
+  },
 }
 
 export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
@@ -831,6 +839,7 @@ export function migrarTicketConfig(raw: TicketConfig): TicketConfig {
       cupon: { ...FORMATOS_DEFAULT.cupon, ...raw.formatos?.cupon },
       entrega_cliente: { ...FORMATOS_DEFAULT.entrega_cliente, ...raw.formatos?.entrega_cliente },
       entrega_repartidor: { ...FORMATOS_DEFAULT.entrega_repartidor, ...raw.formatos?.entrega_repartidor },
+      cambio_devolucion: { ...FORMATOS_DEFAULT.cambio_devolucion, ...raw.formatos?.cambio_devolucion },
     },
   }
 }
@@ -901,6 +910,11 @@ export interface VentaListItem {
   fecha: string
   cajero: string
   turno_id: string
+  caja_id?: string | null
+  caja_name?: string | null
+  vendedor?: string | null
+  cliente_id?: string | null
+  cliente_nombre?: string | null
   items: { descripcion: string; cantidad: number; precio_unitario: number; subtotal: number }[]
   total: number
   pago_efectivo: number
@@ -908,11 +922,13 @@ export interface VentaListItem {
   pago_tarjeta?: number
   pago_credito: number
   pago_puntos?: number
+  puntos_ganados?: number
   puntos_canjeados?: number
   pago_saldo_cambio?: number
   cambio: number
   estado?: string
   motivo_cancelacion?: string
+  fecha_cancelacion?: string
 }
 
 export async function listarVentas(desde?: string, hasta?: string): Promise<VentaListItem[]> {
@@ -2762,6 +2778,9 @@ export interface Cambio {
   diferencia: number
   diferencia_cobrada: number
   saldo_generado: number
+  // El desglose de CÓMO se cubrió diferencia_cobrada (efectivo/transferencia/
+  // tarjeta/puntos/saldo a favor) vive en la venta enlazada, no en el modelo de
+  // Cambio — consultar GET /caja/ventas/:folio con venta_diferencia_folio.
   venta_diferencia_folio: string | null
   estado: "completado" | "cancelado"
   motivo_cancelacion: string | null
@@ -2786,6 +2805,10 @@ export interface ProcesarCambioPayload {
   pago_efectivo?: number
   pago_transferencia?: number
   pago_tarjeta?: number
+  // Puntos del monedero y/o saldo a favor (de un cambio anterior) del cliente,
+  // aplicados a cubrir la diferencia. Requieren customer_id (es su saldo).
+  pago_puntos?: number
+  pago_saldo_cambio?: number
 }
 
 /** Procesa un cambio de artículo. Reintegra/descuenta inventario y liquida la diferencia. */

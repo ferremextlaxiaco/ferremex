@@ -7,6 +7,8 @@ import { FERREMEX_CAMBIOS } from "../../../modules/ferremex-cambios"
 import type FerremexCambiosService from "../../../modules/ferremex-cambios/service"
 import { FERREMEX_SALDO_CAMBIO } from "../../../modules/ferremex-saldo-cambio"
 import type FerremexSaldoCambioService from "../../../modules/ferremex-saldo-cambio/service"
+import { FERREMEX_MONEDERO } from "../../../modules/ferremex-monedero"
+import type FerremexMonederoService from "../../../modules/ferremex-monedero/service"
 
 const VENTAS_FILE = path.join(__dirname, "../../../../data/ventas-pos.json")
 const CONFIG_FILE = path.join(__dirname, "../../../../data/ticket-config.json")
@@ -65,10 +67,13 @@ interface CambioBody {
   lineas_devueltas: LineaDevueltaBody[]
   lineas_nuevas: LineaNuevaBody[]
   // Pago de la diferencia (solo si diferencia > 0). Mismo desglose que /caja/ventas,
-  // sin crédito ni puntos: un cambio se cobra con medios directos.
+  // sin crédito: un cambio no se fía. Puntos y saldo a favor sí se permiten (son
+  // saldo YA acumulado del cliente, mismo motor de validación que /caja/ventas).
   pago_efectivo?: number
   pago_transferencia?: number
   pago_tarjeta?: number
+  pago_puntos?: number
+  pago_saldo_cambio?: number
 }
 
 /** GET /caja/cambios — lista, opcional ?desde=YYYY-MM-DD&hasta=YYYY-MM-DD */
@@ -118,8 +123,15 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   const pago_efectivo = Number(body.pago_efectivo ?? 0)
   const pago_transferencia = Number(body.pago_transferencia ?? 0)
   const pago_tarjeta = Number(body.pago_tarjeta ?? 0)
-  if (![pago_efectivo, pago_transferencia, pago_tarjeta].every((n) => Number.isFinite(n) && n >= 0)) {
+  const pago_puntos = Number(body.pago_puntos ?? 0)
+  const pago_saldo_cambio = Number(body.pago_saldo_cambio ?? 0)
+  if (![pago_efectivo, pago_transferencia, pago_tarjeta, pago_puntos, pago_saldo_cambio].every((n) => Number.isFinite(n) && n >= 0)) {
     res.status(400).json({ error: "Montos de pago inválidos" })
+    return
+  }
+  // El pago con puntos/saldo a favor requiere cliente (es su saldo el que se descuenta).
+  if ((pago_puntos > 0 || pago_saldo_cambio > 0) && !body.customer_id) {
+    res.status(400).json({ error: "El pago con puntos o saldo a favor requiere un cliente identificado" })
     return
   }
 
@@ -181,7 +193,7 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   // Si se cobra diferencia, el pago debe cubrirla exactamente (sin cambio: un
   // cambio de artículo no maneja vuelto, solo cobra lo que falta).
   if (diferencia > 0.005) {
-    const total_pagado = Math.round((pago_efectivo + pago_transferencia + pago_tarjeta) * 100) / 100
+    const total_pagado = Math.round((pago_efectivo + pago_transferencia + pago_tarjeta + pago_puntos + pago_saldo_cambio) * 100) / 100
     if (total_pagado < diferencia - 0.01) {
       res.status(400).json({ error: `El pago no cubre la diferencia de $${diferencia.toFixed(2)}` })
       return
@@ -189,8 +201,56 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
   }
 
   const cambiosService: FerremexCambiosService = req.scope.resolve(FERREMEX_CAMBIOS)
+  // Se resuelve tanto para GENERAR saldo (diferencia < 0) como para CONSUMIR
+  // saldo preexistente al cobrar la diferencia (pago_saldo_cambio > 0) — casos
+  // mutuamente excluyentes por signo de `diferencia`, sin riesgo de pisado.
   const saldoCambioService: FerremexSaldoCambioService | null =
-    diferencia < -0.005 ? req.scope.resolve(FERREMEX_SALDO_CAMBIO) : null
+    diferencia < -0.005 || (pago_saldo_cambio > 0 && body.customer_id)
+      ? req.scope.resolve(FERREMEX_SALDO_CAMBIO)
+      : null
+  const monederoService: FerremexMonederoService | null =
+    pago_puntos > 0 && body.customer_id ? req.scope.resolve(FERREMEX_MONEDERO) : null
+
+  let puntos_canjeados = 0
+  if (monederoService && body.customer_id && pago_puntos > 0) {
+    try {
+      const cfg = await monederoService.getOrCreateConfig()
+      const valorPunto = Number(cfg.valor_punto) || 0
+      if (valorPunto <= 0) {
+        res.status(400).json({ error: "El valor del punto no está configurado" }); return
+      }
+      // Tope: el pago con puntos no puede exceder max_canje_pct del NUEVO total
+      // (valor_nuevo), igual criterio que /caja/ventas usa sobre el total del ticket.
+      const topePesos = valor_nuevo * ((Number(cfg.max_canje_pct) || 0) / 100)
+      if (pago_puntos > topePesos + 0.01) {
+        res.status(400).json({
+          error: `Con puntos solo puedes cubrir hasta ${cfg.max_canje_pct}% del artículo nuevo ($${topePesos.toFixed(2)})`,
+        }); return
+      }
+      puntos_canjeados = Math.ceil(pago_puntos / valorPunto)
+      const saldo = await monederoService.saldoCliente(body.customer_id)
+      if (puntos_canjeados > saldo) {
+        res.status(400).json({ error: `Puntos insuficientes: requiere ${puntos_canjeados}, disponible ${saldo}` }); return
+      }
+    } catch (e: any) {
+      console.error("[caja/cambios] Validación de monedero falló:", e?.message ?? e)
+      res.status(500).json({ error: "No se pudo validar el monedero" }); return
+    }
+  }
+
+  if (saldoCambioService && body.customer_id && pago_saldo_cambio > 0) {
+    try {
+      const saldoDisponible = await saldoCambioService.saldoCliente(body.customer_id)
+      if (pago_saldo_cambio > saldoDisponible + 0.01) {
+        res.status(400).json({
+          error: `Saldo a favor insuficiente: requiere $${pago_saldo_cambio.toFixed(2)}, disponible $${saldoDisponible.toFixed(2)}`,
+        }); return
+      }
+    } catch (e: any) {
+      console.error("[caja/cambios] Validación de saldo a favor falló:", e?.message ?? e)
+      res.status(500).json({ error: "No se pudo validar el saldo a favor" }); return
+    }
+  }
 
   try {
     const resultado = await withFileLock(VENTAS_FILE, async () => {
@@ -219,6 +279,26 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         if (l.cantidad > nivel.stocked_quantity) {
           return {
             error: `Stock insuficiente para "${l.descripcion}": solicitado ${l.cantidad}, disponible ${nivel.stocked_quantity}`,
+          } as const
+        }
+      }
+
+      // RE-VALIDACIÓN de puntos/saldo a favor DENTRO del lock, antes de tocar
+      // inventario: el saldo pudo cambiar entre la validación pre-lock y aquí
+      // (otra operación concurrente del mismo cliente), igual criterio que /caja/ventas.
+      if (monederoService && body.customer_id && puntos_canjeados > 0) {
+        const saldoActual = await monederoService.saldoCliente(body.customer_id)
+        if (puntos_canjeados > saldoActual) {
+          return {
+            error: `Puntos insuficientes: requiere ${puntos_canjeados}, disponible ${saldoActual}`,
+          } as const
+        }
+      }
+      if (saldoCambioService && body.customer_id && pago_saldo_cambio > 0) {
+        const saldoActual = await saldoCambioService.saldoCliente(body.customer_id)
+        if (pago_saldo_cambio > saldoActual + 0.01) {
+          return {
+            error: `Saldo a favor insuficiente: requiere $${pago_saldo_cambio.toFixed(2)}, disponible $${saldoActual.toFixed(2)}`,
           } as const
         }
       }
@@ -280,12 +360,39 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             pago_transferencia,
             pago_tarjeta,
             pago_credito: 0,
+            pago_puntos,
+            puntos_canjeados,
+            pago_saldo_cambio,
             cliente_id: body.customer_id ?? null,
             cliente_nombre: body.cliente_nombre ?? null,
             cambio_origen_folio: folio_cambio,
-            cambio: Math.max(0, pago_efectivo - Math.max(0, diferencia_cobrada - pago_transferencia - pago_tarjeta)),
+            cambio: Math.max(0, pago_efectivo - Math.max(0, diferencia_cobrada - pago_transferencia - pago_tarjeta - pago_puntos - pago_saldo_cambio)),
           }
           ventas.push(ventaDiferencia)
+
+          // Monedero: canje de puntos, transaccional con la venta de diferencia
+          // (el saldo ya se re-validó arriba antes de tocar inventario).
+          if (monederoService && body.customer_id && puntos_canjeados > 0) {
+            await monederoService.agregarMovimiento(body.customer_id, {
+              tipo: "canjeado",
+              puntos: -puntos_canjeados,
+              folio: venta_diferencia_folio,
+              descripcion: `Canje en cambio ${folio_cambio} (venta ${venta_diferencia_folio})`,
+              fecha,
+            })
+          }
+          // Saldo a favor preexistente consumido para cubrir la diferencia
+          // (distinto del saldo_generado más abajo, que es cuando el cambio
+          // GENERA saldo — mutuamente excluyentes por signo de `diferencia`).
+          if (saldoCambioService && body.customer_id && pago_saldo_cambio > 0) {
+            await saldoCambioService.agregarMovimiento(body.customer_id, {
+              tipo: "consumido",
+              monto: -pago_saldo_cambio,
+              venta_consumo_folio: venta_diferencia_folio,
+              descripcion: `Consumo en cambio ${folio_cambio} (venta ${venta_diferencia_folio})`,
+              fecha,
+            })
+          }
         }
 
         // Saldo a favor: se acredita transaccional (dentro del lock).

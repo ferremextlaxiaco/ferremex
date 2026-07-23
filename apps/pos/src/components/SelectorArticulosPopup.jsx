@@ -48,6 +48,16 @@ export default function SelectorArticulosPopup({
   seleccionados,
   onToggle,
   onConfirmarSeleccion,
+  // Clase extra (ej. para elevar el z-index o quitar el cristal cuando se abre
+  // dentro de otro modal ya apilado).
+  className = "",
+  // Contador de cantidad por card (opt-in, se combina con multiSelect): cada
+  // card marcada muestra un input de cantidad propio. `cantidades` (Map o
+  // Record SKU→number) y `onCantidadChange(sku, n)` los posee el padre, igual
+  // que `seleccionados`/`onToggle` — así persiste al cerrar/reabrir el popup.
+  // Sin estas props el checkbox se comporta igual que siempre (cantidad 1).
+  cantidades,
+  onCantidadChange,
 }) {
   const [busqueda, setBusqueda] = useState("")
   const [resultados, setResultados] = useState([])
@@ -135,7 +145,7 @@ export default function SelectorArticulosPopup({
   if (!open) return null
 
   return (
-    <div className={`pk-sel-popup pk-sel-${anchorMode}`} onClick={(e) => e.stopPropagation()}>
+    <div className={`pk-sel-popup pk-sel-${anchorMode} ${className}`} onClick={(e) => e.stopPropagation()}>
       <div className="pk-sel-header">
         <span className="pk-sel-title"><Search size={16} /> {titulo}</span>
         <button className="pk-icon-btn" onClick={onClose} aria-label="Cerrar"><X size={18} /></button>
@@ -221,12 +231,57 @@ export default function SelectorArticulosPopup({
             const sku = a.clave || a.claveAlterna
             const yaEnLista = yaAgregados?.has(sku)
             const marcado = multiSelect && seleccionados?.has(sku)
+            const conCantidad = multiSelect && !!onCantidadChange
+            const cantidad = (conCantidad ? cantidades?.[sku] : undefined) ?? 1
+
+            // multiSelect + onCantidadChange: la card ya NO es un solo botón
+            // (un <input> dentro de <button> es HTML inválido) — es un
+            // contenedor con checkbox propio + input de cantidad. El toggle
+            // sigue siendo onToggle(art) (mismo contrato de siempre); la
+            // cantidad la posee el padre vía onCantidadChange(sku, n).
+            if (conCantidad) {
+              return (
+                <div
+                  key={a.id}
+                  className={`pk-sel-card pk-sel-card-cant${yaEnLista ? " agregado" : ""}${marcado ? " marcado" : ""}`}
+                  onClick={() => !yaEnLista && onToggle?.(a)}
+                  title={yaEnLista ? "Ya está en la lista" : marcado ? "Quitar de la selección" : "Marcar para agregar"}
+                >
+                  <span className={`pk-sel-check${marcado || yaEnLista ? " on" : ""}`} aria-hidden="true">
+                    {(marcado || yaEnLista) && <Check size={13} strokeWidth={3} />}
+                  </span>
+                  <div className="pk-sel-card-img">
+                    {a.thumbnail ? <img src={a.thumbnail} alt="" loading="lazy" /> : <ImageOff size={20} />}
+                  </div>
+                  <div className="pk-sel-card-info">
+                    <span className="pk-sel-card-name">{a.descripcion}</span>
+                    <span className="pk-sel-card-meta">
+                      <span className="pk-sel-card-sku">{sku}</span> · {formatMXN(a.precio1 ?? 0)} ·{" "}
+                      <span className={(a.existencia ?? 0) > 0 ? "pk-stock-ok" : "pk-stock-zero"}>{a.existencia ?? 0} stk</span>
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min={1}
+                    value={cantidad}
+                    disabled={yaEnLista}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const n = Math.max(1, parseInt(e.target.value, 10) || 1)
+                      onCantidadChange?.(sku, n)
+                    }}
+                    className="pk-sel-card-cant-input"
+                  />
+                </div>
+              )
+            }
+
             // En multiSelect: clic alterna la marca (salvo que ya esté en la lista).
             // En clic-inmediato: clic agrega y cierra (comportamiento de Paquetes).
             const onClickCard = () => {
               if (yaEnLista) return
               if (multiSelect) onToggle?.(a)
-              else onAgregar?.(a)
+              else onAgregar?.(a, 1)
             }
             return (
               <button

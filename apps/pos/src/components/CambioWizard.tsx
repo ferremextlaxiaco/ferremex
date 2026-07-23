@@ -1,12 +1,17 @@
-import { useEffect, useMemo, useState } from "react"
-import { X, Search, ArrowRightLeft, Check, AlertCircle, Loader2, UserCircle } from "lucide-react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { X, Search, ArrowRightLeft, Check, AlertCircle, Loader2, UserCircle, ImageOff, Wallet, RotateCcw, Coins } from "lucide-react"
 import {
-  obtenerVenta, buscarProductos, procesarCambioAPI, obtenerSaldoCambioAPI,
-  type VentaResponse, type ProductoPOS, type Cambio,
+  obtenerVenta, procesarCambioAPI, obtenerSaldoCambioAPI, listarCatalogos,
+  obtenerDetalleMonederoAPI,
+  type VentaResponse, type ArticuloPOS, type Cambio, type CatalogosData,
+  type DetalleMonedero, type DetalleSaldoCambio,
 } from "../lib/client"
 import { usePOS } from "../lib/pos-store"
+import { topeCanjePesos } from "../lib/monedero"
 import { formatMXN as fmt } from "../lib/format"
 import SelectorClienteModal from "./SelectorClienteModal"
+import { ComprobanteCambio } from "./ComprobanteCambio"
+import SelectorArticulosPopup from "./SelectorArticulosPopup"
 
 interface ClienteLigero { id: string; nombre: string }
 
@@ -18,7 +23,7 @@ interface CambioWizardProps {
 }
 
 type LineaDevuelta = { sku: string; descripcion: string; cantidad: number; max: number; precio_unitario: number }
-type LineaNueva = { sku: string; descripcion: string; cantidad: number; precio_unitario: number }
+type LineaNueva = { sku: string; descripcion: string; cantidad: number; precio_unitario: number; thumbnail: string | null }
 
 const PASOS = ["Venta original", "Artículos", "Resumen"] as const
 
@@ -36,30 +41,82 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
   // El cliente no se lleva nada ahora: el 100% del valor devuelto se acredita
   // como saldo a favor (requiere cliente, igual que cualquier saldo generado).
   const [soloDevolucion, setSoloDevolucion] = useState(false)
-  const [nuevoQuery, setNuevoQuery] = useState("")
-  const [resultadosNuevo, setResultadosNuevo] = useState<ProductoPOS[]>([])
-  const [buscandoNuevo, setBuscandoNuevo] = useState(false)
   const [nuevos, setNuevos] = useState<LineaNueva[]>([])
+
+  // Selector cristal de artículos nuevos (mismo popup que Ajuste de Inventario,
+  // en modo multiSelect + cantidad): selSkus = SKUs marcados, selArts = artículo
+  // por SKU (para agregar sin re-buscar), selCantidades = cantidad por SKU.
+  const [buscadorAbierto, setBuscadorAbierto] = useState(false)
+  const [taxonomia, setTaxonomia] = useState<CatalogosData>({ depts: [], cats: [], marcas: [] })
+  const [taxLoading, setTaxLoading] = useState(true)
+  const [selSkus, setSelSkus] = useState<Set<string>>(() => new Set())
+  const [selCantidades, setSelCantidades] = useState<Record<string, number>>({})
+  const selArts = useRef<Map<string, ArticuloPOS>>(new Map())
 
   const [cliente, setCliente] = useState<ClienteLigero | null>(null)
   const [selectorClienteAbierto, setSelectorClienteAbierto] = useState(false)
   const [pagoEfectivo, setPagoEfectivo] = useState("")
   const [pagoTransferencia, setPagoTransferencia] = useState("")
   const [pagoTarjeta, setPagoTarjeta] = useState("")
+  // Monedero (puntos) y saldo a favor (de un cambio anterior) del cliente, para
+  // cubrir la diferencia — mismo mecanismo que ModalCobro, sin biometría/slider.
+  const [monedero, setMonedero] = useState<DetalleMonedero | null>(null)
+  const [saldoCambio, setSaldoCambio] = useState<DetalleSaldoCambio | null>(null)
+  const [puntosTexto, setPuntosTexto] = useState("")
+  const [saldoTexto, setSaldoTexto] = useState("")
   const [procesando, setProcesando] = useState(false)
   const [errorProceso, setErrorProceso] = useState<string | null>(null)
+  const [cambioCompletado, setCambioCompletado] = useState<Cambio | null>(null)
 
+  // Escape cierra lo que esté abierto: primero el popup del selector cristal
+  // (igual que su clic-fuera), luego el wizard completo.
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === "Escape") onClose() }
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "Escape") return
+      if (buscadorAbierto) setBuscadorAbierto(false)
+      else onClose()
+    }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [onClose])
+  }, [onClose, buscadorAbierto])
 
   // Precarga automática si viene folio (desde SalesHistory).
   useEffect(() => {
     if (folioInicial) buscarVenta(folioInicial)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [folioInicial])
+
+  // Taxonomía para el selector cristal de artículos nuevos (única fuente: listarCatalogos).
+  useEffect(() => {
+    let on = true
+    listarCatalogos()
+      .then((d) => { if (on) setTaxonomia(d) })
+      .catch(() => { /* sin taxonomía los filtros del popup quedan vacíos */ })
+      .finally(() => { if (on) setTaxLoading(false) })
+    return () => { on = false }
+  }, [])
+
+  // Monedero (puntos) del cliente elegido para el cambio — igual patrón que
+  // ModalCobro: opcional, requiere que el cliente esté inscrito.
+  useEffect(() => {
+    if (!cliente) { setMonedero(null); setPuntosTexto(""); return }
+    let on = true
+    obtenerDetalleMonederoAPI(cliente.id)
+      .then((d) => { if (on) setMonedero(d) })
+      .catch(() => { if (on) setMonedero(null) })
+    return () => { on = false }
+  }, [cliente])
+
+  // Saldo a favor por cambio del cliente elegido — independiente del monedero,
+  // cualquier cliente identificado puede tener saldo de un cambio anterior.
+  useEffect(() => {
+    if (!cliente) { setSaldoCambio(null); setSaldoTexto(""); return }
+    let on = true
+    obtenerSaldoCambioAPI(cliente.id)
+      .then((d) => { if (on) setSaldoCambio(d) })
+      .catch(() => { if (on) setSaldoCambio(null) })
+    return () => { on = false }
+  }, [cliente])
 
   async function buscarVenta(folio: string) {
     const f = folio.trim()
@@ -105,28 +162,54 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
     )
   }
 
-  async function buscarNuevo() {
-    const q = nuevoQuery.trim()
-    if (!q) { setResultadosNuevo([]); return }
-    setBuscandoNuevo(true)
-    try {
-      const r = await buscarProductos({ q })
-      setResultadosNuevo(r)
-    } catch {
-      setResultadosNuevo([])
-    } finally {
-      setBuscandoNuevo(false)
-    }
+  // Precio de venta (nivel 1) CON IVA si el artículo lo aplica — precio1 se
+  // guarda SIN IVA (mismo criterio que PaquetesPanel.precioVentaIva).
+  function precioVentaIva(art: ArticuloPOS): number {
+    const base = Number(art.precio1) || 0
+    return art.aplicarIva ? base * 1.16 : base
   }
 
-  function agregarNuevo(p: ProductoPOS) {
+  function agregarNuevo(art: ArticuloPOS, cantidad = 1) {
+    const sku = art.clave || art.claveAlterna
+    if (!sku) return
     setNuevos((prev) => {
-      const existe = prev.find((l) => l.sku === p.sku)
+      const existe = prev.find((l) => l.sku === sku)
       if (existe) {
-        return prev.map((l) => (l.sku === p.sku ? { ...l, cantidad: l.cantidad + 1 } : l))
+        return prev.map((l) => (l.sku === sku ? { ...l, cantidad: l.cantidad + cantidad } : l))
       }
-      return [...prev, { sku: p.sku, descripcion: p.descripcion, cantidad: 1, precio_unitario: p.precio }]
+      return [...prev, { sku, descripcion: art.descripcion, cantidad, precio_unitario: precioVentaIva(art), thumbnail: art.thumbnail ?? null }]
     })
+  }
+
+  // Selector cristal en modo multiSelect + cantidad: marcar/desmarcar (mismo
+  // patrón que InventarioModule) y agregar todo el lote de una vez al confirmar.
+  function toggleSeleccionNuevo(art: ArticuloPOS) {
+    const sku = art.clave || art.claveAlterna
+    if (!sku) return
+    const yaEstaba = selSkus.has(sku)
+    if (yaEstaba) selArts.current.delete(sku)
+    else selArts.current.set(sku, art)
+    setSelSkus((prev) => {
+      const next = new Set(prev)
+      if (next.has(sku)) next.delete(sku)
+      else next.add(sku)
+      return next
+    })
+  }
+
+  function cambiarCantidadSel(sku: string, cantidad: number) {
+    setSelCantidades((prev) => ({ ...prev, [sku]: cantidad }))
+  }
+
+  function agregarSeleccionados() {
+    for (const sku of selSkus) {
+      const art = selArts.current.get(sku)
+      if (art) agregarNuevo(art, selCantidades[sku] ?? 1)
+    }
+    setSelSkus(new Set())
+    setSelCantidades({})
+    selArts.current.clear()
+    setBuscadorAbierto(false)
   }
 
   function cambiarCantidadNueva(sku: string, cantidad: number) {
@@ -153,12 +236,29 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
   const puedeAvanzarPaso1 =
     lineasDevueltasActivas.length > 0 && (soloDevolucion || nuevos.length > 0)
 
+  // ── Derivados del monedero (puntos) — mismo criterio que ModalCobro ────────
+  const cfgMon = monedero?.config ?? null
+  const saldoPuntos = monedero?.saldo ?? 0
+  const valorCanje = cfgMon?.valor_punto || 1
+  const saldoPesosMon = Math.round(saldoPuntos * valorCanje * 100) / 100
+  const topePesosMon = cfgMon ? topeCanjePesos(diferencia > 0 ? diferencia : 0, cfgMon) : 0
+  const maxCanjePesos = Math.min(saldoPesosMon, topePesosMon)
+  const puedeUsarPuntos = !!cfgMon && saldoPuntos >= cfgMon.min_puntos_canje && maxCanjePesos >= 0.01
+  const pagoPuntos = Math.min(parseFloat(puntosTexto) || 0, maxCanjePesos)
+  const puntosUsados = (cfgMon && pagoPuntos > 0) ? Math.round((pagoPuntos / cfgMon.valor_punto) * 100) / 100 : 0
+
+  // ── Derivados del saldo a favor por cambio (1:1 con pesos) ──────────────────
+  const saldoCambioDisponible = saldoCambio?.saldo ?? 0
+  const maxSaldoCambio = Math.max(0, Math.min(saldoCambioDisponible, diferencia > 0 ? diferencia : 0))
+  const puedeUsarSaldoCambio = saldoCambioDisponible >= 0.01
+  const pagoSaldoCambio = Math.min(parseFloat(saldoTexto) || 0, maxSaldoCambio)
+
   const totalPagado = useMemo(() => {
     const e = parseFloat(pagoEfectivo) || 0
     const t = parseFloat(pagoTransferencia) || 0
     const c = parseFloat(pagoTarjeta) || 0
-    return Math.round((e + t + c) * 100) / 100
-  }, [pagoEfectivo, pagoTransferencia, pagoTarjeta])
+    return Math.round((e + t + c + pagoPuntos + pagoSaldoCambio) * 100) / 100
+  }, [pagoEfectivo, pagoTransferencia, pagoTarjeta, pagoPuntos, pagoSaldoCambio])
 
   const puedeConfirmar =
     !procesando &&
@@ -190,14 +290,36 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
           pago_efectivo: parseFloat(pagoEfectivo) || 0,
           pago_transferencia: parseFloat(pagoTransferencia) || 0,
           pago_tarjeta: parseFloat(pagoTarjeta) || 0,
+          ...(pagoPuntos > 0 ? { pago_puntos: pagoPuntos } : {}),
+          ...(pagoSaldoCambio > 0 ? { pago_saldo_cambio: pagoSaldoCambio } : {}),
         } : {}),
       })
-      onCompletado(cambio)
+      setCambioCompletado(cambio)
     } catch (e) {
       setErrorProceso(e instanceof Error ? e.message : "No se pudo procesar el cambio")
     } finally {
       setProcesando(false)
     }
+  }
+
+  // Encabezado del negocio + título del comprobante (config de Formatos → Cambio/Devolución).
+  const negocioComprobante = {
+    nombre: state.ticketConfig?.encabezado?.nombre ?? "FERREMEX",
+    direccion: state.ticketConfig?.encabezado?.direccion ?? "",
+    telefono: state.ticketConfig?.encabezado?.telefono ?? "",
+    rfc: state.ticketConfig?.encabezado?.rfc ?? "",
+  }
+  const tituloComprobante = state.ticketConfig?.formatos?.cambio_devolucion?.titulo
+
+  if (cambioCompletado) {
+    return (
+      <ComprobanteCambio
+        cambio={cambioCompletado}
+        negocio={negocioComprobante}
+        titulo={tituloComprobante}
+        onCerrar={() => onCompletado(cambioCompletado)}
+      />
+    )
   }
 
   return (
@@ -210,7 +332,7 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
             <ArrowRightLeft size={18} className="text-orange-600" />
-            Cambio de artículo
+            Devolución o cambio
           </h2>
           <button onClick={onClose} className="w-8 h-8 p-0 inline-flex items-center justify-center rounded-lg text-gray-400 hover:bg-gray-100 hover:text-gray-600">
             <X size={18} />
@@ -264,19 +386,19 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
 
           {/* ── Paso 1: elegir devueltos + nuevos ── */}
           {paso === 1 && ventaOrigen && (
-            <div className="space-y-5">
+            <div className="space-y-6">
               <div className="text-xs text-gray-500">
                 Venta <span className="font-mono font-semibold text-gray-700">{ventaOrigen.folio}</span> · {ventaOrigen.cliente_nombre || "Público en general"}
               </div>
 
               <div>
-                <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">Artículos que regresa</div>
-                <div className="space-y-1.5">
+                <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-3">Artículos que regresa</div>
+                <div className="space-y-3">
                   {devueltos.map((l) => (
-                    <div key={l.sku} className="flex items-center gap-2 border border-gray-200 rounded-lg px-3 py-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm text-gray-900 truncate">{l.descripcion}</div>
-                        <div className="text-xs text-gray-400">{fmt(l.precio_unitario)} c/u · vendidos: {l.max}</div>
+                    <div key={l.sku} className="flex items-center gap-3 border border-gray-200 rounded-lg px-4 py-4">
+                      <div className="flex-1 min-w-0 space-y-2">
+                        <div className="text-sm leading-none text-gray-900 truncate">{l.descripcion}</div>
+                        <div className="text-xs leading-none text-gray-400">{fmt(l.precio_unitario)} c/u · vendidos: {l.max}</div>
                       </div>
                       <input
                         type="number"
@@ -291,13 +413,16 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
                 </div>
               </div>
 
-              <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 cursor-pointer">
+              <label className="flex items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3.5 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={soloDevolucion}
                   onChange={(e) => {
                     setSoloDevolucion(e.target.checked)
-                    if (e.target.checked) setNuevos([])
+                    if (e.target.checked) {
+                      setNuevos([])
+                      setSelSkus(new Set()); setSelCantidades({}); selArts.current.clear()
+                    }
                   }}
                   className="mt-0.5"
                 />
@@ -311,40 +436,53 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
               {!soloDevolucion && (
               <div>
                 <div className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">Artículo(s) nuevo(s) que se lleva</div>
-                <div className="flex gap-2 mb-2">
+                {/* Selector cristal (mismo popup que Ajuste de Inventario): buscador
+                    por texto + filtros de taxonomía Dept→Cat→Marca en cascada. */}
+                <div className="relative mb-2">
                   <input
                     type="text"
-                    value={nuevoQuery}
-                    onChange={(e) => setNuevoQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && buscarNuevo()}
-                    placeholder="Buscar por nombre o SKU…"
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400"
+                    autoComplete="off"
+                    readOnly
+                    placeholder="Buscar y agregar artículos…"
+                    onFocus={() => setBuscadorAbierto(true)}
+                    onClick={() => setBuscadorAbierto(true)}
+                    className={`w-full rounded-lg border px-3 py-2 text-sm cursor-pointer focus:outline-none ${
+                      buscadorAbierto ? "border-orange-500 ring-1 ring-orange-400" : "border-gray-300 hover:border-orange-400"
+                    }`}
                   />
-                  <button onClick={buscarNuevo} disabled={buscandoNuevo} className="px-3 py-2 text-sm bg-gray-100 rounded-lg hover:bg-gray-200">
-                    {buscandoNuevo ? <Loader2 size={14} className="animate-spin" /> : <Search size={14} />}
-                  </button>
+                  {buscadorAbierto && (
+                    <div className="pk-sel-overlay pk-sel-en-modal" onClick={() => setBuscadorAbierto(false)} />
+                  )}
+                  <SelectorArticulosPopup
+                    open={buscadorAbierto}
+                    anchorMode="inline"
+                    className="pk-sel-en-modal pk-sel-solido"
+                    multiSelect
+                    seleccionados={selSkus}
+                    onToggle={toggleSeleccionNuevo}
+                    cantidades={selCantidades}
+                    onCantidadChange={cambiarCantidadSel}
+                    onConfirmarSeleccion={agregarSeleccionados}
+                    onClose={() => setBuscadorAbierto(false)}
+                    yaAgregados={new Set()}
+                    taxonomy={taxonomia}
+                    taxLoading={taxLoading}
+                    titulo="Agregar artículo nuevo"
+                    agregarTitulo="Agregar al cambio"
+                  />
                 </div>
-                {resultadosNuevo.length > 0 && (
-                  <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100 mb-2">
-                    {resultadosNuevo.map((p) => (
-                      <button
-                        key={p.sku}
-                        onClick={() => agregarNuevo(p)}
-                        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-gray-50"
-                      >
-                        <span className="text-sm text-gray-900 truncate">{p.descripcion}</span>
-                        <span className="text-sm font-semibold text-gray-600 shrink-0">{fmt(p.precio)}</span>
-                      </button>
-                    ))}
-                  </div>
-                )}
                 {nuevos.length > 0 && (
                   <div className="space-y-1.5">
                     {nuevos.map((l) => (
-                      <div key={l.sku} className="flex items-center gap-2 border border-orange-200 bg-orange-50/50 rounded-lg px-3 py-2">
+                      <div key={l.sku} className="flex items-center gap-3 border border-orange-200 bg-orange-50/50 rounded-lg px-3 py-2">
+                        <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-gray-100 flex items-center justify-center text-gray-300">
+                          {l.thumbnail ? <img src={l.thumbnail} alt="" className="w-full h-full object-cover" /> : <ImageOff size={18} />}
+                        </div>
                         <div className="flex-1 min-w-0">
                           <div className="text-sm text-gray-900 truncate">{l.descripcion}</div>
-                          <div className="text-xs text-gray-400">{fmt(l.precio_unitario)} c/u</div>
+                          <div className="text-xs text-gray-400">
+                            <span className="text-orange-600 font-semibold">{l.sku}</span> · {fmt(l.precio_unitario)} c/u
+                          </div>
                         </div>
                         <input
                           type="number"
@@ -419,6 +557,85 @@ export function CambioWizard({ onClose, onCompletado, folioInicial }: CambioWiza
                   </div>
                   {totalPagado < diferencia - 0.01 && (
                     <div className="text-xs text-red-600 mt-1.5">Falta cubrir {fmt(diferencia - totalPagado)}</div>
+                  )}
+
+                  {/* Monedero del cliente: puntos aplicables a la diferencia. */}
+                  {puedeUsarPuntos && cfgMon && (
+                    <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 overflow-hidden">
+                      <div className="flex items-center gap-2.5 px-3 py-2.5">
+                        <span className="w-8 h-8 p-0 inline-flex items-center justify-center rounded-lg bg-amber-100 text-amber-600 shrink-0">
+                          <Wallet size={16} />
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-amber-900">Puntos del cliente</div>
+                          <div className="text-xs text-amber-700">{saldoPuntos.toLocaleString("es-MX")} pts · equivalen a {fmt(saldoPesosMon)}</div>
+                        </div>
+                        {pagoPuntos > 0 ? (
+                          <button onClick={() => setPuntosTexto("")}
+                            className="inline-flex items-center gap-1 bg-white border border-amber-300 text-amber-700 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-amber-100">
+                            <RotateCcw size={12} /> Quitar
+                          </button>
+                        ) : (
+                          <button onClick={() => setPuntosTexto(String(Math.round(maxCanjePesos * 100) / 100))}
+                            className="inline-flex items-center gap-1 bg-amber-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold hover:bg-amber-600">
+                            <Coins size={12} /> Usar puntos
+                          </button>
+                        )}
+                      </div>
+                      {pagoPuntos > 0 && (
+                        <div className="px-3 pb-2.5 pt-0.5 border-t border-amber-100 bg-amber-50/60">
+                          <div className="flex items-center gap-2">
+                            <input type="text" inputMode="decimal" value={puntosTexto}
+                              onChange={(e) => setPuntosTexto(e.target.value.replace(/[^0-9.]/g, ""))}
+                              className="w-24 text-right text-sm font-bold text-gray-900 bg-white border border-amber-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-amber-500" />
+                            <span className="text-xs text-amber-700">{puntosUsados.toLocaleString("es-MX", { maximumFractionDigits: 2 })} pts</span>
+                            <button onClick={() => setPuntosTexto(String(Math.round(maxCanjePesos * 100) / 100))}
+                              className="ml-auto text-xs font-medium text-amber-700 border border-amber-300 rounded-lg px-2.5 py-1 hover:bg-amber-100">
+                              Usar máximo ({fmt(maxCanjePesos)})
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Saldo a favor por cambio: aplicable a la diferencia. */}
+                  {puedeUsarSaldoCambio && (
+                    <div className="mt-3 rounded-lg border border-teal-200 bg-teal-50 overflow-hidden">
+                      <div className="flex items-center gap-2.5 px-3 py-2.5">
+                        <span className="w-8 h-8 p-0 inline-flex items-center justify-center rounded-lg bg-teal-100 text-teal-600 shrink-0">
+                          <RotateCcw size={16} />
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs font-semibold text-teal-900">Saldo a favor del cliente</div>
+                          <div className="text-xs text-teal-700">{fmt(saldoCambioDisponible)} disponibles</div>
+                        </div>
+                        {pagoSaldoCambio > 0 ? (
+                          <button onClick={() => setSaldoTexto("")}
+                            className="inline-flex items-center gap-1 bg-white border border-teal-300 text-teal-700 px-2.5 py-1.5 rounded-lg text-xs font-medium hover:bg-teal-100">
+                            <RotateCcw size={12} /> Quitar
+                          </button>
+                        ) : (
+                          <button onClick={() => setSaldoTexto(String(Math.round(maxSaldoCambio * 100) / 100))}
+                            className="inline-flex items-center gap-1 bg-teal-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-semibold hover:bg-teal-600">
+                            <Coins size={12} /> Usar saldo
+                          </button>
+                        )}
+                      </div>
+                      {pagoSaldoCambio > 0 && (
+                        <div className="px-3 pb-2.5 pt-0.5 border-t border-teal-100 bg-teal-50/60">
+                          <div className="flex items-center gap-2">
+                            <input type="text" inputMode="decimal" value={saldoTexto}
+                              onChange={(e) => setSaldoTexto(e.target.value.replace(/[^0-9.]/g, ""))}
+                              className="w-24 text-right text-sm font-bold text-gray-900 bg-white border border-teal-200 rounded-lg px-2 py-1.5 focus:outline-none focus:border-teal-500" />
+                            <button onClick={() => setSaldoTexto(String(Math.round(maxSaldoCambio * 100) / 100))}
+                              className="ml-auto text-xs font-medium text-teal-700 border border-teal-300 rounded-lg px-2.5 py-1 hover:bg-teal-100">
+                              Usar máximo ({fmt(maxSaldoCambio)})
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
