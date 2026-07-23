@@ -1,19 +1,30 @@
 import { useState, useEffect, useRef, useMemo } from "react"
-import { UNIDADES_SAT, abreviaturaUnidad } from "../lib/unidades-sat"
+import { UNIDADES_SAT } from "../lib/unidades-sat"
 import { subirImagenArticulo, actualizarCatalogo } from "../lib/client"
 import { crearProveedor } from "../lib/proveedores"
 import { SelectConOpcion } from "./SelectConOpcion"
 import { ProveedorDrawer } from "./ProveedorDrawer"
-import ConfirmDialog from "./ConfirmDialog"
+import { validarCadena, factorABase } from "../lib/niveles"
 
 function round2(n) { return Math.round(n * 100) / 100 }
 // El precio SIN IVA se guarda con 4 decimales para que el CON IVA cierre exacto
 // (65/1.16 = 56.0345 → ×1.16 = 65.00). La BD lo soporta (price set en diezmilésimas).
 function round4(n) { return Math.round(n * 10000) / 10000 }
 
+// "Precio de Compra" se captura en la unidad del nivel MÁS ALTO de la cadena
+// (ej. Bolsa/Caja — lo que el proveedor factura). El "factor" para desglosar
+// el costo por unidad base (Pieza) es el producto de los factorDesdeAnterior
+// de todos los niveles por encima de la base.
+function factorNivelMasAlto(niveles) {
+  if (!niveles?.length) return 1
+  let f = 1
+  for (let i = 1; i < niveles.length; i++) f *= Number(niveles[i].factorDesdeAnterior) || 1
+  return f || 1
+}
+
 function calcCostos(form) {
   const base   = Number(form.precioCompra) || 0
-  const factor = Number(form.factor) || 1
+  const factor = factorNivelMasAlto(form.niveles)
   let costoSinIva, costoConIva
   if (form.precioNeto && form.aplicarIva) {
     costoConIva = base
@@ -22,13 +33,24 @@ function calcCostos(form) {
     costoSinIva = base
     costoConIva = form.aplicarIva ? round2(base * 1.16) : base
   }
-  // "Por unidad de venta" es solo informativo (costo de compra ÷ factor). Precio 4
-  // (break-even real, mostrado en "Precios de Venta") es el costo de COMPRA
-  // directo, sin dividir — Precio 1-4 son precios por unidad de COMPRA, igual
-  // que el resto de esa sección (ver ArticleDrawer § Precios de Venta).
+  // "Por unidad base" es solo informativo (costo de compra ÷ factor acumulado
+  // hasta el nivel más alto de la cadena).
   const costoCalc = round2(costoSinIva / factor)
   const precio4   = costoSinIva
   return { costoSinIva, costoConIva, costoCalc, precio4 }
+}
+
+// Costo de 1 unidad de `nivel` (para el % de margen mostrado en su propia
+// fila): `costoSinIva` es el costo de 1 unidad de la BASE de inventario
+// (Precio de Compra). 1 unidad de `nivel` equivale a `factorABase(nivel)`
+// unidades de la base, así que su costo es ese mismo múltiplo. Sin esto, todo
+// nivel no-base comparaba su precio contra el costo del nivel MÁS BAJO de la
+// cadena (costoCalc) en vez del costo de sí mismo — inflando el margen
+// mostrado en cualquier nivel intermedio o igual a la base.
+function costoDeNivel(niveles, nivel, costoSinIva) {
+  const factor = factorABase(niveles ?? [], nivel.id)
+  if (!factor) return costoSinIva
+  return round2(costoSinIva * factor)
 }
 
 // El VALOR GUARDADO (`value`) es el precio SIN IVA (base), igual que el Precio de
@@ -139,25 +161,23 @@ const EMPTY_FORM = {
   // vínculos firmes (pedidos automáticos) y el nombre para mostrar sin consultar.
   proveedor: "", proveedor_id: "",
   categoria: "", departamento: "",
-  unidadCompra: "H87", unidadVenta: "H87", factor: 1,
   aplicarIva: true,
   precioCompra: "", precioNeto: false,
-  precio1: "", precio2: "", precio3: "", precio4: "",
-  // Precios de la unidad de VENTA (ej. Metro), solo si difiere de la unidad de
-  // COMPRA (ej. Rollo) — independientes, capturados a mano. `margenVenta` = %
-  // guardado al capturar Precio Venta 1 (para la futura precarga de facturas).
-  precioVenta1: "", precioVenta2: "", precioVenta3: "", precioVenta4: "",
-  margenVenta: "",
+  // Cadena de N niveles de unidad (Pieza→Bolsa→Caja…). Reemplaza los campos
+  // planos unidadCompra/unidadVenta/factor/precioVenta1-4 — ver lib/niveles.ts.
+  // Siempre ≥1 nivel; el primero (índice 0) es la hoja/base de inventario.
+  // Se siembra en el useEffect de apertura (necesita un id fresco por instancia).
+  niveles: [],
   claveSat: "",
   inventarioMin: "", inventarioMax: "",
   localizacion: "", peso: "",
   ventaGranel: false, imagenes: [],
   especificaciones: [],
   mayoreoActivo: false, mayoreoMin: "",
-  // Artículo especial (a granel): inventario informativo + presentaciones
-  // (padre→hijos) + disponibilidad manual. Ver sección "Artículo especial".
-  esGranel: false, agotado: false, agotadoBase: false, unidadBase: "H87",
-  presentaciones: [],
+  // Inventario informativo (antes "artículo especial/granel"): el `agotado`
+  // real vive por nivel dentro de `niveles`. `agotadoGlobal` apaga TODO el
+  // artículo de un jalón. Ver sección "Unidades".
+  inventarioInformativo: false, agotadoGlobal: false,
 }
 
 function Toggle({ id, checked, onChange, label }) {
@@ -203,9 +223,6 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
   const [errors, setErrors] = useState({})
   const [uploading, setUploading] = useState(0)
   const [proveedorDrawerAbierto, setProveedorDrawerAbierto] = useState(false)
-  // Confirmación (estilo POS) al volver un artículo especial a normal con
-  // presentaciones cargadas — reemplaza el window.confirm nativo.
-  const [confirmVolverNormal, setConfirmVolverNormal] = useState(false)
   const firstInputRef = useRef(null)
   const fileInputRef  = useRef(null)
 
@@ -218,21 +235,22 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
         imagenes: article.imagenes?.length > 0
           ? article.imagenes
           : article.thumbnail ? [article.thumbnail] : [],
-        // Presentaciones: llegan con precio SIN IVA (como los niveles). El input
-        // de precio en la sección granel muestra CON IVA, así que convertimos aquí
-        // (×1.16 si aplica) para que al editar se vea el precio de venta real.
-        presentaciones: Array.isArray(article.presentaciones)
-          ? article.presentaciones.map((p) => ({
-              id: p.id,
-              nombre: p.nombre ?? "",
-              precio: article.aplicarIva ? round2((Number(p.precio) || 0) * 1.16) : round2(Number(p.precio) || 0),
-              factor: p.factor == null ? "" : p.factor,
-              agotado: !!p.agotado,
+        // Cadena de niveles: usa la ya derivada por el backend (metadata real o
+        // shim legacy) — precios ya vienen SIN IVA, como el resto del formulario;
+        // PrecioRow los muestra c/IVA. Solo normalizamos null→"" para los inputs.
+        niveles: Array.isArray(article.nivelesUnidad) && article.nivelesUnidad.length > 0
+          ? article.nivelesUnidad.map((n) => ({
+              ...n,
+              precio1: n.precio1 ?? "", precio2: n.precio2 ?? "", precio3: n.precio3 ?? "", precio4: n.precio4 ?? "",
+              mayoreoMin: n.mayoreoMin ?? "",
+              factorDesdeAnterior: n.factorDesdeAnterior ?? null,
+              agotado: !!n.agotado,
+              esFraccionUnidadBase: !!n.esFraccionUnidadBase,
             }))
-          : [],
+          : [nuevoNivel({ esBaseInventario: true, claveUnidadSat: article.unidadVenta || "H87" })],
       })
     } else {
-      setForm(EMPTY_FORM)
+      setForm({ ...EMPTY_FORM, niveles: [nuevoNivel({ esBaseInventario: true })] })
     }
     setErrors({})
   }, [open, mode, article])
@@ -318,120 +336,192 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
       errs.clave = "Esta clave ya existe. Usa Generar Clave para crear una única."
     }
     if (!form.descripcion.trim()) errs.descripcion = "La descripción es obligatoria"
-    // Artículo especial (a granel): el precio de venta lo dan las PRESENTACIONES,
-    // así que no exigimos precio1 > 0; en su lugar exigimos ≥1 presentación con
-    // nombre y precio válidos.
-    if (form.esGranel) {
-      const pres = (form.presentaciones ?? []).filter((p) => (p.nombre ?? "").trim() !== "")
-      if (pres.length === 0) {
-        errs.presentaciones = "Agrega al menos una forma de venta con nombre y precio"
-      } else if (pres.some((p) => !(Number(p.precio) > 0))) {
-        errs.presentaciones = "Cada forma de venta necesita un precio mayor a 0"
-      }
-    } else {
-      if (!form.precio1 || Number(form.precio1) <= 0) errs.precio1 = "El precio debe ser mayor a 0"
+    const nivelBase = (form.niveles ?? []).find((n) => n.esBaseInventario)
+    if (!nivelBase?.precio1 || Number(nivelBase.precio1) <= 0) {
+      errs.precio1 = "El precio del nivel base debe ser mayor a 0"
     }
-    if (!form.factor || Number(form.factor) <= 0) errs.factor = "El factor debe ser mayor a 0"
+    const erroresCadena = validarCadena(
+      (form.niveles ?? []).map((n) => ({ ...n, factorDesdeAnterior: n.factorDesdeAnterior === "" ? null : Number(n.factorDesdeAnterior) || null }))
+    )
+    if (erroresCadena.length > 0) errs.niveles = erroresCadena[0]
     return errs
   }
 
-  // ── Artículo especial (a granel) ─────────────────────────────────────────────
-  // Activa/desactiva el modo. Al desactivar con presentaciones cargadas, confirma
-  // (con el diálogo estilo POS, no window.confirm) para no perderlas por accidente.
-  function toggleEspecial() {
-    if (form.esGranel) {
-      if ((form.presentaciones?.length ?? 0) > 0) {
-        setConfirmVolverNormal(true)   // pide confirmación
-        return
-      }
-      volverANormal()
-    } else {
-      setForm((prev) => ({
-        ...prev,
-        esGranel: true,
-        // Al convertir, si no hay presentaciones, sembramos una vacía para guiar.
-        presentaciones: prev.presentaciones?.length ? prev.presentaciones : [nuevaPresentacion()],
-      }))
+  // ── Cadena de N niveles de unidad (Pieza→Bolsa→Caja…, generaliza U.Compra/
+  //    U.Venta/Factor) ─────────────────────────────────────────────────────────
+  const MAX_NIVELES = 4
+
+  // Inventario informativo (antes "artículo especial/granel", ej. Arena): el
+  // nivel base deja de bloquear por stock real y cada nivel gana su propio
+  // Disponible/Agotado manual. Sin confirmación al desactivar — el estado
+  // `agotado` de cada nivel simplemente deja de tener efecto (no se borra).
+  function toggleInformativo(v) {
+    setForm((prev) => ({ ...prev, inventarioInformativo: v }))
+  }
+
+  function nuevoNivel(overrides = {}) {
+    const rnd = Math.random().toString(36).slice(2, 8)
+    return {
+      id: `nv-${rnd}`, nombre: "", claveUnidadSat: "H87",
+      precio1: "", precio2: "", precio3: "", precio4: "",
+      mayoreoActivo: false, mayoreoMin: "",
+      factorDesdeAnterior: null, esBaseInventario: false,
+      esFraccionUnidadBase: false,
+      ...overrides,
     }
   }
 
-  // Revierte a artículo normal (quita presentaciones y reactiva el control de stock).
-  function volverANormal() {
-    setForm((prev) => ({ ...prev, esGranel: false, agotado: false, presentaciones: [] }))
-    setConfirmVolverNormal(false)
+  // Agrega un nivel al final de la cadena (ej. de [Pieza,Bolsa] a
+  // [Pieza,Bolsa,Caja]). Cuál es la unidad base (con inventario real) NO
+  // depende de la posición — se elige aparte con "Usar como base" en cualquier
+  // nivel, así que este nuevo nivel puede terminar siendo superior o inferior
+  // a la base según el usuario la reasigne después. Precios 1-4 sugeridos =
+  // factor × precio del nivel anterior (editables) — ahorra captura manual sin
+  // imponer relación exacta.
+  function agregarNivel() {
+    setForm((prev) => {
+      const niveles = prev.niveles ?? []
+      if (niveles.length >= MAX_NIVELES) return prev
+      const anterior = niveles[niveles.length - 1]
+      const factorSugerido = 1
+      const preciosSugeridos = {}
+      for (const p of ["precio1", "precio2", "precio3", "precio4"]) {
+        preciosSugeridos[p] = anterior ? round2((Number(anterior[p]) || 0) * factorSugerido) : ""
+      }
+      // La unidad SAT del nuevo nivel arranca en la primera que NO esté ya
+      // usada en la cadena (evita que dos niveles queden con la misma unidad
+      // por accidente cuando son unidades de EMPAQUE distintas — el caso
+      // normal, ej. Pieza/Bolsa/Caja). Si el usuario está construyendo una
+      // cadena de fracciones de la MISMA unidad real (ej. Arena: Bote/
+      // Carretilla/m³, todos "m³"), puede repetirla a mano y marcar el
+      // checkbox "Es fracción de la misma unidad" en la tarjeta del nivel.
+      const usadas = new Set(niveles.map((n) => n.claveUnidadSat))
+      const claveLibre = UNIDADES_SAT.find((u) => !usadas.has(u.clave))?.clave ?? "H87"
+      return {
+        ...prev,
+        niveles: [
+          ...niveles,
+          nuevoNivel({
+            claveUnidadSat: claveLibre,
+            factorDesdeAnterior: factorSugerido,
+            ...preciosSugeridos,
+          }),
+        ],
+      }
+    })
   }
 
-  function nuevaPresentacion() {
-    // id local para keys y para casar la presentación elegida en la venta.
-    const rnd = Math.random().toString(36).slice(2, 8)
-    return { id: `pr-${rnd}`, nombre: "", precio: "", factor: "", agotado: false }
-  }
-
-  function agregarPresentacion() {
-    setForm((prev) => ({ ...prev, presentaciones: [...(prev.presentaciones ?? []), nuevaPresentacion()] }))
-  }
-
-  function actualizarPresentacion(id, campo, valor) {
+  function actualizarNivel(id, campo, valor) {
     setForm((prev) => ({
       ...prev,
-      presentaciones: (prev.presentaciones ?? []).map((p) => (p.id === id ? { ...p, [campo]: valor } : p)),
+      niveles: (prev.niveles ?? []).map((n) => {
+        if (n.id !== id) return n
+        const actualizado = { ...n, [campo]: valor }
+        // Sugerir precio1-4 al cambiar el factor (siempre que el usuario no los
+        // haya tocado ya — heurística simple: cada vez que el factor cambia, se
+        // recalculan los 4 en base al nivel inmediato inferior; el usuario puede
+        // sobreescribir cualquiera después sin que se vuelva a pisar hasta que
+        // el factor cambie de nuevo).
+        if (campo === "factorDesdeAnterior") {
+          const idx = (prev.niveles ?? []).findIndex((x) => x.id === id)
+          const anterior = idx > 0 ? (prev.niveles ?? [])[idx - 1] : null
+          if (anterior) {
+            const f = Number(valor) || 0
+            if (f > 0) {
+              for (const p of ["precio1", "precio2", "precio3", "precio4"]) {
+                actualizado[p] = round2((Number(anterior[p]) || 0) * f)
+              }
+            }
+          }
+        }
+        return actualizado
+      }),
     }))
   }
 
-  function eliminarPresentacion(id) {
-    setForm((prev) => ({ ...prev, presentaciones: (prev.presentaciones ?? []).filter((p) => p.id !== id) }))
+  // Marca `id` como el único nivel base de inventario (desmarca los demás).
+  function marcarBaseInventario(id) {
+    setForm((prev) => ({
+      ...prev,
+      niveles: (prev.niveles ?? []).map((n) => ({ ...n, esBaseInventario: n.id === id })),
+    }))
+  }
+
+  function eliminarNivel(id) {
+    setForm((prev) => {
+      const niveles = (prev.niveles ?? []).filter((n) => n.id !== id)
+      if (niveles.length === 0) return prev  // siempre ≥1 nivel
+      // Si se eliminó el nivel base, la nueva hoja (índice 0) pasa a serlo.
+      if (!niveles.some((n) => n.esBaseInventario)) niveles[0] = { ...niveles[0], esBaseInventario: true }
+      // El primer nivel de la cadena nunca lleva factor (es la hoja).
+      niveles[0] = { ...niveles[0], factorDesdeAnterior: null }
+      return { ...prev, niveles }
+    })
   }
 
   function handleSave() {
     const errs = validate()
     if (Object.keys(errs).length > 0) { setErrors(errs); return }
-    // Los precios se guardan SIN IVA (base), igual que como entran (PrecioRow ya
-    // convirtió de c/IVA a s/IVA al teclear). precio4 = costo de compra directo
-    // s/IVA (break-even de la unidad de COMPRA, no dividido por factor).
+
+    // Normaliza la cadena a números reales (los inputs guardan "" mientras el
+    // usuario captura). precio1-4 del nivel base se sobreescriben con el
+    // break-even calculado (precio4) igual que el legacy — el resto tal cual.
     const { precio4 } = calcCostos(form)
+    const nivelesNorm = (form.niveles ?? []).map((n) => ({
+      id: n.id,
+      nombre: (n.nombre || "").trim() || n.claveUnidadSat,
+      claveUnidadSat: n.claveUnidadSat,
+      precio1: Number(n.precio1) || 0,
+      precio2: Number(n.precio2) || 0,
+      precio3: Number(n.precio3) || 0,
+      precio4: n.esBaseInventario ? precio4 : (Number(n.precio4) || 0),
+      mayoreoActivo: !!n.mayoreoActivo,
+      mayoreoMin: Number(n.mayoreoMin) || 0,
+      factorDesdeAnterior: n.factorDesdeAnterior === "" || n.factorDesdeAnterior == null ? null : Number(n.factorDesdeAnterior),
+      esBaseInventario: !!n.esBaseInventario,
+      agotado: !!n.agotado,
+      esFraccionUnidadBase: !!n.esFraccionUnidadBase,
+    }))
+    const idxBase = nivelesNorm.findIndex((n) => n.esBaseInventario)
+    const nivelBase = nivelesNorm[idxBase] ?? nivelesNorm[0]
+    // Dual-write de compatibilidad: los consumidores que aún leen los campos
+    // legacy (unidadCompra/unidadVenta/factor/precioVenta1-4/precio1-4) siguen
+    // funcionando cuando la cadena es EXACTAMENTE 2 niveles con la base en el
+    // índice 0 (el caso legacy real) — igual forma que producía el formulario
+    // anterior. Cadenas de 3+ niveles no tienen equivalente legacy exacto: los
+    // campos quedan en 0/vacíos (nivelesUnidad es la fuente real para ellas).
+    const esCasoLegacy2Niveles = nivelesNorm.length === 2 && idxBase === 0
+    const nivelSuperior = esCasoLegacy2Niveles ? nivelesNorm[1] : null
+
+    // eslint-disable-next-line no-unused-vars
+    const { niveles: _formNiveles, ...formSinNiveles } = form
     onSave({
-      ...form,
+      ...formSinNiveles,
       clave: form.clave.trim(),
       descripcion: form.descripcion.trim(),
-      factor: Number(form.factor),
+      nivelesUnidad: nivelesNorm,
+      unidadVenta: nivelBase.claveUnidadSat,
+      unidadCompra: nivelSuperior?.claveUnidadSat ?? nivelBase.claveUnidadSat,
+      factor: nivelSuperior?.factorDesdeAnterior ?? 1,
       precioCompra: Number(form.precioCompra) || 0,
-      precio1: Number(form.precio1) || 0,
-      precio2: Number(form.precio2) || 0,
-      precio3: Number(form.precio3) || 0,
+      precio1: nivelSuperior ? nivelSuperior.precio1 : nivelBase.precio1,
+      precio2: nivelSuperior ? nivelSuperior.precio2 : nivelBase.precio2,
+      precio3: nivelSuperior ? nivelSuperior.precio3 : nivelBase.precio3,
       precio4,
-      // Precios de la unidad de VENTA — solo se persisten si U.Compra ≠ U.Venta
-      // (si son iguales, no se muestra la sección y no tiene sentido guardarlos).
-      ...(form.unidadCompra !== form.unidadVenta ? {
-        precioVenta1: Number(form.precioVenta1) || 0,
-        precioVenta2: Number(form.precioVenta2) || 0,
-        precioVenta3: Number(form.precioVenta3) || 0,
-        precioVenta4: Number(form.precioVenta4) || 0,
-        margenVenta: Number(form.margenVenta) || 0,
-      } : { precioVenta1: 0, precioVenta2: 0, precioVenta3: 0, precioVenta4: 0, margenVenta: 0 }),
+      precioVenta1: nivelSuperior ? nivelBase.precio1 : 0,
+      precioVenta2: nivelSuperior ? nivelBase.precio2 : 0,
+      precioVenta3: nivelSuperior ? nivelBase.precio3 : 0,
+      precioVenta4: nivelSuperior ? nivelBase.precio4 : 0,
+      margenVenta: 0,
+      mayoreoActivo: form.mayoreoActivo,
+      mayoreoMin: Number(form.mayoreoMin) || 0,
       inventarioMin: Number(form.inventarioMin) || 0,
       inventarioMax: Number(form.inventarioMax) || 0,
       peso: Number(form.peso) || 0,
-      mayoreoActivo: form.mayoreoActivo,
-      mayoreoMin: Number(form.mayoreoMin) || 0,
-      // Artículo especial (a granel). Las presentaciones se guardan con precio
-      // s/IVA (se muestran c/IVA en la venta) y factor numérico o null.
-      esGranel: !!form.esGranel,
-      agotado: !!form.agotado,
-      agotadoBase: !!form.agotadoBase,
-      unidadBase: form.unidadBase || "H87",
-      presentaciones: (form.esGranel && Array.isArray(form.presentaciones))
-        ? form.presentaciones
-            .filter((p) => (p.nombre ?? "").trim() !== "")
-            .map((p) => ({
-              id: p.id,
-              nombre: p.nombre.trim(),
-              // Precio capturado CON IVA → guardar SIN IVA (×/1.16) con 4 decimales,
-              // igual que los precios de nivel. La venta lo devuelve c/IVA.
-              precio: form.aplicarIva ? round4((Number(p.precio) || 0) / 1.16) : round4(Number(p.precio) || 0),
-              factor: (p.factor === "" || p.factor == null) ? null : (Number(p.factor) || 0),
-              agotado: !!p.agotado,
-            }))
-        : [],
+      // Inventario informativo (antes "artículo especial/granel"): el `agotado`
+      // real ya viaja por nivel dentro de nivelesUnidad (ver nivelesNorm arriba).
+      inventarioInformativo: !!form.inventarioInformativo,
+      agotadoGlobal: !!form.agotadoGlobal,
     })
   }
 
@@ -472,27 +562,28 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
         {/* Body */}
         <div className="ar-drawer-body">
 
-          {/* Artículo especial (a granel) — PARTE 1: aviso + disponibilidad.
-              Se muestra ARRIBA de todo porque el estado Disponible/Agotado es la
-              decisión principal. La configuración (unidad base + formas de venta)
-              vive más abajo, entre Mayoreo y Especificaciones. */}
-          {form.esGranel && (
+          {/* Inventario informativo (antes "artículo especial/granel") — aviso +
+              disponibilidad global. Se muestra ARRIBA de todo porque el estado
+              Disponible/Agotado es la decisión principal. La configuración por
+              nivel vive en la sección "Unidades" más abajo. */}
+          {form.inventarioInformativo && (
             <div className="ar-especial-box">
               <div className="ar-especial-head">
-                <span className="ar-especial-badge">✦ Artículo especial</span>
+                <span className="ar-especial-badge">✦ Inventario informativo</span>
                 <span className="ar-especial-hint">
-                  Inventario informativo: descuenta un estimado pero <b>nunca bloquea</b> la venta por número.
-                  El único bloqueo real es marcarlo <b>Agotado</b>.
+                  Descuenta un estimado pero <b>nunca bloquea</b> la venta por número.
+                  El bloqueo real es marcarlo <b>Agotado</b> (aquí o por nivel en Unidades).
                 </span>
               </div>
 
-              {/* Disponibilidad del artículo completo (padre). */}
+              {/* Disponibilidad del artículo completo (apaga TODO de un jalón,
+                  independiente del agotado de cada nivel). */}
               <div className="ar-especial-estado">
                 <Toggle
-                  id="ar-agotado"
-                  checked={!form.agotado}
-                  onChange={(v) => f("agotado", !v)}
-                  label={form.agotado ? "🔴 Agotado — no se puede vender" : "🟢 Disponible"}
+                  id="ar-agotado-global"
+                  checked={!form.agotadoGlobal}
+                  onChange={(v) => f("agotadoGlobal", !v)}
+                  label={form.agotadoGlobal ? "🔴 Agotado — no se puede vender" : "🟢 Disponible"}
                 />
               </div>
             </div>
@@ -631,13 +722,6 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
               placeholder="Código de proveedor u otro" />
           </Field>
 
-          {/* Unidades */}
-          <p className="ar-section-title">Unidades</p>
-
-          <Field label="U. Compra">
-            <UnidadSatSelect value={form.unidadCompra} onChange={(v) => f("unidadCompra", v)} />
-          </Field>
-
           {/* Precios */}
           <p className="ar-section-title">Precios</p>
 
@@ -668,119 +752,187 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
           {/* Resumen de costos */}
           {(() => {
             const c = calcCostos(form)
+            const factorTope = factorNivelMasAlto(form.niveles)
             if (!form.aplicarIva || !Number(form.precioCompra)) return null
             return (
               <div className="ar-costo-resumen">
                 <span>Costo s/IVA: <strong>${c.costoSinIva.toFixed(2)}</strong></span>
                 <span>Costo c/IVA: <strong>${c.costoConIva.toFixed(2)}</strong></span>
-                {Number(form.factor) > 1 && (
-                  <span>Por unidad de venta: <strong>${c.costoCalc.toFixed(2)}</strong></span>
+                {factorTope > 1 && (
+                  <span>Por unidad base: <strong>${c.costoCalc.toFixed(2)}</strong></span>
                 )}
               </div>
             )
           })()}
 
-          {/* Precios de venta */}
-          {(() => {
-            const c = calcCostos(form)
-            return (
-              // Un solo grid para header + filas — garantiza alineación perfecta de columnas
-              <div className="ar-pr-rows">
-                {/* Fila de cabecera dentro del mismo grid */}
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="ar-label" style={{ margin: 0 }}>Precios de Venta</span>
-                  {form.aplicarIva && <span className="ar-iva-badge">c/IVA 16%</span>}
-                </div>
-                <span />
-                <span className="ar-margen-col-header">Margen</span>
+          {/* Unidades — cadena de N niveles (Pieza→Bolsa→Caja…). Cada escalón
+              tiene su propio precio (Precio 1-4) y su factor respecto al nivel
+              INMEDIATO inferior. Exactamente uno es la base de inventario real
+              (candado 🔒) — el resto son solo precio + conversión de cantidad. */}
+          <p className="ar-section-title">Unidades</p>
 
-                {[1, 2, 3].map((n) => (
-                  <PrecioRow key={n}
-                    label={`Precio ${n}`} required={n === 1}
-                    value={form[`precio${n}`]}
-                    onChange={(v) => f(`precio${n}`, v)}
-                    costoCalc={c.costoCalc}
-                    aplicarIva={form.aplicarIva}
-                    error={n === 1 ? errors.precio1 : undefined}
-                  />
-                ))}
-                <PrecioRow key={4}
-                  label="Precio 4" value={c.precio4}
-                  readOnly costoCalc={c.costoCalc} aplicarIva={form.aplicarIva}
-                />
+          <Toggle
+            id="ar-inventario-informativo"
+            checked={form.inventarioInformativo}
+            onChange={toggleInformativo}
+            label="Inventario informativo (ej. Arena: no bloquea por stock, Disponible/Agotado manual por nivel)"
+          />
+
+          {errors.niveles && <p className="ar-error" style={{ marginTop: 8, marginBottom: 8 }}>{errors.niveles}</p>}
+
+          {(form.niveles ?? []).map((nivel, idx) => {
+            const c = calcCostos(form)
+            // Costo de ESTE nivel específico (no el del nivel más bajo de la
+            // cadena) — así el % de margen mostrado es real en cada fila, sin
+            // importar si el nivel es la base, uno superior o uno inferior.
+            const costoEsteNivel = costoDeNivel(form.niveles, nivel, c.costoSinIva)
+            const esBase = !!nivel.esBaseInventario
+            const esHoja = idx === 0
+            // ¿Algún OTRO nivel de la cadena ya usa esta misma unidad SAT? Solo
+            // en ese caso mostramos el checkbox "Es fracción de la misma
+            // unidad" — evita ensuciar la UI del caso normal (Pieza/Bolsa/Caja,
+            // unidades siempre distintas).
+            const unidadRepetida = (form.niveles ?? []).some(
+              (o) => o.id !== nivel.id && o.claveUnidadSat === nivel.claveUnidadSat
+            )
+            return (
+              <div key={nivel.id} className="ar-nivel-card" style={{
+                border: "1px solid var(--border, #d1d5db)", borderRadius: 8,
+                padding: "12px", marginBottom: 10,
+                background: esBase ? "rgba(234,88,12,0.04)" : "transparent",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <span className="ar-label" style={{ margin: 0, fontWeight: 600 }}>
+                    Nivel {idx + 1}{esHoja ? " (unidad más chica de venta)" : ""}
+                  </span>
+                  {esBase && (
+                    <span className="ar-iva-badge" title="Único nivel con inventario/stock real">
+                      🔒 Base de inventario
+                    </span>
+                  )}
+                  <div style={{ flex: 1 }} />
+                  {form.inventarioInformativo && (
+                    <button
+                      type="button"
+                      className={`ar-pres-estado${nivel.agotado ? " off" : " on"}`}
+                      title={nivel.agotado ? "Nivel agotado — reactivar" : "Disponible — marcar agotado"}
+                      onClick={() => actualizarNivel(nivel.id, "agotado", !nivel.agotado)}
+                    >
+                      {nivel.agotado ? "Agotado" : "Disponible"}
+                    </button>
+                  )}
+                  {!esBase && (
+                    <button type="button" className="ar-btn-action"
+                      onClick={() => marcarBaseInventario(nivel.id)}
+                      title="Hacer de este el nivel con inventario real">
+                      Usar como base
+                    </button>
+                  )}
+                  {(form.niveles ?? []).length > 1 && (
+                    <button type="button" className="ar-btn-action ar-btn-danger"
+                      onClick={() => eliminarNivel(nivel.id)} title="Quitar este nivel">
+                      Quitar
+                    </button>
+                  )}
+                </div>
+
+                <div className="ar-grid-2">
+                  <Field label="Nombre / Unidad SAT">
+                    <UnidadSatSelect
+                      value={nivel.claveUnidadSat}
+                      onChange={(v) => {
+                        actualizarNivel(nivel.id, "claveUnidadSat", v)
+                        if (!nivel.nombre?.trim()) actualizarNivel(nivel.id, "nombre", v)
+                      }}
+                    />
+                  </Field>
+                  {!esHoja ? (
+                    <Field label={`Factor (× ${(form.niveles ?? [])[idx - 1]?.nombre || "nivel anterior"})`}
+                      tooltip="Cuántas unidades del nivel anterior componen 1 de este. Ej: 1 Bolsa = 50 Piezas → 50">
+                      <input type="number" min="0.001" step="any" className="ar-input"
+                        value={nivel.factorDesdeAnterior ?? ""}
+                        onChange={(e) => actualizarNivel(nivel.id, "factorDesdeAnterior", e.target.value)} />
+                    </Field>
+                  ) : <span />}
+                </div>
+
+                {/* Solo aparece si esta unidad SAT se repite en otro nivel de la
+                    cadena — ej. Arena: Bote/Carretilla/m³ los tres "m³". Marca
+                    que NO es un error de captura sino una fracción/múltiplo
+                    intencional de la misma unidad real. */}
+                {unidadRepetida && (
+                  <>
+                    <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 12.5, color: "var(--muted, #6b7280)" }}>
+                      <input
+                        type="checkbox"
+                        checked={!!nivel.esFraccionUnidadBase}
+                        onChange={(e) => actualizarNivel(nivel.id, "esFraccionUnidadBase", e.target.checked)}
+                      />
+                      Es fracción de la misma unidad (no una unidad de empaque distinta)
+                    </label>
+
+                    {/* Como la unidad SAT ya no distingue el nivel (ej. los tres
+                        son "m³"), el nombre visible en carrito/ticket/selector
+                        necesita una etiqueta propia (ej. "Carretilla", "Bote"). */}
+                    {nivel.esFraccionUnidadBase && (
+                      <Field label="Etiqueta de este nivel" tooltip="Cómo se muestra en el carrito y el ticket (ej. Carretilla, Bote), ya que la unidad SAT es la misma para varios niveles.">
+                        <input
+                          type="text" className="ar-input"
+                          value={nivel.nombre}
+                          placeholder="Ej: Carretilla"
+                          onChange={(e) => actualizarNivel(nivel.id, "nombre", e.target.value)}
+                        />
+                      </Field>
+                    )}
+                  </>
+                )}
+
+                <div className="ar-pr-rows" style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span className="ar-label" style={{ margin: 0 }}>Precios de Venta</span>
+                    {form.aplicarIva && <span className="ar-iva-badge">c/IVA 16%</span>}
+                  </div>
+                  <span />
+                  <span className="ar-margen-col-header">Margen</span>
+
+                  {esBase ? (
+                    <>
+                      {[1, 2, 3].map((n) => (
+                        <PrecioRow key={n}
+                          label={`Precio ${n}`} required={n === 1}
+                          value={nivel[`precio${n}`]}
+                          onChange={(v) => actualizarNivel(nivel.id, `precio${n}`, v)}
+                          costoCalc={costoEsteNivel}
+                          aplicarIva={form.aplicarIva}
+                          error={n === 1 ? errors.precio1 : undefined}
+                        />
+                      ))}
+                      <PrecioRow key={4}
+                        label="Precio 4" value={c.precio4}
+                        readOnly costoCalc={costoEsteNivel} aplicarIva={form.aplicarIva}
+                      />
+                    </>
+                  ) : (
+                    [1, 2, 3, 4].map((n) => (
+                      <PrecioRow key={n}
+                        label={`Precio ${n}`} required={false}
+                        value={nivel[`precio${n}`]}
+                        onChange={(v) => actualizarNivel(nivel.id, `precio${n}`, v)}
+                        costoCalc={costoEsteNivel}
+                        aplicarIva={form.aplicarIva}
+                      />
+                    ))
+                  )}
+                </div>
               </div>
             )
-          })()}
+          })}
 
-          {/* Precios de la UNIDAD DE VENTA (ej. Metro). U.Venta + Factor viven
-              aquí (no en "Unidades") porque solo tienen sentido junto a estos
-              precios. Si U.Venta = U.Compra, los 4 precios se bloquean (no hay
-              unidad de venta distinta que fijarles precio propio). Cuando
-              difieren, son independientes de Precio 1-4 de arriba — capturados a
-              mano, sin relación matemática automática. Al llenar Precio Venta 1
-              se guarda `margenVenta` (% vs Precio 1 de compra) para que una
-              futura precarga de facturas pueda recalcularlos solo. */}
-          <div className="ar-grid-2">
-            <Field label="U. Venta">
-              <UnidadSatSelect value={form.unidadVenta} onChange={(v) => f("unidadVenta", v)} />
-            </Field>
-            <Field
-              label="Factor"
-              error={errors.factor}
-              tooltip="Unidades de venta por unidad de compra. Ej: 1 Rollo = 50 m"
-            >
-              <input type="number" min="0.001" step="any"
-                className={`ar-input${errors.factor ? " error" : ""}`}
-                value={form.factor} onChange={(e) => f("factor", e.target.value)} />
-            </Field>
-          </div>
-
-          {(() => {
-            const unidadesIguales = !form.unidadCompra || !form.unidadVenta || form.unidadCompra === form.unidadVenta
-            return (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span className="ar-label" style={{ margin: 0 }}>
-                    Precios de Venta — por {(UNIDADES_SAT.find((u) => u.clave === form.unidadVenta)?.nombre ?? "unidad de venta").toLowerCase()}
-                  </span>
-                  {form.aplicarIva && <span className="ar-iva-badge">c/IVA 16%</span>}
-                </div>
-                <p className="ar-margen-hint">
-                  {unidadesIguales
-                    ? "Elige una U. Venta distinta a la U. Compra para poder fijar un precio propio por esa unidad."
-                    : `Independientes de los Precios de arriba (por ${(UNIDADES_SAT.find((u) => u.clave === form.unidadCompra)?.nombre ?? "unidad de compra").toLowerCase()}). Tú los capturas — no se calculan con el Factor.`}
-                </p>
-                <div className="ar-pr-rows">
-                  {[1, 2, 3, 4].map((n) => {
-                    const sinIvaCompra = Number(form.precio1) || 0
-                    // Margen mostrado = ganancia vs el costo de compra CONVERTIDO
-                    // a unidad de venta (costoCalc = costo compra ÷ factor), no
-                    // vs el costo de compra directo (otra unidad, no comparable).
-                    const { costoCalc } = calcCostos(form)
-                    return (
-                      <PrecioVentaRow key={n}
-                        n={n}
-                        value={form[`precioVenta${n}`]}
-                        onChange={(v) => {
-                          f(`precioVenta${n}`, v)
-                          // Guarda el % de relación SOLO al capturar Precio Venta 1
-                          // (el principal) — es el que usará la futura precarga de
-                          // facturas para recalcular. Requiere Precio 1 > 0.
-                          if (n === 1 && sinIvaCompra > 0) {
-                            const nuevoSinIva = Number(v) || 0
-                            f("margenVenta", nuevoSinIva > 0 ? round2((nuevoSinIva / sinIvaCompra) * 100) : "")
-                          }
-                        }}
-                        aplicarIva={form.aplicarIva}
-                        costoCalc={costoCalc}
-                        disabled={unidadesIguales}
-                      />
-                    )
-                  })}
-                </div>
-              </>
-            )
-          })()}
+          {(form.niveles ?? []).length < MAX_NIVELES && (
+            <button type="button" className="ar-btn-action" onClick={agregarNivel} style={{ marginBottom: 12 }}>
+              + Agregar nivel
+            </button>
+          )}
 
           {/* Fiscal */}
           <p className="ar-section-title">Fiscal</p>
@@ -835,110 +987,6 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
                 placeholder="Ej: 12"
               />
             </Field>
-          )}
-
-          {/* Artículo especial (a granel) — PARTE 2: configuración de venta.
-              Unidad base + formas de venta. Vive aquí (entre Mayoreo y
-              Especificaciones); el aviso + toggle Disponible/Agotado están arriba. */}
-          {form.esGranel && (
-            <div className="ar-especial-box">
-              {/* Unidad base del inventario informativo. */}
-              <Field label="Unidad base del inventario"
-                tooltip="La unidad en la que llevas el estimado de existencia (ej. m³). El factor de cada forma de venta equivale a esta unidad.">
-                <UnidadSatSelect value={form.unidadBase} onChange={(v) => f("unidadBase", v)} />
-              </Field>
-
-              {/* Formas de venta (padre → hijos). */}
-              <div className="ar-especial-pres">
-                <div className="ar-especial-pres-head">
-                  <span className="ar-section-title" style={{ margin: 0 }}>Formas de venta</span>
-                  <button type="button" className="ar-btn-action" onClick={agregarPresentacion}>+ Agregar</button>
-                </div>
-
-                {/* Forma de venta BASE (el propio artículo): se vende por su Unidad de
-                    Venta al Precio 1. No se edita aquí (el precio vive en la sección
-                    Precios); solo se puede marcar Agotada por separado. */}
-                <div className={`ar-pres-row ar-pres-row--base${form.agotadoBase ? " agotado" : ""}`}>
-                  <span className="ar-pres-base-nombre">
-                    {abreviaturaUnidad(form.unidadVenta) || "Unidad"}
-                    <span className="ar-pres-base-tag">unidad principal</span>
-                  </span>
-                  <span className="ar-pres-base-precio">
-                    ${(() => {
-                      const p1 = Number(form.precio1) || 0
-                      return (form.aplicarIva ? round2(p1 * 1.16) : p1).toFixed(2)
-                    })()}
-                  </span>
-                  <span className="ar-pres-base-factor">≈ 1 {abreviaturaUnidad(form.unidadBase)}</span>
-                  <button
-                    type="button"
-                    className={`ar-pres-estado${form.agotadoBase ? " off" : " on"}`}
-                    title={form.agotadoBase ? "Unidad principal agotada — reactivar" : "Disponible — marcar agotada"}
-                    onClick={() => f("agotadoBase", !form.agotadoBase)}
-                  >
-                    {form.agotadoBase ? "Agotada" : "Disponible"}
-                  </button>
-                  <span className="ar-pres-del" style={{ visibility: "hidden" }} aria-hidden />
-                </div>
-
-                {(form.presentaciones?.length ?? 0) === 0 && (
-                  <p className="ar-especial-empty">
-                    Agrega otras formas de venta si aplica (ej. Carretilla, Bote).
-                  </p>
-                )}
-
-                {errors.presentaciones && <p className="ar-error" style={{ margin: 0 }}>{errors.presentaciones}</p>}
-
-                {(form.presentaciones ?? []).map((p) => (
-                  <div key={p.id} className={`ar-pres-row${p.agotado ? " agotado" : ""}`}>
-                    <input
-                      type="text" className="ar-input ar-pres-nombre" placeholder="Nombre (ej. Carretilla)"
-                      value={p.nombre} onChange={(e) => actualizarPresentacion(p.id, "nombre", e.target.value)}
-                    />
-                    <div className="ar-pres-precio">
-                      <span className="ar-pres-prefix">$</span>
-                      <input
-                        type="text" inputMode="decimal" className="ar-input" placeholder="0.00"
-                        value={p.precio}
-                        onChange={(e) => {
-                          let raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "")
-                          const i = raw.indexOf(".")
-                          if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
-                          actualizarPresentacion(p.id, "precio", raw)
-                        }}
-                      />
-                    </div>
-                    <div className="ar-pres-factor">
-                      <span className="ar-pres-approx">≈</span>
-                      <input
-                        type="text" inputMode="decimal" className="ar-input" placeholder="opcional"
-                        title="Equivalencia en la unidad base para el descuento informativo del inventario. Déjalo vacío si no quieres que descuente."
-                        value={p.factor}
-                        onChange={(e) => {
-                          let raw = e.target.value.replace(",", ".").replace(/[^\d.]/g, "")
-                          const i = raw.indexOf(".")
-                          if (i !== -1) raw = raw.slice(0, i + 1) + raw.slice(i + 1).replace(/\./g, "")
-                          actualizarPresentacion(p.id, "factor", raw)
-                        }}
-                      />
-                      <span className="ar-pres-unidad">{abreviaturaUnidad(form.unidadBase)}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className={`ar-pres-estado${p.agotado ? " off" : " on"}`}
-                      title={p.agotado ? "Marcada como agotada — reactivar" : "Disponible — marcar agotada"}
-                      onClick={() => actualizarPresentacion(p.id, "agotado", !p.agotado)}
-                    >
-                      {p.agotado ? "Agotada" : "Disponible"}
-                    </button>
-                    <button
-                      type="button" className="ar-pres-del" title="Eliminar forma de venta"
-                      onClick={() => eliminarPresentacion(p.id)}
-                    >🗑</button>
-                  </div>
-                ))}
-              </div>
-            </div>
           )}
 
           {/* Especificaciones */}
@@ -1066,17 +1114,18 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
 
         {/* Footer */}
         <div className="ar-drawer-footer">
-          {/* Convertir a / volver de artículo especial (a granel). Vive junto a
-              Cancelar/Guardar. Al activar revela la sección de presentaciones. */}
+          {/* Activa/desactiva inventario informativo (antes "artículo especial").
+              Vive junto a Cancelar/Guardar; revela el switch global de arriba y
+              los botones Disponible/Agotado por nivel en "Unidades". */}
           <button
             type="button"
-            className={`ar-btn-especial${form.esGranel ? " on" : ""}`}
-            onClick={toggleEspecial}
-            title={form.esGranel
-              ? "Volver a artículo normal (inventario controlado)"
-              : "Convertir en artículo especial: inventario informativo + formas de venta (m³, carretilla, bote…)"}
+            className={`ar-btn-especial${form.inventarioInformativo ? " on" : ""}`}
+            onClick={() => toggleInformativo(!form.inventarioInformativo)}
+            title={form.inventarioInformativo
+              ? "Volver a inventario real (bloquea por stock)"
+              : "Activar inventario informativo: no bloquea por stock, cada nivel gana un Disponible/Agotado manual (ej. Arena, m³/carretilla/bote)"}
           >
-            {form.esGranel ? "↩ Volver a artículo normal" : "✦ Convertir a artículo especial"}
+            {form.inventarioInformativo ? "↩ Volver a inventario real" : "✦ Inventario informativo"}
           </button>
           <div style={{ flex: 1 }} />
           <button type="button" className="ar-btn-cancel" onClick={onClose}>Cancelar</button>
@@ -1108,17 +1157,6 @@ export default function ArticleDrawer({ open, mode, article, articles, taxonomy 
         }}
       />
 
-      {/* Confirmación (estilo POS) al volver de artículo especial a normal. */}
-      <ConfirmDialog
-        open={confirmVolverNormal}
-        title="Volver a artículo normal"
-        message="Se quitarán las formas de venta de este artículo y se reactivará el control de inventario. ¿Continuar?"
-        confirmLabel="Volver a normal"
-        cancelLabel="Cancelar"
-        danger
-        onConfirm={volverANormal}
-        onClose={() => setConfirmVolverNormal(false)}
-      />
     </>
   )
 }

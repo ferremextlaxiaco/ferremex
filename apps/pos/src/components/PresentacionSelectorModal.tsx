@@ -1,20 +1,19 @@
-import { useState, useEffect, useMemo } from "react"
+import { useState, useEffect } from "react"
 import { createPortal } from "react-dom"
 import { X, Minus, Plus } from "lucide-react"
 import { formatMXN } from "../lib/format"
-import { abreviaturaUnidad, nombreUnidad } from "../lib/unidades-sat"
-import type { ProductoPOS, PresentacionGranel } from "../lib/client"
-
-// Id reservado para la forma de venta BASE (el propio artículo, vendido por su
-// Unidad de Venta al Precio 1). El Buscador lo detecta para usar factor 1.
-export const ID_PRESENTACION_BASE = "__base__"
+import { abreviaturaUnidad } from "../lib/unidades-sat"
+import type { ProductoPOS, OpcionPresentacion } from "../lib/client"
 
 /**
- * Selector de PRESENTACIÓN para un artículo especial (a granel). Se abre al tocar
- * un producto con `esGranel` + presentaciones (ej. Arena → m³ / carretilla / bote).
- * El vendedor elige la presentación y la cantidad; al confirmar se agrega al
- * carrito una línea con el precio de esa presentación y los datos para el descuento
- * informativo del inventario (factor → granelFactor).
+ * Selector de PRESENTACIÓN/NIVEL para artículos con cadena de N niveles de
+ * unidad (ver lib/niveles.ts): se abre al tocar un producto con más de una
+ * forma de venta (ej. Arena → m³/Carretilla/Bote con inventario informativo,
+ * o Taquete → Pieza/Bolsa con inventario real). El vendedor elige la opción y
+ * la cantidad; al confirmar se agrega al carrito una línea con el precio de
+ * ese nivel. Componente 100% genérico: recibe las opciones ya resueltas por
+ * el dueño del estado (Buscador.tsx) vía `presentacionesOverride` — no deriva
+ * nada de `producto` directamente.
  *
  * Reutiliza la estética de DesglosePaqueteModal (createPortal a <body> para escapar
  * el stacking context del drawer del carrito; overlay + Escape para cerrar).
@@ -30,35 +29,14 @@ export function PresentacionSelectorModal({
   subtitulo,
 }: {
   producto: ProductoPOS | null
-  onConfirmar: (args: { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) => void
+  onConfirmar: (args: { producto: ProductoPOS; presentacion: OpcionPresentacion; cantidad: number }) => void
   onClose: () => void
-  /** Lista de presentaciones a mostrar en vez de las derivadas de `producto`.
-   *  La usa el caso "unidad de compra ≠ unidad de venta" (Buscador.tsx) para
-   *  ofrecer metro-vs-rollo sin tocar la lógica de artículo especial (granel). */
-  presentacionesOverride?: PresentacionGranel[]
+  /** Opciones a mostrar (una por nivel de la cadena), ya resueltas por Buscador.tsx. */
+  presentacionesOverride: OpcionPresentacion[]
   /** Texto bajo el nombre del producto (default "¿Cómo lo vendes?"). */
   subtitulo?: string
 }) {
-  // Formas de venta = la UNIDAD BASE del artículo (el propio producto, vendido por
-  // su Unidad de Venta al Precio 1, factor 1) + las presentaciones hijas. La base
-  // va primero porque es la unidad principal. Su precio ya viene CON IVA en
-  // `producto.precio`. Se puede agotar por separado con `producto.agotadoBase`.
-  const presentacionesDerivadas = useMemo<PresentacionGranel[]>(() => {
-    if (!producto) return []
-    const hijas = producto.presentaciones ?? []
-    // Solo mostramos la base si el artículo tiene un precio de venta (>0).
-    const base: PresentacionGranel[] = producto.precio > 0
-      ? [{
-          id: ID_PRESENTACION_BASE,
-          nombre: nombreUnidad(producto.unidadVenta ?? "") || "Unidad",
-          precio: producto.precio,
-          factor: 1,
-          agotado: !!producto.agotadoBase,
-        }]
-      : []
-    return [...base, ...hijas]
-  }, [producto])
-  const presentaciones = presentacionesOverride ?? presentacionesDerivadas
+  const presentaciones = presentacionesOverride
 
   const [selId, setSelId] = useState<string | null>(null)
   const [cantidad, setCantidad] = useState(1)
@@ -82,9 +60,6 @@ export function PresentacionSelectorModal({
   if (!producto) return null
 
   const sel = presentaciones.find((p) => p.id === selId) ?? null
-  // "≈ N unidad" bajo cada opción: unidad BASE del granel (m³) o unidad de VENTA
-  // real cuando viene de una lista override (caso unidad de compra/venta, ej. Metro).
-  const unidad = abreviaturaUnidad((presentacionesOverride ? producto.unidadVenta : producto.unidadBase) ?? "")
   const totalLinea = sel ? sel.precio * cantidad : 0
 
   function confirmar() {
@@ -124,8 +99,14 @@ export function PresentacionSelectorModal({
                   <span className="pgs-opcion-precio">
                     {p.agotado ? "Agotada" : formatMXN(p.precio)}
                   </span>
-                  {!p.agotado && p.factor ? (
-                    <span className="pgs-opcion-factor">≈ {p.factor} {unidad}</span>
+                  {/* Se expresa siempre hacia el nivel INMEDIATO ANTERIOR de
+                      la cadena (ej. Caja ≈ 5 Bolsa, Bolsa ≈ 10 Pieza), no
+                      hacia la base de inventario ni acumulado hasta el nivel
+                      más pequeño — es el mismo factor que ya se capturó en el
+                      drawer para ese nivel. undefined en el nivel más pequeño
+                      (no tiene anterior). */}
+                  {!p.agotado && p.factorMenor ? (
+                    <span className="pgs-opcion-factor">≈ {p.factorMenor} {abreviaturaUnidad(p.unidadMenor ?? "")}</span>
                   ) : null}
                 </button>
               ))}

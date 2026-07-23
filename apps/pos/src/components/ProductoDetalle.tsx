@@ -47,9 +47,12 @@ export function ProductoDetalle({ producto, onVolver, onSeleccionarCompraVenta }
   // activo). Informativo: aparece aunque aún no se cumplan las condiciones.
   const promosArt = promosDeArticulo(producto.sku, promos, contextoDeCliente(state.clienteActivo))
   const skusEnCarrito = new Set(state.items.map((i) => i.sku))
-  // Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros): "Agregar al
-  // carrito" abre el selector metro-vs-rollo en vez de agregar directo.
-  const esCompraVenta = !!producto.presentaCompraVenta && !!onSeleccionarCompraVenta
+  // Cadena de N niveles de unidad (Pieza→Bolsa→Caja…, o el shim legacy de 2
+  // niveles Unidad de Compra/Venta): "Agregar al carrito" abre el selector de
+  // presentaciones en vez de agregar directo por pieza. Mismo criterio que
+  // GridProductos.tsx (tieneNiveles) — nivelesUnidad es la fuente real;
+  // presentaCompraVenta es el shim para artículos que aún no migraron.
+  const esCompraVenta = ((producto.nivelesUnidad?.length ?? 0) > 1 || !!producto.presentaCompraVenta) && !!onSeleccionarCompraVenta
 
   function handleAgregar(comoEncargo = false) {
     for (let i = 0; i < cantidad; i++) {

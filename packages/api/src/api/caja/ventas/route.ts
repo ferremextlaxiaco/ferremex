@@ -34,21 +34,16 @@ interface ItemVenta {
   existencia?: number
   proveedor_id?: string
   proveedor?: string
-  // Artículo especial (a granel): inventario INFORMATIVO. La línea SÍ descuenta
-  // inventario (para tener un estimado de cuánto queda) pero NUNCA valida ni
-  // bloquea por número — el stock puede quedar en negativo. El único bloqueo real
-  // es el switch "Agotado" del artículo, que el front respeta antes de agregar.
-  // `granel_descuento` = cuánto descontar de la unidad base (cantidad × factor de
-  // la presentación); si no hay factor, es 0 y no toca inventario.
-  granel?: boolean
-  granel_descuento?: number
-  // Venta por UNIDAD DE COMPRA completa (ej. "Bolsa" = 50 piezas). A diferencia
-  // del granel, el inventario es REAL: `cantidad` en la línea es el número de
-  // bolsas (para que precio_unitario × cantidad cobre correctamente), y se
-  // descuenta/valida `cantidad * unidad_compra_factor` PIEZAS reales del stock —
-  // bloquea igual que una línea normal si no alcanza. Ver ArticleDrawer § Precios
-  // de Venta / PresentacionSelectorModal (Buscador.tsx).
+  // Venta por un NIVEL de la cadena de unidades (ver lib/niveles.ts — ej. "Bolsa"
+  // = 50 Piezas, o "Carretilla" de Arena): `cantidad` en la línea es el número de
+  // unidades de ESE nivel (para que precio_unitario × cantidad cobre
+  // correctamente), y se descuenta `cantidad * unidad_compra_factor` unidades
+  // reales del inventory item base. `inventario_informativo` decide si eso
+  // BLOQUEA (false, caso normal — Taquete Pieza/Bolsa) o solo descuenta sin
+  // bloquear, permitiendo negativo (true, ej. Arena — el único bloqueo real es
+  // el switch "Agotado" por nivel/global, que el front ya respeta antes de agregar).
   unidad_compra_factor?: number
+  inventario_informativo?: boolean
 }
 
 interface VentaBody {
@@ -527,13 +522,14 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
 
       // Validar que ningún item supere el stock disponible. Las líneas marcadas
       // como ENCARGO se exceptúan: se venden sobre pedido (inventario a negativo).
-      // Las líneas GRANEL también: su inventario es informativo (puede ir a
-      // negativo), el bloqueo real es el switch "Agotado" (validado en el front).
-      // Unidad de COMPRA (`unidad_compra_factor`): la cantidad de la línea es
-      // BOLSAS, se valida contra el stock real en PIEZAS (cantidad × factor) — a
-      // diferencia del granel, SÍ bloquea si no alcanza.
+      // Las líneas de INVENTARIO INFORMATIVO también: su inventario es un
+      // estimado (puede ir a negativo), el bloqueo real es el switch "Agotado"
+      // por nivel/global (validado en el front). Unidad de un nivel de cadena
+      // (`unidad_compra_factor`): la cantidad de la línea es unidades de ESE
+      // nivel, se valida contra el stock real base (cantidad × factor) — a
+      // diferencia del informativo, SÍ bloquea si no alcanza.
       for (const item of items) {
-        if (item.encargo || item.granel) continue
+        if (item.encargo || item.inventario_informativo) continue
         const factorCompra = item.unidad_compra_factor && item.unidad_compra_factor > 0 ? item.unidad_compra_factor : 1
         const cantidadReal = item.cantidad * factorCompra
         const inventoryItemId = itemPorSku.get(item.sku)
@@ -606,23 +602,13 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             continue
           }
 
-          // GRANEL (inventario informativo): descuenta la equivalencia en la
-          // unidad base (cantidad × factor de la presentación, ya calculada en el
-          // front como `granel_descuento`). PUEDE dejar el stock en NEGATIVO — la
-          // variante tiene allow_backorder=true, así que adjustInventory no falla.
-          // Si no hay factor (granel_descuento=0) no toca inventario. Nunca bloquea.
-          if (item.granel) {
-            const desc = Number(item.granel_descuento) || 0
-            if (desc > 0 && inventoryItemId && nivel) {
-              await inventoryModule.adjustInventory(inventoryItemId, nivel.location_id, -desc)
-              aplicados.push({ itemId: inventoryItemId, locationId: nivel.location_id, cantidad: desc })
-            }
-            continue
-          }
-
-          // UNIDAD DE COMPRA completa (ej. "Bolsa"): `item.cantidad` son BOLSAS,
-          // se descuenta cantidad × factor PIEZAS reales (ya validado arriba que
-          // alcanza — a diferencia del granel, esta SÍ bloquea).
+          // NIVEL de cadena de unidades (ej. "Bolsa" = 50 Piezas, o "Carretilla"
+          // de Arena): `item.cantidad` son unidades de ESE nivel, se descuenta
+          // cantidad × factor unidades reales del inventory item base. Con
+          // `inventario_informativo=true` (ej. Arena) esto PUEDE dejar el stock
+          // en NEGATIVO — la variante tiene allow_backorder=true, así que
+          // adjustInventory no falla (ya validado arriba que NO bloquea para
+          // este caso). Sin informativo, ya se validó que alcanza.
           if (item.unidad_compra_factor && item.unidad_compra_factor > 0) {
             const cantidadReal = item.cantidad * item.unidad_compra_factor
             if (!inventoryItemId || !nivel) continue
@@ -660,15 +646,13 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
             // `no_descontar` se persiste para que la CANCELACIÓN no reintegre
             // inventario de líneas que nunca lo descontaron (modo encargo global).
             ...(i.encargo ? { encargo: true, proveedor: i.proveedor ?? null, ...(i.no_descontar ? { no_descontar: true } : {}) } : {}),
-            // Artículo especial (a granel): guardamos la presentación (para ticket /
-            // historial) y `granel_descuento` — la cantidad EN UNIDAD BASE que se
-            // descontó — para que la cancelación reintegre exactamente eso (no la
-            // cantidad de presentaciones, que sería incorrecta).
-            ...(i.granel ? { granel: true, granel_descuento: Number(i.granel_descuento) || 0, presentacion: (i as { presentacion?: string }).presentacion ?? null } : {}),
-            // Unidad de COMPRA completa (ej. "Bolsa"): guardamos el factor para
-            // que la CANCELACIÓN reintegre cantidad × factor piezas reales (no
-            // solo `cantidad`, que está en bolsas — ver ventas/[folio]/route.ts).
-            ...(i.unidad_compra_factor ? { unidad_compra_factor: i.unidad_compra_factor, presentacion: (i as { presentacion?: string }).presentacion ?? null } : {}),
+            // Nivel de cadena de unidades (ej. "Bolsa" o "Carretilla"): guardamos
+            // el factor para que la CANCELACIÓN reintegre cantidad × factor
+            // unidades reales (no solo `cantidad`, que está en unidades del
+            // nivel — ver ventas/[folio]/route.ts). `inventario_informativo` viaja
+            // para que la cancelación sepa que puede reintegrar aunque el stock
+            // quede en negativo (ej. Arena), sin cambiar el cálculo del reintegro.
+            ...(i.unidad_compra_factor ? { unidad_compra_factor: i.unidad_compra_factor, presentacion: (i as { presentacion?: string }).presentacion ?? null, inventario_informativo: !!i.inventario_informativo } : {}),
           })),
           // `total` de la venta = lo COBRADO HOY (para que el corte cuadre). Sin
           // encargo es el total normal; con encargo es parte-con-stock + anticipo;

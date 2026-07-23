@@ -116,10 +116,9 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
   const modoMixto = state.modoEncargo && !state.encargoReposicion
   // ¿Una línea aporta faltante encargado? (para preview de resta y para la ficha)
   const esLineaEncargo = (i: (typeof state.items)[number]) =>
-    // Las líneas de artículo especial (granel) NUNCA son encargo: su inventario es
-    // informativo, no se pide al proveedor. Se excluyen aunque cantidad > existencia
-    // (que para granel es siempre 0).
-    !i.esGranel && (modoReposicion || i.esEncargo || (modoMixto && i.cantidad > i.existencia))
+    // Las líneas de inventario informativo NUNCA son encargo: no se pide al
+    // proveedor. Se excluyen aunque cantidad > existencia.
+    !i.inventarioInformativo && (modoReposicion || i.esEncargo || (modoMixto && i.cantidad > i.existencia))
   const faltanteLinea = (i: (typeof state.items)[number]) =>
     modoReposicion ? i.cantidad : Math.max(0, i.cantidad - i.existencia)
   // Si la FICHA se abre al entrar al cobro (define el anticipo). Hay encargo si el
@@ -646,35 +645,30 @@ export function ModalCobro({ onCerrar, onVentaCompletada }: ModalCobroProps) {
         // logueado por defecto. No afecta el corte (que agrupa por caja).
         vendedor: state.vendedorVenta?.nombre ?? state.cajero.nombre,
         items: ventaItems.map((i) => ({
-          // Artículo especial (granel): el `sku` de la línea es compuesto
-          // (`PADRE::presId`) para separar presentaciones en el carrito, pero el
-          // backend descuenta inventario por el SKU REAL (`granelSku`).
-          sku: i.esGranel && i.granelSku ? i.granelSku : i.sku,
+          // El `sku` de la línea es compuesto (`real::nivelId`) para separar
+          // niveles/presentaciones en el carrito; el backend descuenta
+          // inventario por el SKU REAL (`skuBase`).
+          sku: i.skuBase ?? i.sku,
           descripcion: i.descripcion,
           cantidad: i.cantidad,
           // Precio unitario ya con promoción aplicada (gana sobre mayoreo).
           precio_unitario: precioUnitEfectivo(i),
           // Traza del paquete (si la línea proviene de un paquete vendido).
           ...(i.paquete_id ? { paquete_id: i.paquete_id, paquete_nombre: i.paquete_nombre } : {}),
-          // Artículo especial (granel): inventario informativo. `granel_descuento` =
-          // cantidad × factor de la presentación (en unidad base). El backend
-          // descuenta eso sin validar ni bloquear (puede ir a negativo).
-          ...(i.esGranel
-            ? {
-                granel: true,
-                granel_descuento: i.granelFactor ? Math.round(i.cantidad * i.granelFactor * 1000) / 1000 : 0,
-                presentacion: i.presentacion ?? "",
-              }
-            : {}),
-          // Venta por UNIDAD DE COMPRA completa (ej. "Bolsa"): `cantidad` en el
-          // carrito es el número de BOLSAS (para cobrar precio × cantidad
-          // correctamente); el backend descuenta cantidad × factor PIEZAS reales
-          // del inventario — a diferencia del granel, SÍ valida/bloquea si no
-          // alcanza (ver /caja/ventas). `unidad_compra_factor` viaja para eso.
+          // Venta por UNIDAD DE COMPRA completa (ej. "Bolsa") o por cualquier
+          // nivel de una cadena de N niveles (Pieza→Bolsa→Caja…): `cantidad` en
+          // el carrito es el número de unidades de ESE nivel (para cobrar precio
+          // × cantidad correctamente); el backend descuenta cantidad × factor
+          // PIEZAS/unidades reales del inventario. `unidad_compra_factor` = ya
+          // resuelto por Buscador vía factorABase (1 en el nivel base).
+          // `inventario_informativo` decide si esa validación BLOQUEA (false,
+          // caso normal) o solo descuenta sin bloquear, permitiendo negativo
+          // (true, ej. Arena) — ver /caja/ventas.
           ...(i.esUnidadCompra
             ? {
-                unidad_compra_factor: i.compraVentaFactor ?? 1,
+                unidad_compra_factor: i.factorNivelABase ?? i.compraVentaFactor ?? 1,
                 presentacion: i.unidadCompraNombre ?? "",
+                inventario_informativo: !!i.inventarioInformativo,
               }
             : {}),
           // Venta por encargo. Dos sabores:

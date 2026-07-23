@@ -2,6 +2,7 @@ import { MedusaRequest, MedusaResponse } from "@medusajs/framework/http"
 import { ContainerRegistrationKeys, Modules } from "@medusajs/framework/utils"
 import { normalizarFonetico } from "../../../lib/text"
 import { amountAPesos } from "../../../lib/precio"
+import { nivelesDesdeLegacy, existenciaEnUnidadMenor } from "../../../lib/niveles"
 
 /** Convierte una URL absoluta de thumbnail a ruta relativa /static/... */
 function thumbnailPath(url: string | null | undefined): string | null {
@@ -37,25 +38,35 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     return
   }
 
-  type PresentacionGranel = { id: string; nombre: string; precio: number; factor: number | null; agotado: boolean }
-  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; precioVenta1: number; precioVenta2: number; precioVenta3: number; precioVenta4: number; granel: boolean; unidadVenta: string; unidadCompra: string; factor: number; esGranel: boolean; agotado: boolean; agotadoBase: boolean; unidadBase: string; presentaciones: PresentacionGranel[] }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type NivelUnidadRaw = any
+  type VarianteBase = { id: string; sku: string | null; title: string | null; thumbnail: string | null; impuesto: boolean; marca: string; departamento: string; categoria: string; proveedor: string; proveedor_id: string; especificaciones: { clave: string; valor: string }[]; mayoreoActivo: boolean; mayoreoMin: number; precio2: number; precio3: number; precio4: number; precioVenta1: number; precioVenta2: number; precioVenta3: number; precioVenta4: number; granel: boolean; unidadVenta: string; unidadCompra: string; factor: number; inventarioInformativo: boolean; agotadoGlobal: boolean; nivelesRaw: NivelUnidadRaw[] }
   const variantesBase: VarianteBase[] = []
 
-  // Sanea el array de presentaciones que viene en metadata (artículo especial).
+  // Cadena de N niveles guardada en metadata.nivelesUnidad (crudo, precios
+  // SIN IVA — se les aplica IVA junto con el resto de precios más abajo).
+  // Vacío = artículo sin cadena propia guardada (se deriva de legacy después).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const leerPresentaciones = (meta: any): PresentacionGranel[] => {
-    const raw = meta?.presentaciones
-    if (!Array.isArray(raw)) return []
+  const leerNivelesRaw = (meta: any): NivelUnidadRaw[] => {
+    const raw = meta?.nivelesUnidad
+    if (!Array.isArray(raw) || raw.length === 0) return []
     return raw
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((p: any) => ({
-        id: String(p?.id ?? ""),
-        nombre: String(p?.nombre ?? ""),
-        precio: Number(p?.precio) || 0,
-        factor: p?.factor === "" || p?.factor == null ? null : Number(p.factor) || 0,
-        agotado: Boolean(p?.agotado),
+      .map((n: any) => ({
+        id: String(n?.id ?? ""),
+        nombre: String(n?.nombre ?? ""),
+        claveUnidadSat: String(n?.claveUnidadSat ?? "H87"),
+        precio1: Number(n?.precio1) || 0,
+        precio2: Number(n?.precio2) || 0,
+        precio3: Number(n?.precio3) || 0,
+        precio4: Number(n?.precio4) || 0,
+        mayoreoActivo: Boolean(n?.mayoreoActivo),
+        mayoreoMin: Number(n?.mayoreoMin) || 0,
+        factorDesdeAnterior: n?.factorDesdeAnterior === "" || n?.factorDesdeAnterior == null ? null : Number(n.factorDesdeAnterior) || null,
+        esBaseInventario: Boolean(n?.esBaseInventario),
+        agotado: Boolean(n?.agotado),
       }))
-      .filter((p: PresentacionGranel) => p.nombre !== "")
+      .filter((n: NivelUnidadRaw) => n.nombre !== "")
   }
   // ¿El match fue un código EXACTO (SKU completo o código de barras)? En ese caso
   // sí cortocircuitamos (escaneo de barras / clave completa = un único resultado).
@@ -106,11 +117,9 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       let unidadVenta = ""
       let unidadCompra = ""
       let factor = 1
-      let esGranel = false
-      let agotado = false
-      let agotadoBase = false
-      let unidadBase = ""
-      let presentaciones: PresentacionGranel[] = []
+      let inventarioInformativo = false
+      let agotadoGlobal = false
+      let nivelesRaw: NivelUnidadRaw[] = []
       if (varEncontrada.product_id) {
         try {
           const prod = await productModule.retrieveProduct(varEncontrada.product_id, { select: ["thumbnail", "metadata"] })
@@ -138,15 +147,13 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
           unidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
           unidadCompra = meta.unidadCompra ?? "H87"
           factor = Number(meta.factor) || 1
-          // Artículo especial (a granel): presentaciones + disponibilidad manual.
-          esGranel = !!meta.esGranel
-          agotado = !!meta.agotado
-          agotadoBase = !!meta.agotadoBase
-          unidadBase = meta.unidadBase ?? ""
-          presentaciones = leerPresentaciones(meta)
+          // Inventario informativo (antes "artículo especial/granel").
+          inventarioInformativo = !!meta.inventarioInformativo
+          agotadoGlobal = !!meta.agotadoGlobal
+          nivelesRaw = leerNivelesRaw(meta)
         } catch { /* sin metadata */ }
       }
-      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, precioVenta1, precioVenta2, precioVenta3, precioVenta4, granel, unidadVenta, unidadCompra, factor, esGranel, agotado, agotadoBase, unidadBase, presentaciones })
+      variantesBase.push({ id: varEncontrada.id, sku: varEncontrada.sku ?? null, title: varEncontrada.title ?? null, thumbnail, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo, mayoreoMin, precio2, precio3, precio4, precioVenta1, precioVenta2, precioVenta3, precioVenta4, granel, unidadVenta, unidadCompra, factor, inventarioInformativo, agotadoGlobal, nivelesRaw })
       // Solo cortocircuitamos (un único resultado, sin búsqueda por nombre) cuando
       // el match vino de un CÓDIGO REAL: un `?sku=` explícito o un código de barras
       // escaneado. Si el match vino del texto `q` que CASUALMENTE coincide con un
@@ -222,8 +229,8 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
                 precioVenta4: Number(meta.precioVenta4) || 0,
                 granel: !!meta.granel, unidadVenta: meta.unidadVenta ?? meta.unidad_venta ?? "H87",
                 unidadCompra: meta.unidadCompra ?? "H87", factor: Number(meta.factor) || 1,
-                esGranel: !!meta.esGranel, agotado: !!meta.agotado, agotadoBase: !!meta.agotadoBase,
-                unidadBase: meta.unidadBase ?? "", presentaciones: leerPresentaciones(meta),
+                inventarioInformativo: !!meta.inventarioInformativo, agotadoGlobal: !!meta.agotadoGlobal,
+                nivelesRaw: leerNivelesRaw(meta),
               })
             }
           }
@@ -322,13 +329,11 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         const vUnidadVenta = meta.unidadVenta ?? meta.unidad_venta ?? "H87"
         const vUnidadCompra = meta.unidadCompra ?? "H87"
         const vFactor = Number(meta.factor) || 1
-        const vEsGranel = !!meta.esGranel
-        const vAgotado = !!meta.agotado
-        const vAgotadoBase = !!meta.agotadoBase
-        const vUnidadBase = meta.unidadBase ?? ""
-        const vPresentaciones = leerPresentaciones(meta)
+        const vInventarioInformativo = !!meta.inventarioInformativo
+        const vAgotadoGlobal = !!meta.agotadoGlobal
+        const vNivelesRaw = leerNivelesRaw(meta)
         for (const v of p.variants ?? []) {
-          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, precioVenta1: vPrecioVenta1, precioVenta2: vPrecioVenta2, precioVenta3: vPrecioVenta3, precioVenta4: vPrecioVenta4, granel: vGranel, unidadVenta: vUnidadVenta, unidadCompra: vUnidadCompra, factor: vFactor, esGranel: vEsGranel, agotado: vAgotado, agotadoBase: vAgotadoBase, unidadBase: vUnidadBase, presentaciones: vPresentaciones })
+          variantesBase.push({ id: v.id, sku: v.sku ?? null, title: v.title ?? null, thumbnail: thumb, impuesto, marca, departamento, categoria, proveedor, proveedor_id, especificaciones, mayoreoActivo: vMayoreoActivo, mayoreoMin: vMayoreoMin, precio2: vPrecio2, precio3: vPrecio3, precio4: vPrecio4, precioVenta1: vPrecioVenta1, precioVenta2: vPrecioVenta2, precioVenta3: vPrecioVenta3, precioVenta4: vPrecioVenta4, granel: vGranel, unidadVenta: vUnidadVenta, unidadCompra: vUnidadCompra, factor: vFactor, inventarioInformativo: vInventarioInformativo, agotadoGlobal: vAgotadoGlobal, nivelesRaw: vNivelesRaw })
         }
       }
     }
@@ -404,6 +409,21 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
       const precioVenta2 = v.precioVenta2 > 0 && v.impuesto ? Math.round(v.precioVenta2 * 1.16 * 100) / 100 : v.precioVenta2
       const precioVenta3 = v.precioVenta3 > 0 && v.impuesto ? Math.round(v.precioVenta3 * 1.16 * 100) / 100 : v.precioVenta3
       const precioVenta4 = v.precioVenta4 > 0 && v.impuesto ? Math.round(v.precioVenta4 * 1.16 * 100) / 100 : v.precioVenta4
+      // Cadena de niveles resuelta ANTES de `existencia`: la necesitamos para
+      // convertir el stock real (en la unidad BASE de inventario, ej. Bolsa)
+      // a la unidad MÁS PEQUEÑA de la cadena (ej. Pieza) — la que se muestra
+      // al vendedor y con la que se compara el tope de cada línea del carrito.
+      const nivelesResueltos = v.nivelesRaw.length > 0
+        ? v.nivelesRaw
+        : nivelesDesdeLegacy({
+            unidadVenta: v.unidadVenta,
+            unidadCompra: v.unidadCompra,
+            factor: v.factor,
+            precioVenta1, precioVenta2, precioVenta3, precioVenta4,
+            precio1: precio, precio2, precio3, precio4,
+            mayoreoActivo: v.mayoreoActivo, mayoreoMin: v.mayoreoMin,
+          })
+      const existenciaBase = existenciaPorSku.get(v.sku ?? "") ?? 0
       return {
         sku: v.sku ?? "",
         descripcion: v.title ?? "",
@@ -418,7 +438,10 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         // Si lleva IVA, `precio`/`precio2` ya vienen con el 16% incluido. El POS
         // usa este flag para desglosar base+IVA en el carrito y en el CFDI.
         impuesto: !!v.impuesto,
-        existencia: existenciaPorSku.get(v.sku ?? "") ?? 0,
+        // Convertida a la unidad MÁS PEQUEÑA de la cadena (ej. Pieza), no la
+        // unidad BASE de inventario real (ej. Bolsa) — ver nivelesResueltos.
+        // Con 1 solo nivel (sin cadena), factor=1 y no cambia nada.
+        existencia: existenciaEnUnidadMenor(nivelesResueltos, existenciaBase),
         thumbnail: v.thumbnail,
         marca: v.marca,
         departamento: v.departamento,
@@ -442,18 +465,33 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
         unidadCompra: v.unidadCompra,
         factor: v.factor,
         presentaCompraVenta: v.unidadCompra !== v.unidadVenta && v.factor > 1,
-        // Artículo especial (a granel): presentaciones (padre→hijos) + disponibilidad
-        // manual. El precio de cada presentación se guarda SIN IVA; se devuelve CON
-        // IVA (×1.16) listo para mostrar, igual que `precio`. El descuento de
-        // inventario es informativo (no bloquea) — ver /caja/ventas.
-        esGranel: v.esGranel,
-        agotado: v.agotado,
-        agotadoBase: v.agotadoBase,
-        unidadBase: v.unidadBase,
-        presentaciones: v.presentaciones.map((p) => ({
-          ...p,
-          precio: p.precio > 0 && v.impuesto ? Math.round(p.precio * 1.16 * 100) / 100 : p.precio,
-        })),
+        // Cadena de N niveles (generalización de unidadCompra/unidadVenta/factor).
+        // Si el artículo ya se editó con el builder nuevo, `nivelesRaw` (de
+        // metadata.nivelesUnidad) es la fuente real — necesaria para cadenas de
+        // 3+ niveles. Si no existe, se deriva de los campos legacy. En ambos
+        // casos se aplica el mismo criterio de IVA que el resto de precios.
+        nivelesUnidad: v.nivelesRaw.length > 0
+          ? v.nivelesRaw.map((n) => ({
+              ...n,
+              precio1: n.precio1 > 0 && v.impuesto ? Math.round(n.precio1 * 1.16 * 100) / 100 : n.precio1,
+              precio2: n.precio2 > 0 && v.impuesto ? Math.round(n.precio2 * 1.16 * 100) / 100 : n.precio2,
+              precio3: n.precio3 > 0 && v.impuesto ? Math.round(n.precio3 * 1.16 * 100) / 100 : n.precio3,
+              precio4: n.precio4 > 0 && v.impuesto ? Math.round(n.precio4 * 1.16 * 100) / 100 : n.precio4,
+            }))
+          : nivelesDesdeLegacy({
+              unidadVenta: v.unidadVenta,
+              unidadCompra: v.unidadCompra,
+              factor: v.factor,
+              precioVenta1, precioVenta2, precioVenta3, precioVenta4,
+              precio1: precio, precio2, precio3, precio4,
+              mayoreoActivo: v.mayoreoActivo, mayoreoMin: v.mayoreoMin,
+            }),
+        // Inventario informativo (antes "artículo especial/granel"): el `agotado`
+        // real vive por nivel dentro de `nivelesUnidad` (ya mapeado arriba, sin
+        // conversión de IVA porque es un booleano). `agotadoGlobal` apaga TODO
+        // el artículo de un jalón — ver /caja/ventas.
+        inventarioInformativo: v.inventarioInformativo,
+        agotadoGlobal: v.agotadoGlobal,
       }
     })
     .filter((r) => r.sku && r.descripcion)

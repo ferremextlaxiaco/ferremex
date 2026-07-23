@@ -1,6 +1,9 @@
 // Todas las llamadas van al mismo origen en producción.
 // En dev, Vite proxea /caja → localhost:9000.
 
+import type { NivelUnidad } from "./niveles"
+export type { NivelUnidad } from "./niveles"
+
 // ── Productos ────────────────────────────────────────────────────────────────
 
 export interface ProductoPOS {
@@ -52,30 +55,50 @@ export interface ProductoPOS {
   precioVenta2?: number
   precioVenta3?: number
   precioVenta4?: number
-  // Artículo especial (a granel): inventario informativo + presentaciones
-  // (padre→hijos) + interruptor manual de disponibilidad. Ver ArticleDrawer y
-  // PresentacionSelectorModal. `esGranel` = es artículo especial; `agotado` =
-  // switch manual "se acabó" (bloquea la venta); `unidadBase` = unidad del
-  // inventario informativo (ej. "MTQ" m³); `presentaciones` = hijos vendibles.
-  esGranel?: boolean
-  agotado?: boolean
-  // Disponibilidad de la unidad base (m³ = el Precio 1 del artículo) como forma de
-  // venta propia en el modal, independiente de las presentaciones hijas.
-  agotadoBase?: boolean
-  unidadBase?: string
-  presentaciones?: PresentacionGranel[]
+  // Cadena de N niveles de unidad (Pieza→Bolsa→Caja…), generalización de
+  // unidadCompra/unidadVenta/factor a más de 2 niveles con auto-consolidación
+  // en el carrito. Ver lib/niveles.ts. Ausente/vacío = artículo sin cadena
+  // configurada (usa unidadVenta/precio a secas, como siempre). Cuando el
+  // artículo SÍ tiene unidadCompra+factor, el backend siempre la proyecta
+  // (derivada si no está en metadata) — nunca queda sin cadena equivalente.
+  nivelesUnidad?: NivelUnidad[]
+  // Inventario INFORMATIVO (antes "artículo especial/granel"): el nivel base
+  // de la cadena NO bloquea la venta por stock (permite negativo — es un
+  // estimado, ej. Arena en m³), y cada nivel gana su propio `agotado` manual
+  // (ver NivelUnidad). Cuando es false/ausente (caso normal), el nivel base
+  // SÍ valida/bloquea contra stock real, sin disponibilidad manual por nivel.
+  inventarioInformativo?: boolean
+  // Switch manual "se acabó todo" a nivel de artículo completo, independiente
+  // del `agotado` de cada nivel — apaga la venta del artículo entero de un
+  // jalón sin tener que marcar cada nivel uno por uno. Solo tiene efecto
+  // cuando `inventarioInformativo` está activo.
+  agotadoGlobal?: boolean
 }
 
-// Presentación de un artículo especial (a granel). El precio llega CON IVA (listo
-// para mostrar). `factor` = equivalencia en la unidad base para el descuento
-// informativo del inventario (opcional; null/0 = no descuenta). `agotado` = esta
-// presentación específica no está disponible aunque el padre sí.
-export interface PresentacionGranel {
+// Opción de presentación en PresentacionSelectorModal (una por nivel de la
+// cadena): nombre, precio (CON IVA, listo para mostrar), factor a la base
+// (informativo, para mostrar "≈ N unidad"), y si está disponible.
+export interface OpcionPresentacion {
   id: string
   nombre: string
   precio: number
+  /** Factor hacia la BASE DE INVENTARIO real de la cadena (puede ser Bolsa,
+   *  Caja, etc. — la que factura el proveedor). Es el que se envía al backend
+   *  como `unidad_compra_factor` para descontar/validar stock: NO usar para
+   *  texto mostrado, solo para lógica de inventario. */
   factor: number | null
   agotado: boolean
+  /** Nombre del nivel BASE de inventario (ver `factor` arriba) — no usado hoy
+   *  en el selector, se conserva por si algún consumidor futuro necesita el
+   *  factor de inventario. */
+  unidadBase?: string
+  /** Factor hacia el nivel INMEDIATO ANTERIOR en la cadena (ej. Caja ≈ 5
+   *  Bolsa, Bolsa ≈ 10 Pieza) — el mismo valor que `factorDesdeAnterior` del
+   *  nivel, para el texto "≈ N <unidadMenor>" del selector. undefined en el
+   *  nivel más pequeño de la cadena (no tiene anterior). */
+  factorMenor?: number
+  /** Nombre del nivel inmediato anterior (ver `factorMenor`). */
+  unidadMenor?: string
 }
 
 export interface FiltrosBusqueda {
@@ -112,10 +135,13 @@ export interface VentaRequest {
   // `encargo`: la línea se vende SIN stock (venta sobre pedido). El backend salta
   // la validación de stock para ella, descuenta en negativo, y la agrega al pedido
   // abierto de su proveedor. `proveedor_id`/`proveedor` viajan para ese pedido.
-  // `granel`: artículo especial (inventario informativo). El backend descuenta
-  // `granel_descuento` (unidad base) sin validar ni bloquear por número; `presentacion`
-  // = nombre de la presentación vendida (para ticket/historial).
-  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; existencia?: number; proveedor_id?: string; proveedor?: string; granel?: boolean; granel_descuento?: number; presentacion?: string }[]
+  // `unidad_compra_factor`: la línea se vende por un nivel de la cadena de
+  // unidades (ver lib/niveles.ts) — el backend descuenta/valida
+  // `cantidad × unidad_compra_factor` PIEZAS/unidades reales del inventario.
+  // `inventario_informativo` decide si esa validación BLOQUEA (false, caso
+  // normal) o solo descuenta sin bloquear, permitiendo negativo (true, ej.
+  // Arena). `presentacion` = nombre del nivel vendido (para ticket/historial).
+  items: { sku: string; descripcion: string; cantidad: number; precio_unitario: number; paquete_id?: string; paquete_nombre?: string; encargo?: boolean; no_descontar?: boolean; existencia?: number; proveedor_id?: string; proveedor?: string; unidad_compra_factor?: number; inventario_informativo?: boolean; presentacion?: string }[]
   pago_efectivo: number
   pago_transferencia?: number
   // Pago con tarjeta bancaria (crédito/débito vía TPV). No es efectivo (no abre
@@ -416,13 +442,11 @@ export interface ArticuloPOS {
   localizacion: string
   peso: number
   ventaGranel: boolean
-  // Artículo especial (a granel): ver ProductoPOS y ArticleDrawer. Opcionales y
-  // retrocompatibles (artículos viejos no los traen).
-  esGranel?: boolean
-  agotado?: boolean
-  agotadoBase?: boolean
-  unidadBase?: string
-  presentaciones?: PresentacionGranel[]
+  // Cadena de N niveles de unidad — ver ProductoPOS y lib/niveles.ts.
+  nivelesUnidad?: NivelUnidad[]
+  // Inventario informativo + switch global — ver ProductoPOS.
+  inventarioInformativo?: boolean
+  agotadoGlobal?: boolean
   mayoreoActivo: boolean
   mayoreoMin: number
   thumbnail: string | null

@@ -12,12 +12,10 @@ interface GridProductosProps {
   onEncargar?: (p: ProductoPOS) => void
   /** SKUs que son componentes de algún paquete (para mostrar el badge de paquete). */
   skusEnPaquete?: Set<string>
-  /** Artículo especial (a granel): abre el selector de presentación en vez de
-   *  agregar directo. Si no se pasa, los granel caen al flujo normal. */
-  onSeleccionarGranel?: (p: ProductoPOS) => void
-  /** Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros, inventario REAL):
-   *  abre el selector "¿por metro o por rollo?" en vez de agregar directo. */
-  onSeleccionarCompraVenta?: (p: ProductoPOS) => void
+  /** Artículo con cadena de N niveles de unidad (Pieza→Bolsa→Caja…, o
+   *  inventario informativo tipo Arena): abre el selector de nivel en vez de
+   *  agregar directo. Si no se pasa, caen al flujo normal. */
+  onSeleccionarNiveles?: (p: ProductoPOS) => void
 }
 
 function stockLabel(existencia: number) {
@@ -26,7 +24,7 @@ function stockLabel(existencia: number) {
   return { texto: `${existencia} en stock`, clase: "badge-en-stock" }
 }
 
-export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete, onSeleccionarGranel, onSeleccionarCompraVenta }: GridProductosProps) {
+export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, onQuitar, onEncargar, skusEnPaquete, onSeleccionarNiveles }: GridProductosProps) {
   const { state } = usePOS()
   const cotizando = state.modoCotizacion
   const enEncargo = state.modoEncargo
@@ -37,70 +35,78 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
   return (
     <div className="grid-productos">
       {productos.map((p) => {
-        // ── Artículo especial (a granel): inventario informativo ─────────────
-        // No se topa por existencia y su único bloqueo es el switch "Agotado".
-        // El "+"/click abren el selector de presentación (onSeleccionarGranel).
-        const esGranel = !!p.esGranel && !!onSeleccionarGranel
-        if (esGranel) {
-          const bloqueado = !!p.agotado
-          const desde = (p.presentaciones ?? []).filter((x) => !x.agotado)
-          const precioDesde = desde.length ? Math.min(...desde.map((x) => x.precio)) : p.precio
-          return (
-            <button
-              key={p.sku}
-              className={`tarjeta-producto${bloqueado ? " tarjeta-agotada" : ""}`}
-              onClick={() => { if (!bloqueado) onSeleccionarGranel!(p) }}
-              disabled={bloqueado}
-              title={bloqueado ? `${p.descripcion} está marcado como agotado` : ""}
-            >
-              <div className="tarjeta-imagen">
-                {p.thumbnail ? (
-                  <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />
-                ) : (
-                  <div className="tarjeta-sin-imagen">
-                    <Package size={34} strokeWidth={1.5} />
-                  </div>
-                )}
-                {bloqueado ? (
-                  <span className="badge-stock badge-sin-stock">Agotado</span>
-                ) : (
-                  <span className="badge-stock badge-granel">Granel</span>
-                )}
-              </div>
-              <div className="tarjeta-info">
-                <p className="tarjeta-nombre">{p.descripcion}</p>
-                <p className="tarjeta-sku">{p.sku}</p>
-                <div className="tarjeta-footer">
-                  <p className="tarjeta-precio">
-                    {desde.length > 1 && <span className="tarjeta-precio-desde">desde </span>}
-                    ${precioDesde.toFixed(2)}
-                  </p>
-                  {!bloqueado && (
-                    <button
-                      className="btn-agregar-rapido"
-                      onClick={(e) => { e.stopPropagation(); onSeleccionarGranel!(p) }}
-                      title="Elegir presentación"
-                    >
-                      <Plus size={18} />
-                    </button>
+        // ── Artículo con cadena de N niveles de unidad ───────────────────────
+        // Dos sabores según `inventarioInformativo`:
+        //  - INFORMATIVO (ej. Arena): no se topa por existencia; el único
+        //    bloqueo es que TODOS sus niveles estén marcados Agotado (o el
+        //    switch global `agotadoGlobal`). Clic en la tarjeta abre el
+        //    selector de nivel directo (no el detalle normal).
+        //  - INVENTARIO REAL (ej. Taquete Pieza/Bolsa): se topa por existencia
+        //    real. Clic en la tarjeta abre el DETALLE normal; solo el botón
+        //    "+" abre el selector de nivel. Bloqueado también si el SKU YA
+        //    está en el carrito (todas las opciones comparten el mismo SKU
+        //    real, sin sufijo — agregar de nuevo fusionaría cantidades entre
+        //    niveles distintos).
+        const tieneNiveles = (p.nivelesUnidad?.length ?? 0) > 1 || !!p.presentaCompraVenta
+        if (tieneNiveles && onSeleccionarNiveles) {
+          const informativo = !!p.inventarioInformativo
+          if (informativo) {
+            const nivelesDisp = (p.nivelesUnidad ?? []).filter((n) => !n.agotado)
+            const bloqueado = !!p.agotadoGlobal || nivelesDisp.length === 0
+            const precioDesde = nivelesDisp.length ? Math.min(...nivelesDisp.map((n) => n.precio1)) : p.precio
+            return (
+              <button
+                key={p.sku}
+                className={`tarjeta-producto${bloqueado ? " tarjeta-agotada" : ""}`}
+                onClick={() => { if (!bloqueado) onSeleccionar(p) }}
+                disabled={bloqueado}
+                title={bloqueado ? `${p.descripcion} está marcado como agotado` : ""}
+              >
+                <div className="tarjeta-imagen">
+                  {p.thumbnail ? (
+                    <img src={p.thumbnail} alt={p.descripcion} loading="lazy" />
+                  ) : (
+                    <div className="tarjeta-sin-imagen">
+                      <Package size={34} strokeWidth={1.5} />
+                    </div>
+                  )}
+                  {bloqueado ? (
+                    <span className="badge-stock badge-sin-stock">Agotado</span>
+                  ) : (
+                    <span className="badge-stock badge-granel">Granel</span>
                   )}
                 </div>
-              </div>
-            </button>
-          )
-        }
+                <div className="tarjeta-info">
+                  <p className="tarjeta-nombre">{p.descripcion}</p>
+                  <p className="tarjeta-sku">{p.sku}</p>
+                  <div className="tarjeta-footer">
+                    <p className="tarjeta-precio">
+                      {nivelesDisp.length > 1 && <span className="tarjeta-precio-desde">desde </span>}
+                      ${precioDesde.toFixed(2)}
+                    </p>
+                    {!bloqueado && (
+                      <button
+                        className="btn-agregar-rapido"
+                        onClick={(e) => { e.stopPropagation(); onSeleccionarNiveles(p) }}
+                        title="Elegir presentación"
+                      >
+                        <Plus size={18} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </button>
+            )
+          }
 
-        // ── Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros) ─────────
-        // Inventario REAL (a diferencia del granel): se topa por existencia real
-        // en unidad de venta. Clic en la tarjeta abre el DETALLE normal (como
-        // cualquier producto); solo el botón "+" abre el selector metro-vs-rollo.
-        // Bloqueado también si el SKU YA está en el carrito: ambas opciones del
-        // selector usan el mismo SKU real (sin sufijo), así que agregar una
-        // segunda vez fusionaría cantidades entre precio de compra y de venta.
-        const esCompraVenta = !!p.presentaCompraVenta && !!onSeleccionarCompraVenta
-        if (esCompraVenta) {
           const yaEnCarrito = (cartMap?.get(p.sku) ?? 0) > 0
           const bloqueado = (p.existencia <= 0 && !sinTopeStock) || yaEnCarrito
+          // Precio del nivel MÁS PEQUEÑO de la cadena (ej. Pieza) — los campos
+          // legacy `precioVenta1`/`precio` no son confiables aquí: describen
+          // el nivel de venta del shim de 2 niveles fijos, que puede quedar en
+          // 0 cuando la base de inventario real está en un nivel intermedio
+          // (ej. Bolsa) de una cadena de 3+ niveles, como en este artículo.
+          const precioMenor = p.nivelesUnidad?.[0]?.precio1 ?? p.precioVenta1 ?? p.precio
           return (
             <button
               key={p.sku}
@@ -129,11 +135,14 @@ export function GridProductos({ productos, onSeleccionar, cartMap, onAgregar, on
                 <p className="tarjeta-nombre">{p.descripcion}</p>
                 <p className="tarjeta-sku">{p.sku}</p>
                 <div className="tarjeta-footer">
-                  <p className="tarjeta-precio">${(p.precioVenta1 ?? p.precio).toFixed(2)}</p>
+                  <p className="tarjeta-precio">
+                    <span className="tarjeta-precio-desde">desde </span>
+                    ${precioMenor.toFixed(2)}
+                  </p>
                   {!bloqueado && (
                     <button
                       className="btn-agregar-rapido"
-                      onClick={(e) => { e.stopPropagation(); onSeleccionarCompraVenta!(p) }}
+                      onClick={(e) => { e.stopPropagation(); onSeleccionarNiveles(p) }}
                       title="Elegir unidad de venta"
                     >
                       <Plus size={18} />

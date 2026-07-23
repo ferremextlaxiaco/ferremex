@@ -18,6 +18,8 @@ import {
   claveLinea,
   type LineaPromo,
 } from "./promociones"
+import type { NivelUnidad } from "./niveles"
+import { consolidarCarrito } from "./niveles"
 
 // ---------------------------------------------------------------------------
 // Tipos
@@ -63,19 +65,11 @@ export interface CartItem {
   // `unidadVenta` = código SAT de la unidad (kg/m/L) para mostrarla junto al peso.
   granel?: boolean
   unidadVenta?: string
-  // Artículo especial (a granel): la línea se agregó eligiendo una PRESENTACIÓN
-  // (m³/carretilla/bote). `esGranel` marca que su inventario es INFORMATIVO — el
-  // carrito nunca la topa por existencia y el backend descuenta sin bloquear.
-  // `presentacion` = nombre mostrado ("Carretilla"). `granelFactor` = equivalencia
-  // en unidad base por unidad de presentación (para el descuento informativo; 0/
-  // null = no descuenta). El descuento total = cantidad × granelFactor.
-  esGranel?: boolean
-  presentacion?: string
-  granelFactor?: number | null
-  // SKU REAL del producto padre (sin el sufijo de presentación). El `sku` de la
-  // línea es compuesto (`PADRE::presId`) para que cada presentación sea su propia
-  // línea; `granelSku` es el que el backend usa para descontar inventario.
-  granelSku?: string
+  // Artículo con inventario INFORMATIVO (antes "artículo especial/granel", ej.
+  // Arena): la línea se agregó eligiendo un NIVEL de la cadena (m³/carretilla/
+  // bote). El carrito nunca la topa por existencia y el backend descuenta sin
+  // bloquear (puede ir a negativo). Ver lib/niveles.ts / ArticuloPOS.
+  inventarioInformativo?: boolean
   // Cuando el item forma parte de un paquete vendido, `precio` ya es el precio
   // prorrateado del paquete para esa línea, `paquete_id`/`paquete_nombre` lo
   // marcan, y `paqueteCantidad` es cuántas unidades aporta el paquete por copia
@@ -106,6 +100,19 @@ export interface CartItem {
   esUnidadCompra?: boolean
   unidadCompraNombre?: string
   compraVentaFactor?: number
+  // Línea de un artículo con CADENA de N niveles de unidad (Pieza→Bolsa→Caja…,
+  // generalización de esUnidadCompra a más de 2 niveles — ver lib/niveles.ts).
+  // `nivelId` = nivel de esta línea dentro de `cadenaNiveles`; `factorNivelABase`
+  // = unidades base que representa 1 de este nivel (equivalente a
+  // compraVentaFactor, ya resuelto vía factorABase). `cadenaNiveles` viaja
+  // completa en la línea para que el reducer pueda auto-consolidar/des-consolidar
+  // sin volver a consultar el producto. `skuBase` = SKU real del artículo (todas
+  // las líneas de los distintos niveles de un mismo artículo comparten este
+  // valor; es lo que agrupa las líneas a la hora de consolidar).
+  nivelId?: string
+  factorNivelABase?: number
+  cadenaNiveles?: NivelUnidad[]
+  skuBase?: string
 }
 
 /** Los 4 modos de la pantalla de venta (derivados de los flags del estado). */
@@ -270,43 +277,45 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // inventario: se vende sobre pedido (puede quedar en negativo al cobrar).
       // El modo encargo global libera el tope para TODO el carrito.
       const esEncargo = state.modoEncargo || !!action.item.esEncargo || !!existe?.esEncargo
-      // Artículo especial (granel): inventario informativo → nunca se topa por
-      // existencia (igual que cotización/encargo). El bloqueo real es el switch
-      // "Agotado", que el front valida antes de despachar ADD_ITEM.
-      const esGranelLinea = !!action.item.esGranel || !!existe?.esGranel
+      // Inventario informativo (antes "granel"): nunca se topa por existencia
+      // (igual que cotización/encargo). El bloqueo real es el switch "Agotado"
+      // por nivel/global, que el front valida antes de despachar ADD_ITEM.
+      const esInformativoLinea = !!action.item.inventarioInformativo || !!existe?.inventarioInformativo
       if (existe) {
-        // En cotización, encargo o granel no se topa al inventario. En venta normal sí.
-        if (!state.modoCotizacion && !esEncargo && !esGranelLinea && existe.cantidad >= existe.existencia) return state
+        // En cotización, encargo o informativo no se topa al inventario. En venta normal sí.
+        if (!state.modoCotizacion && !esEncargo && !esInformativoLinea && existe.cantidad >= existe.existencia) return state
         return {
           ...state,
-          items: state.items.map((i) =>
+          items: consolidarCarrito(state.items.map((i) =>
             i.sku === action.item.sku
               ? { ...i, cantidad: i.cantidad + 1, ...(action.item.esEncargo ? { esEncargo: true } : {}) }
               : i
-          ),
+          )),
         }
       }
-      return { ...state, items: [...state.items, { ...action.item, cantidad: 1 }] }
+      return { ...state, items: consolidarCarrito([...state.items, { ...action.item, cantidad: 1 }]) }
     }
 
     case "INCREMENT":
       return {
         ...state,
-        items: state.items.map((i) =>
-          // En cotización, modo encargo o granel (inventario informativo) se
-          // permite exceder la existencia.
-          i.sku === action.sku && (state.modoCotizacion || state.modoEncargo || i.esGranel || i.cantidad < i.existencia)
+        items: consolidarCarrito(state.items.map((i) =>
+          // En cotización, modo encargo o inventario informativo se permite
+          // exceder la existencia.
+          i.sku === action.sku && (state.modoCotizacion || state.modoEncargo || i.inventarioInformativo || i.cantidad < i.existencia)
             ? { ...i, cantidad: i.cantidad + 1 }
             : i
-        ),
+        )),
       }
 
     case "DECREMENT":
       return {
         ...state,
-        items: state.items
-          .map((i) => (i.sku === action.sku ? { ...i, cantidad: i.cantidad - 1 } : i))
-          .filter((i) => i.cantidad > 0),
+        items: consolidarCarrito(
+          state.items
+            .map((i) => (i.sku === action.sku ? { ...i, cantidad: i.cantidad - 1 } : i))
+            .filter((i) => i.cantidad > 0)
+        ),
       }
 
     case "SET_CANTIDAD": {
@@ -314,25 +323,25 @@ function posReducer(state: PosState, action: PosAction): PosState {
       // la existencia); en venta normal, se limita a lo disponible en inventario.
       const linea = state.items.find(i => i.sku === action.sku)
       const existencia = linea?.existencia ?? action.cantidad
-      // Granel = inventario informativo → sin tope (como cotización/encargo).
-      const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo || !!linea?.esGranel
+      // Inventario informativo → sin tope (como cotización/encargo).
+      const sinTope = state.modoCotizacion || state.modoEncargo || !!linea?.esEncargo || !!linea?.inventarioInformativo
       const tope = sinTope ? action.cantidad : existencia
-      // Granel: se permite cantidad DECIMAL (ej. 0.541 kg o 1.5 m³), mínimo 0.001
-      // y redondeada a 3 decimales. Aplica a la venta fraccionada (`granel`) y a
-      // las presentaciones de artículo especial (`esGranel`). No-granel: entero,
-      // mínimo 1 (como siempre).
-      const esGranel = !!linea?.granel || !!linea?.esGranel
-      const min = esGranel ? 0.001 : 1
+      // Se permite cantidad DECIMAL (ej. 0.541 kg o 1.5 m³), mínimo 0.001 y
+      // redondeada a 3 decimales. Aplica a la venta fraccionada (`granel`) y a
+      // los niveles de inventario informativo (`inventarioInformativo`, ej. 1.5
+      // carretillas de arena). El resto: entero, mínimo 1 (como siempre).
+      const permiteDecimal = !!linea?.granel || !!linea?.inventarioInformativo
+      const min = permiteDecimal ? 0.001 : 1
       const bruto = Math.max(min, Math.min(action.cantidad, tope))
       // Precisión alta (captura por monto): redondea a 6 decimales, suficiente
       // para que cantidad × precio cuadre exacto al centavo con el monto tecleado.
       // Precisión normal (tecleo directo / +−): redondea a milésimas, como siempre.
-      const clamped = esGranel
+      const clamped = permiteDecimal
         ? Math.round(bruto * (action.precisionAlta ? 1e6 : 1e3)) / (action.precisionAlta ? 1e6 : 1e3)
         : bruto
       return {
         ...state,
-        items: state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i),
+        items: consolidarCarrito(state.items.map((i) => i.sku === action.sku ? { ...i, cantidad: clamped } : i)),
       }
     }
 

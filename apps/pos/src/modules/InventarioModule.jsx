@@ -6,6 +6,7 @@ import { formatMXN } from "../lib/format"
 import { DataTable } from "../components/DataTable"
 import { InventarioToolbar } from "../components/InventarioToolbar"
 import SelectorArticulosPopup from "../components/SelectorArticulosPopup"
+import { factorABase } from "../lib/niveles"
 
 /**
  * Ajuste masivo de inventario por SKU — módulo React (reemplaza el viejo iframe).
@@ -73,6 +74,18 @@ export function InventarioModule() {
     // Factor. Si no hay factor (artículo normal), es el mismo valor de siempre.
     const factor = Number(a.factor) || 1
     const costoUnidadVenta = (a.precioCompra ?? 0) / factor
+    // `a.existencia` (desde /caja/articulos) ya viene convertida a la unidad
+    // MÁS PEQUEÑA de la cadena (ej. Pieza) — es lo que se muestra/edita aquí.
+    // Pero /caja/ajuste-inventario escribe DIRECTO al inventory item real de
+    // Medusa, que está en la unidad BASE (ej. Bolsa): `factorBase` es cuántas
+    // unidades más pequeñas (Piezas) componen 1 unidad base (Bolsa) — el
+    // recíproco de factorABase(nivelMenor), que expresa lo contrario (cuántas
+    // unidades BASE representa 1 Pieza). Con 1 solo nivel, factorBase=1.
+    const niveles = Array.isArray(a.nivelesUnidad) ? a.nivelesUnidad : []
+    const nivelMenor = niveles[0]
+    const factorNivelMenorABase = niveles.length > 0 ? factorABase(niveles, nivelMenor.id) : 1
+    const factorBase = factorNivelMenorABase > 0 ? 1 / factorNivelMenorABase : 1
+    const unidadMenor = nivelMenor?.nombre || ""
     return {
       clave: a.clave,
       descripcion: a.descripcion,
@@ -80,6 +93,8 @@ export function InventarioModule() {
       existencia: a.existencia ?? 0,
       precioCompra: costoUnidadVenta,
       nueva: String(a.existencia ?? 0),
+      unidad: unidadMenor,
+      factorBase,
     }
   }
 
@@ -166,7 +181,12 @@ export function InventarioModule() {
     {
       accessorKey: "existencia",
       header: "Stock actual",
-      cell: ({ getValue }) => <span className="tabular-nums">{getValue()}</span>,
+      cell: ({ row }) => (
+        <span className="tabular-nums">
+          {row.original.existencia}
+          {row.original.unidad && <span className="ml-1 text-xs text-gray-400 font-normal">{row.original.unidad}</span>}
+        </span>
+      ),
     },
     {
       accessorKey: "nueva",
@@ -178,13 +198,16 @@ export function InventarioModule() {
         const invalido = f.nueva === "" || isNaN(n)
         const negativo = !invalido && n < 0
         return (
-          <input
-            type="number"
-            value={f.nueva}
-            onChange={(e) => setNueva(f.clave, e.target.value)}
-            className={`w-24 text-right font-bold rounded px-2 py-1.5 text-sm border focus:outline-none focus:ring-1 focus:ring-orange-400
-              ${negativo || invalido ? "border-red-500" : "border-gray-300"}`}
-          />
+          <div className="flex items-center justify-end gap-1.5">
+            <input
+              type="number"
+              value={f.nueva}
+              onChange={(e) => setNueva(f.clave, e.target.value)}
+              className={`w-24 text-right font-bold rounded px-2 py-1.5 text-sm border focus:outline-none focus:ring-1 focus:ring-orange-400
+                ${negativo || invalido ? "border-red-500" : "border-gray-300"}`}
+            />
+            {f.unidad && <span className="text-xs text-gray-400">{f.unidad}</span>}
+          </div>
         )
       },
     },
@@ -242,7 +265,14 @@ export function InventarioModule() {
     setConfirmando(false)
     setGuardando(true)
     try {
-      const ajustes = conCambio.map((f) => ({ sku: f.clave, nueva_cantidad: Number(f.nueva) }))
+      // La tabla muestra/edita en la unidad MÁS PEQUEÑA (ej. Pieza), pero el
+      // inventory item real de Medusa se lleva en la unidad BASE (ej. Bolsa) —
+      // se reconvierte aquí (÷ factorBase, piso) antes de enviar. Con 1 solo
+      // nivel, factorBase=1 y no cambia nada.
+      const ajustes = conCambio.map((f) => ({
+        sku: f.clave,
+        nueva_cantidad: Math.floor(Number(f.nueva) / (f.factorBase || 1)),
+      }))
       const res = await ajustarInventario(ajustes)
       const actualizados = res?.actualizados ?? 0
       const errores = res?.errores ?? []

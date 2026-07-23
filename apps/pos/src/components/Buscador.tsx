@@ -7,9 +7,10 @@ import { GridProductos } from "./GridProductos"
 import { GridPaquetes } from "./GridPaquetes"
 import { ProductoDetalle } from "./ProductoDetalle"
 import { DesglosePaqueteModal } from "./DesglosePaqueteModal"
-import { PresentacionSelectorModal, ID_PRESENTACION_BASE } from "./PresentacionSelectorModal"
+import { PresentacionSelectorModal } from "./PresentacionSelectorModal"
 import { nombreUnidad } from "../lib/unidades-sat"
-import type { PresentacionGranel } from "../lib/client"
+import type { OpcionPresentacion } from "../lib/client"
+import { factorABase, factorDesdeMenor, nivelesDesdeLegacy, nivelBase } from "../lib/niveles"
 
 export function Buscador() {
   const { state, dispatch } = usePOS()
@@ -18,6 +19,11 @@ export function Buscador() {
     [state.items]
   )
   const [query, setQuery] = useState("")
+  // Texto REALMENTE buscado (solo se actualiza al ejecutar buscar() — Enter o
+  // botón Buscar), a diferencia de `query` que cambia en cada tecla. Los
+  // paquetes se filtran contra este, igual que los productos, para no mostrar
+  // resultados prematuros con una sola letra tecleada.
+  const [queryBuscada, setQueryBuscada] = useState("")
   const [filtros, setFiltros] = useState<FiltrosBusqueda>({})
   const [filtroStock, setFiltroStock] = useState<FiltroStock>("todos")
   const [resultados, setResultados] = useState<ProductoPOS[]>([])
@@ -31,130 +37,119 @@ export function Buscador() {
   const [paquetes, setPaquetes] = useState<Paquete[]>([])
   const [aplicandoPkg, setAplicandoPkg] = useState<string | null>(null)
   const [paqueteDesglose, setPaqueteDesglose] = useState<Paquete | null>(null)
-  // Artículo especial (a granel): producto cuyo selector de presentación está abierto.
-  const [granelSel, setGranelSel] = useState<ProductoPOS | null>(null)
-  // Unidad de compra ≠ unidad de venta (ej. Rollo=50 Metros): producto cuyo
-  // selector "¿por metro o por rollo?" está abierto.
-  const [compraVentaSel, setCompraVentaSel] = useState<ProductoPOS | null>(null)
+  // Artículo con cadena de N niveles de unidad (Pieza→Bolsa→Caja…, inventario
+  // real o informativo tipo Arena): producto cuyo selector de nivel está abierto.
+  const [nivelesSel, setNivelesSel] = useState<ProductoPOS | null>(null)
 
-  // Id reservado para la opción "unidad de compra completa" (ej. 1 Rollo).
-  const ID_UNIDAD_COMPRA = "__unidad_compra__"
+  // Cadena de N niveles del producto (Pieza→Bolsa→Caja…) — si el backend no
+  // trajo `nivelesUnidad` (respuesta vieja en caché), se deriva en cliente del
+  // mismo shape legacy. Nunca queda sin cadena equivalente.
+  const cadenaNiveles = useMemo(() => {
+    if (!nivelesSel) return []
+    return nivelesSel.nivelesUnidad?.length
+      ? nivelesSel.nivelesUnidad
+      : nivelesDesdeLegacy(nivelesSel)
+  }, [nivelesSel])
 
-  // Presentaciones sintéticas para el selector: unidad de VENTA suelta (usa
-  // precioVenta1-4, cantidad libre) + unidad de COMPRA completa (usa precio1-4,
-  // cantidad = factor). Ambos juegos de precio son independientes — capturados a
-  // mano en ArticleDrawer, sin relación matemática (ni multiplicar por factor).
-  // Reutiliza PresentacionSelectorModal, pero a diferencia del granel el
-  // inventario es REAL — se agrega con el SKU real del producto (no compuesto),
-  // así el backend la trata como venta normal: valida y descuenta el stock real.
-  const presentacionesCompraVenta = useMemo<PresentacionGranel[]>(() => {
-    if (!compraVentaSel) return []
-    const factor = compraVentaSel.factor ?? 1
-    const precioUnidadVenta = compraVentaSel.precioVenta1 ?? 0
-    const precioUnidadCompra = compraVentaSel.precio
-    const stockAlcanzaCompra = compraVentaSel.existencia >= factor
-    return [
-      {
-        id: ID_PRESENTACION_BASE,
-        nombre: nombreUnidad(compraVentaSel.unidadVenta ?? ""),
-        precio: precioUnidadVenta,
-        factor: 1,
-        agotado: compraVentaSel.existencia <= 0,
-      },
-      {
-        id: ID_UNIDAD_COMPRA,
-        nombre: nombreUnidad(compraVentaSel.unidadCompra ?? ""),
-        precio: precioUnidadCompra,
+  // Presentaciones sintéticas para el selector: una opción POR NIVEL de la
+  // cadena. Con INVENTARIO REAL, el tope/agotado es por existencia (piezas
+  // reales ÷ factorABase(nivel), piso) y el backend valida/bloquea. Con
+  // INVENTARIO INFORMATIVO (ej. Arena), no hay tope: el agotado es el switch
+  // manual `nivel.agotado`, y la venta nunca se bloquea por stock.
+  const presentacionesNiveles = useMemo<OpcionPresentacion[]>(() => {
+    if (!nivelesSel || cadenaNiveles.length === 0) return []
+    const informativo = !!nivelesSel.inventarioInformativo
+    // `producto.existencia` ya viene del backend expresada en la unidad MÁS
+    // PEQUEÑA de la cadena (ej. Pieza — ver existenciaEnUnidadMenor en
+    // packages/api). El tope de cada nivel se calcula dividiendo entre
+    // `factorDesdeMenor` (cuántas piezas componen 1 unidad de ese nivel).
+    const existenciaMenor = nivelesSel.existencia
+    // `factor` (hacia la BASE DE INVENTARIO real, ej. Bolsa si así factura el
+    // proveedor) es el que se envía al backend para descontar/validar stock —
+    // no cambia. El texto "≈ N unidad" del selector, en cambio, siempre se
+    // expresa hacia el nivel INMEDIATO ANTERIOR en la cadena (ej. Caja ≈ 5
+    // Bolsa, Bolsa ≈ 10 Pieza): es el mismo factor ya capturado en "Factor (×
+    // nivel anterior)" del drawer, sin acumular niveles adicionales.
+    const nombreBase = nombreUnidad(nivelBase(cadenaNiveles)?.nombre ?? "")
+    return cadenaNiveles.map((nivel, idx) => {
+      const factor = factorABase(cadenaNiveles, nivel.id)
+      const factorMenorNivel = factorDesdeMenor(cadenaNiveles, nivel.id)
+      const anterior = idx > 0 ? cadenaNiveles[idx - 1] : null
+      return {
+        id: nivel.id,
+        nombre: nombreUnidad(nivel.nombre),
+        precio: nivel.precio1,
         factor,
-        agotado: !stockAlcanzaCompra,
-      },
-    ]
-  }, [compraVentaSel])
+        agotado: informativo ? !!nivel.agotado : Math.floor(existenciaMenor / factorMenorNivel) <= 0,
+        unidadBase: nombreBase,
+        factorMenor: nivel.factorDesdeAnterior ?? undefined,
+        unidadMenor: anterior ? nombreUnidad(anterior.nombre) : undefined,
+      }
+    })
+  }, [nivelesSel, cadenaNiveles])
 
-  // Confirma la venta por unidad de venta suelta o por unidad de compra completa.
-  // AMBAS usan el SKU REAL del producto (inventario real, sin sku compuesto).
-  // "Unidad de venta": cantidad = piezas/metros sueltos, precio = precioVenta1-4,
-  // tope = existencia real tal cual. "Unidad de compra": cantidad = número de
-  // BOLSAS (no piezas — así precio × cantidad cobra correctamente), precio =
-  // precio1-4 (por bolsa), tope = existencia real ÷ factor (bolsas completas
-  // disponibles). El backend usa `compraVentaFactor` para descontar
-  // cantidad × factor piezas reales del inventario (bloqueante, ver /caja/ventas).
-  function agregarCompraVenta({ producto, presentacion, cantidad }:
-    { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) {
-    const esUnidadCompra = presentacion.id === ID_UNIDAD_COMPRA
-    const factor = producto.factor ?? 1
+  // Confirma la venta por CUALQUIER nivel de la cadena (inventario real o
+  // informativo). Todas usan el SKU REAL del producto como `skuBase`: el
+  // `sku` de la línea en el carrito es compuesto (`real::nivelId`) para que
+  // cada nivel pueda vivir como su propia línea — necesario para la
+  // auto-consolidación (ver lib/niveles.ts, consolidarCarrito; se salta sola
+  // si el artículo es informativo). `factorNivelABase`/`cadenaNiveles` viajan
+  // en la línea para que el reducer pueda consolidar sin re-consultar el
+  // producto, y para que ModalCobro arme `unidad_compra_factor` al cobrar.
+  function agregarPorNivel({ producto, presentacion, cantidad }:
+    { producto: ProductoPOS; presentacion: OpcionPresentacion; cantidad: number }) {
+    const nivel = cadenaNiveles.find((n) => n.id === presentacion.id)
+    if (!nivel) return
+    const esBase = nivel.esBaseInventario
+    const informativo = !!producto.inventarioInformativo
+    // `factor` (hacia la BASE de inventario real, ej. Bolsa) alimenta
+    // `unidad_compra_factor` — lo que el backend usa para descontar del
+    // inventory item real. `factorMenorNivel` (hacia Pieza, la unidad en que
+    // ya viene `producto.existencia`) es el correcto para el TOPE mostrado en
+    // la línea del carrito — no deben confundirse.
+    const factor = presentacion.factor ?? 1
+    const factorMenorNivel = factorDesdeMenor(cadenaNiveles, nivel.id)
+    const skuLinea = `${producto.sku}::${nivel.id}`
     dispatch({
       type: "ADD_ITEM",
       item: {
-        sku: producto.sku,
+        sku: skuLinea,
         descripcion: `${producto.descripcion} — ${presentacion.nombre}`,
-        // Unidad de compra usa precio1-4 (ya son los que trae `producto`); unidad
-        // de venta usa precioVenta1-4 en su lugar — juegos independientes.
-        precio: esUnidadCompra ? producto.precio : (producto.precioVenta1 ?? producto.precio),
-        precio2: esUnidadCompra ? producto.precio2 : producto.precioVenta2,
-        precio3: esUnidadCompra ? producto.precio3 : producto.precioVenta3,
-        precio4: esUnidadCompra ? producto.precio4 : producto.precioVenta4,
+        precio: nivel.precio1,
+        precio2: nivel.precio2,
+        precio3: nivel.precio3,
+        precio4: nivel.precio4,
         impuesto: producto.impuesto,
-        // Tope de cantidad en la MISMA unidad que se está capturando: piezas
-        // sueltas, o bolsas completas disponibles (piezas reales ÷ factor).
-        existencia: esUnidadCompra ? Math.floor(producto.existencia / factor) : producto.existencia,
-        // El mayoreo (Precio2/mayoreoMin) solo tiene sentido dentro del juego de
-        // precios de COMPRA — al vender por unidad de venta suelta no aplica.
-        mayoreoActivo: esUnidadCompra ? producto.mayoreoActivo : false,
-        mayoreoMin: esUnidadCompra ? producto.mayoreoMin : undefined,
+        // Inventario informativo: sin tope (estimado, nunca bloquea). Inventario
+        // real: tope en la MISMA unidad que se está capturando (existencia ya
+        // en Pieza ÷ factorMenorNivel, piso).
+        existencia: informativo ? Number.MAX_SAFE_INTEGER : Math.floor(producto.existencia / factorMenorNivel),
+        // El mayoreo solo tiene sentido en el nivel donde ya existía (el de
+        // inventario/compra); en el nivel base (venta suelta) no aplica.
+        mayoreoActivo: esBase ? false : nivel.mayoreoActivo,
+        mayoreoMin: esBase ? undefined : nivel.mayoreoMin,
         marca: producto.marca,
         departamento: producto.departamento,
         categoria: producto.categoria,
         proveedor: producto.proveedor,
         proveedor_id: producto.proveedor_id,
-        ...(esUnidadCompra
-          ? { esUnidadCompra: true, unidadCompraNombre: presentacion.nombre, compraVentaFactor: factor }
-          : {}),
+        inventarioInformativo: informativo,
+        // El backend generaliza el descuento/validación de inventario vía
+        // `unidad_compra_factor`; con informativo, salta la validación de
+        // stock pero descuenta igual (puede ir a negativo) — ver /caja/ventas.
+        ...(!esBase || informativo ? { esUnidadCompra: true, unidadCompraNombre: presentacion.nombre, compraVentaFactor: factor } : {}),
+        nivelId: nivel.id,
+        factorNivelABase: factor,
+        cadenaNiveles,
+        skuBase: producto.sku,
       },
     })
     if (cantidad !== 1) {
-      dispatch({ type: "SET_CANTIDAD", sku: producto.sku, cantidad })
+      dispatch({ type: "SET_CANTIDAD", sku: skuLinea, cantidad })
     }
     // Si se abrió desde el detalle del producto, regresa a resultados (mismo
     // comportamiento que handleAgregar en ProductoDetalle).
     setSeleccionado(null)
-  }
-
-  // Agrega al carrito una línea de artículo especial con la presentación elegida.
-  // El precio de la línea = precio de la presentación (ya c/IVA desde el backend).
-  // `granelFactor` = equivalencia en unidad base para el descuento informativo.
-  function agregarGranel({ producto, presentacion, cantidad }:
-    { producto: ProductoPOS; presentacion: PresentacionGranel; cantidad: number }) {
-    dispatch({
-      type: "ADD_ITEM",
-      item: {
-        // SKU compuesto (padre + presentación) para que cada presentación sea su
-        // propia línea en el carrito (m³ y carretilla no se fusionan).
-        sku: `${producto.sku}::${presentacion.id}`,
-        descripcion: `${producto.descripcion} — ${presentacion.nombre}`,
-        precio: presentacion.precio,
-        impuesto: producto.impuesto,
-        existencia: 0,
-        marca: producto.marca,
-        departamento: producto.departamento,
-        categoria: producto.categoria,
-        proveedor: producto.proveedor,
-        proveedor_id: producto.proveedor_id,
-        // Marca de artículo especial: inventario informativo (no se topa), y datos
-        // de la presentación para el ticket y el descuento del inventario base.
-        esGranel: true,
-        presentacion: presentacion.nombre,
-        granelFactor: presentacion.factor ?? null,
-        // El SKU REAL del producto (sin sufijo) — lo necesita el backend para el
-        // descuento de inventario. Lo pasamos vía granelSku para separarlo del sku
-        // compuesto de la línea.
-        granelSku: producto.sku,
-      },
-    })
-    // Si se pidió una cantidad != 1, ajustamos la línea recién creada.
-    if (cantidad !== 1) {
-      dispatch({ type: "SET_CANTIDAD", sku: `${producto.sku}::${presentacion.id}`, cantidad })
-    }
   }
   useEffect(() => {
     let on = true
@@ -169,13 +164,14 @@ export function Buscador() {
     [paquetes]
   )
 
-  // Paquetes que coinciden con el texto buscado (por nombre). Solo cuando hay
-  // texto, para no saturar el grid con filtros de taxonomía.
+  // Paquetes que coinciden con el texto REALMENTE buscado (por nombre) — solo
+  // se actualiza al presionar Enter/Buscar (queryBuscada), no en cada tecla
+  // (igual que la búsqueda de productos, buscar()).
   const paquetesCoincidentes = useMemo(() => {
-    const q = query.trim().toLowerCase()
+    const q = queryBuscada.trim().toLowerCase()
     if (!q) return []
     return paquetes.filter((p) => p.nombre.toLowerCase().includes(q))
-  }, [query, paquetes])
+  }, [queryBuscada, paquetes])
 
   const paquetesAplicados = useMemo(
     () => new Set(state.items.map((i) => i.paquete_id).filter(Boolean) as string[]),
@@ -202,6 +198,7 @@ export function Buscador() {
   async function buscar(q: string, filtrosExtra?: FiltrosBusqueda) {
     const filtrosEfectivos = filtrosExtra ?? filtros
     const texto = q.trim()
+    setQueryBuscada(q)
 
     // Si no hay texto ni filtros activos, no buscar
     if (!texto && !filtrosEfectivos.category_id && !filtrosEfectivos.departamento) return
@@ -232,6 +229,7 @@ export function Buscador() {
       if (seleccionado) { setSeleccionado(null); return }
       setResultados([])
       setQuery("")
+      setQueryBuscada("")
       setFiltros({})
     }
   }
@@ -301,7 +299,7 @@ export function Buscador() {
         <ProductoDetalle
           producto={seleccionado}
           onVolver={handleVolver}
-          onSeleccionarCompraVenta={setCompraVentaSel}
+          onSeleccionarCompraVenta={setNivelesSel}
         />
       )}
 
@@ -325,8 +323,7 @@ export function Buscador() {
             onSeleccionar={setSeleccionado}
             cartMap={cartMap}
             skusEnPaquete={skusEnPaquete}
-            onSeleccionarGranel={setGranelSel}
-            onSeleccionarCompraVenta={setCompraVentaSel}
+            onSeleccionarNiveles={setNivelesSel}
             onAgregar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta } })}
             onEncargar={(p) => dispatch({ type: "ADD_ITEM", item: { sku: p.sku, descripcion: p.descripcion, precio: p.precio, precio2: p.precio2, precio3: p.precio3, precio4: p.precio4, impuesto: p.impuesto, existencia: p.existencia, mayoreoActivo: p.mayoreoActivo, mayoreoMin: p.mayoreoMin, marca: p.marca, departamento: p.departamento, categoria: p.categoria, proveedor: p.proveedor, proveedor_id: p.proveedor_id, granel: p.granel, unidadVenta: p.unidadVenta, esEncargo: true } })}
             onQuitar={(sku) => dispatch({ type: "DECREMENT", sku })}
@@ -341,20 +338,13 @@ export function Buscador() {
       {/* Modal de desglose del paquete (artículos, precios, ahorro) */}
       <DesglosePaqueteModal paquete={paqueteDesglose} onClose={() => setPaqueteDesglose(null)} />
 
-      {/* Selector de presentación para artículo especial (a granel) */}
+      {/* Selector de nivel/presentación (cadena de N niveles de unidad) */}
       <PresentacionSelectorModal
-        producto={granelSel}
-        onConfirmar={agregarGranel}
-        onClose={() => setGranelSel(null)}
-      />
-
-      {/* Selector metro-vs-rollo (unidad de compra ≠ unidad de venta, inventario real) */}
-      <PresentacionSelectorModal
-        producto={compraVentaSel}
-        presentacionesOverride={presentacionesCompraVenta}
-        subtitulo="¿Por unidad suelta o completa?"
-        onConfirmar={agregarCompraVenta}
-        onClose={() => setCompraVentaSel(null)}
+        producto={nivelesSel}
+        presentacionesOverride={presentacionesNiveles}
+        subtitulo="¿Cómo lo vendes?"
+        onConfirmar={agregarPorNivel}
+        onClose={() => setNivelesSel(null)}
       />
     </div>
   )

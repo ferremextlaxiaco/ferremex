@@ -596,19 +596,44 @@ export default function ArticlesModule({ vista = "articulos" }) {
               </div>
 
               <div className="ar-detail-section">
-                <p className="ar-detail-section-title">Unidades</p>
-                <div className="ar-detail-rows">
-                  {[
-                    ["U. de Compra", selected.unidadCompra],
-                    ["U. de Venta",  selected.unidadVenta],
-                    ["Factor",       selected.factor],
-                  ].map(([label, value]) => (
-                    <div key={label} className="ar-detail-row">
-                      <span className="ar-detail-label">{label}</span>
-                      <span className="ar-detail-value">{value}</span>
-                    </div>
-                  ))}
-                </div>
+                <p className="ar-detail-section-title">
+                  Unidades
+                  {selected.inventarioInformativo && (
+                    <span className="ar-iva-badge" style={{ marginLeft: 8 }}>
+                      Inventario informativo{selected.agotadoGlobal ? " · 🔴 Agotado" : ""}
+                    </span>
+                  )}
+                </p>
+                {(selected.nivelesUnidad?.length ?? 0) > 0 ? (
+                  <div className="ar-detail-rows">
+                    {selected.nivelesUnidad.map((nivel, idx) => (
+                      <div key={nivel.id} className="ar-detail-row">
+                        <span className="ar-detail-label">
+                          {nivel.nombre}
+                          {nivel.esBaseInventario ? " 🔒" : ""}
+                          {idx > 0 ? ` (× ${nivel.factorDesdeAnterior} ${selected.nivelesUnidad[idx - 1]?.nombre ?? ""})` : ""}
+                          {selected.inventarioInformativo && (nivel.agotado ? " · 🔴 Agotado" : " · 🟢 Disponible")}
+                        </span>
+                        <span className="ar-detail-value">
+                          ${(selected.aplicarIva ? (Number(nivel.precio1) || 0) * 1.16 : (Number(nivel.precio1) || 0)).toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="ar-detail-rows">
+                    {[
+                      ["U. de Compra", selected.unidadCompra],
+                      ["U. de Venta",  selected.unidadVenta],
+                      ["Factor",       selected.factor],
+                    ].map(([label, value]) => (
+                      <div key={label} className="ar-detail-row">
+                        <span className="ar-detail-label">{label}</span>
+                        <span className="ar-detail-value">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="ar-detail-section">
@@ -650,6 +675,7 @@ export default function ArticlesModule({ vista = "articulos" }) {
                   })}
                 </div>
               </div>
+
 
               {selected.especificaciones?.length > 0 && (
                 <div className="ar-detail-section">

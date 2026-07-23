@@ -3,6 +3,7 @@ import { ContainerRegistrationKeys, Modules, ProductStatus } from "@medusajs/fra
 import { slugify as slugifyText, normalizarFonetico } from "../../../lib/text"
 import { pesosAAmount, amountAPesos } from "../../../lib/precio"
 import { productosPublicadosMeta, invalidarProductosMetaCache } from "../../../lib/productos-meta-cache"
+import { nivelesDesdeLegacy, existenciaEnUnidadMenor } from "../../../lib/niveles"
 
 // Trocea un array de IDs y ejecuta `fn` por lote de forma SECUENCIAL (no
 // Promise.all). Un solo listProducts({id: 15000 IDs}, {relations:[...]}) genera
@@ -86,24 +87,32 @@ function metaBool(meta: Record<string, unknown>, ...keys: string[]): boolean {
   return false
 }
 
-// Presentaciones del artículo especial (a granel). Se guardan como array JSON en
-// metadata. Cada una: { id, nombre, precio (s/IVA), factor (equiv. en unidad base,
-// opcional para el descuento informativo), agotado }. Saneamos al leer para tolerar
-// datos viejos o corruptos sin romper el mapeo.
+// Cadena de N niveles de unidad (generaliza unidadCompra/unidadVenta/factor —
+// ver lib/niveles.ts). Se guarda como array JSON en metadata.nivelesUnidad
+// cuando el artículo se edita con el builder nuevo. Saneamos al leer para
+// tolerar datos corruptos/parciales sin romper el mapeo.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function metaPresentaciones(meta: Record<string, unknown>): any[] {
-  const raw = meta["presentaciones"]
-  if (!Array.isArray(raw)) return []
+function metaNivelesUnidad(meta: Record<string, unknown>): any[] {
+  const raw = meta["nivelesUnidad"]
+  if (!Array.isArray(raw) || raw.length === 0) return []
   return raw
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    .map((p: any) => ({
-      id: String(p?.id ?? ""),
-      nombre: String(p?.nombre ?? ""),
-      precio: Number(p?.precio) || 0,
-      factor: p?.factor === "" || p?.factor == null ? null : Number(p.factor) || 0,
-      agotado: Boolean(p?.agotado),
+    .map((n: any) => ({
+      id: String(n?.id ?? ""),
+      nombre: String(n?.nombre ?? ""),
+      claveUnidadSat: String(n?.claveUnidadSat ?? "H87"),
+      precio1: Number(n?.precio1) || 0,
+      precio2: Number(n?.precio2) || 0,
+      precio3: Number(n?.precio3) || 0,
+      precio4: Number(n?.precio4) || 0,
+      mayoreoActivo: Boolean(n?.mayoreoActivo),
+      mayoreoMin: Number(n?.mayoreoMin) || 0,
+      factorDesdeAnterior: n?.factorDesdeAnterior === "" || n?.factorDesdeAnterior == null ? null : Number(n.factorDesdeAnterior) || null,
+      esBaseInventario: Boolean(n?.esBaseInventario),
+      agotado: Boolean(n?.agotado),
+      esFraccionUnidadBase: Boolean(n?.esFraccionUnidadBase),
     }))
-    .filter((p) => p.nombre !== "")
+    .filter((n) => n.nombre !== "")
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -117,8 +126,12 @@ function thumbnailPath(url: string | null | undefined): string | null {
 }
 
 // Map Medusa product + variant + precio1 + existencia → ArticuloPOS
+// `existenciaBase` es la cantidad real del inventory item de Medusa (unidad
+// BASE de inventario, ej. Bolsas si así factura el proveedor) — se convierte
+// a la unidad MÁS PEQUEÑA de la cadena (ej. Piezas) antes de exponerla como
+// `existencia`, igual que /caja/productos (ver existenciaEnUnidadMenor).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function toArticuloPOS(product: any, variant: any, precio1: number, existencia: number = 0): object {
+function toArticuloPOS(product: any, variant: any, precio1: number, existenciaBase: number = 0): object {
   const meta = (product.metadata ?? {}) as Record<string, unknown>
 
   // Imágenes desde product.images[] (campo nativo de Medusa — portable a S3/CDN)
@@ -130,6 +143,27 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
 
   // thumbnail: campo nativo de Medusa (catálogo importado) o primera imagen POS
   const thumb = thumbnailPath(product.thumbnail) ?? imagenes[0] ?? null
+
+  // Cadena resuelta ANTES del `return` para reusarla también en `existencia`
+  // (convertir de la unidad BASE real, ej. Bolsa, a la unidad MÁS PEQUEÑA, ej.
+  // Pieza) — misma fuente que la propiedad `nivelesUnidad` de abajo.
+  const nivelesResueltos = metaNivelesUnidad(meta).length > 0
+    ? metaNivelesUnidad(meta)
+    : nivelesDesdeLegacy({
+        unidadVenta: metaStr(meta, "unidadVenta") || "Pieza",
+        unidadCompra: metaStr(meta, "unidadCompra") || "Pieza",
+        factor: metaNum(meta, "factor") || 1,
+        precioVenta1: metaNum(meta, "precioVenta1"),
+        precioVenta2: metaNum(meta, "precioVenta2"),
+        precioVenta3: metaNum(meta, "precioVenta3"),
+        precioVenta4: metaNum(meta, "precioVenta4"),
+        precio1,
+        precio2: metaNum(meta, "precio2"),
+        precio3: metaNum(meta, "precio3"),
+        precio4: metaNum(meta, "precio4"),
+        mayoreoActivo: metaBool(meta, "mayoreoActivo"),
+        mayoreoMin: metaNum(meta, "mayoreoMin"),
+      })
 
   return {
     id: product.id,
@@ -170,20 +204,26 @@ function toArticuloPOS(product: any, variant: any, precio1: number, existencia: 
     localizacion: metaStr(meta, "localizacion"),
     peso: product.weight ? product.weight / 1000 : metaNum(meta, "peso"),
     ventaGranel: metaBool(meta, "granel", "ventaGranel"),
-    // Artículo especial (a granel): inventario informativo + presentaciones
-    // (padre→hijos) + interruptor manual de disponibilidad. Ver ArticleDrawer.
-    esGranel: metaBool(meta, "esGranel"),
-    agotado: metaBool(meta, "agotado"),
-    // Disponibilidad SOLO de la unidad base (m³ = el Precio 1 del artículo) como
-    // forma de venta propia en el modal, independiente de las presentaciones hijas.
-    agotadoBase: metaBool(meta, "agotadoBase"),
-    unidadBase: metaStr(meta, "unidadBase"),
-    presentaciones: metaPresentaciones(meta),
+    // Inventario informativo (antes "artículo especial/granel", ej. Arena): el
+    // nivel base de la cadena no bloquea por stock; cada nivel lleva su propio
+    // `agotado` (ver nivelesUnidad más abajo). `agotadoGlobal` apaga TODO el
+    // artículo de un jalón. Ver ArticleDrawer.
+    inventarioInformativo: metaBool(meta, "inventarioInformativo"),
+    agotadoGlobal: metaBool(meta, "agotadoGlobal"),
+    // Cadena de N niveles (generalización de unidadCompra/unidadVenta/factor).
+    // Si el artículo ya se editó con el builder nuevo, metadata.nivelesUnidad
+    // es la fuente real (necesaria para cadenas de 3+ niveles, sin equivalente
+    // legacy). Si no existe (artículo viejo, nunca reguardado), se deriva de
+    // los campos legacy — nunca queda sin cadena equivalente.
+    nivelesUnidad: nivelesResueltos,
     mayoreoActivo: metaBool(meta, "mayoreoActivo"),
     mayoreoMin: metaNum(meta, "mayoreoMin"),
     thumbnail: thumb,
     imagenes,
-    existencia,
+    // Convertida a la unidad MÁS PEQUEÑA de la cadena (ej. Pieza), no la
+    // unidad BASE de inventario real (ej. Bolsa) — ver nivelesResueltos arriba.
+    // Con 1 solo nivel (sin cadena), factor=1 y no cambia nada.
+    existencia: existenciaEnUnidadMenor(nivelesResueltos, existenciaBase),
   }
 }
 
@@ -255,14 +295,26 @@ export async function GET(req: MedusaRequest, res: MedusaResponse) {
     const allSkus = (allVars as any[]).map((v) => v.sku).filter(Boolean) as string[]
     const stockPorSku = await existenciasPorSku(inventoryModule, allSkus)
 
-    // Filtrar productos bajo mínimo
+    // Filtrar productos bajo mínimo. `inventarioMin` se captura pensando en la
+    // unidad MÁS PEQUEÑA de venta (ej. Pieza), así que la existencia real
+    // (unidad BASE, ej. Bolsa) se convierte antes de comparar — mismo criterio
+    // que `existencia` en toArticuloPOS (ver existenciaEnUnidadMenor).
     const faltanteIds: string[] = []
     for (const p of allProds as any[]) {
       const meta = (p.metadata ?? {}) as Record<string, unknown>
       const invMin = metaNum(meta, "inventarioMin", "invMin")
       if (invMin <= 0) continue
       const variant = variantByProduct.get(p.id)
-      const existencia = variant?.sku ? (stockPorSku.get(variant.sku) ?? 0) : 0
+      const existenciaBase = variant?.sku ? (stockPorSku.get(variant.sku) ?? 0) : 0
+      const nivelesRaw = metaNivelesUnidad(meta).length > 0
+        ? metaNivelesUnidad(meta)
+        : nivelesDesdeLegacy({
+            unidadVenta: metaStr(meta, "unidadVenta") || "Pieza",
+            unidadCompra: metaStr(meta, "unidadCompra") || "Pieza",
+            factor: metaNum(meta, "factor") || 1,
+            precio1: 0, precio2: 0, precio3: 0, precio4: 0,
+          })
+      const existencia = existenciaEnUnidadMenor(nivelesRaw, existenciaBase)
       if (existencia < invMin) faltanteIds.push(p.id)
     }
 
@@ -669,12 +721,10 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         factor: body.factor ?? 1,
         impuesto: body.aplicarIva ?? false,
         granel: body.ventaGranel ?? false,
-        // Artículo especial (a granel): inventario informativo + presentaciones.
-        esGranel: body.esGranel ?? false,
-        agotado: body.agotado ?? false,
-        agotadoBase: body.agotadoBase ?? false,
-        unidadBase: body.unidadBase ?? "",
-        presentaciones: Array.isArray(body.presentaciones) ? body.presentaciones : [],
+        // Inventario informativo (antes "artículo especial/granel", ej.
+        // Arena): el `agotado` real vive por nivel dentro de nivelesUnidad.
+        inventarioInformativo: body.inventarioInformativo ?? false,
+        agotadoGlobal: body.agotadoGlobal ?? false,
         precioNeto: body.precioNeto ?? false,
         precio_compra: body.precioCompra ?? 0,
         precio2: body.precio2 ?? 0,
@@ -696,6 +746,12 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
         especificaciones: body.especificaciones ?? [],
         mayoreoActivo: body.mayoreoActivo ?? false,
         mayoreoMin: body.mayoreoMin ?? 0,
+        // Cadena de N niveles de unidad (Pieza→Bolsa→Caja…). Fuente REAL para
+        // artículos con 3+ niveles; los campos legacy de arriba (unidadCompra/
+        // unidadVenta/factor/precioVenta1-4) siguen recibiendo un dual-write
+        // equivalente cuando la cadena es de exactamente 2 niveles (ver
+        // ArticleDrawer.jsx handleSave) para no romper consumidores viejos.
+        nivelesUnidad: Array.isArray(body.nivelesUnidad) ? body.nivelesUnidad : [],
       },
       variants: [
         {
@@ -703,9 +759,9 @@ export async function POST(req: MedusaRequest, res: MedusaResponse) {
           sku: body.clave,
           barcode: body.claveAlterna || undefined,
           manage_inventory: true,
-          // Granel = inventario informativo: se permite backorder para que el
+          // Inventario informativo: se permite backorder para que el
           // descuento pueda dejar el stock en negativo sin bloquear la venta.
-          allow_backorder: body.esGranel ?? false,
+          allow_backorder: body.inventarioInformativo ?? false,
           prices:
             body.precio1 > 0
               ? [{ amount: pesosAAmount(body.precio1), currency_code: "mxn" }]
@@ -793,11 +849,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       factor: body.factor ?? 1,
       impuesto: body.aplicarIva ?? false,
       granel: body.ventaGranel ?? false,
-      // Artículo especial (a granel): inventario informativo + presentaciones.
-      esGranel: body.esGranel ?? false,
-      agotado: body.agotado ?? false,
-      unidadBase: body.unidadBase ?? "",
-      presentaciones: Array.isArray(body.presentaciones) ? body.presentaciones : [],
+      // Inventario informativo (antes "artículo especial/granel") — ver POST.
+      inventarioInformativo: body.inventarioInformativo ?? false,
+      agotadoGlobal: body.agotadoGlobal ?? false,
       precioNeto: body.precioNeto ?? false,
       precio_compra: body.precioCompra ?? 0,
       precio2: body.precio2 ?? 0,
@@ -819,6 +873,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       especificaciones: body.especificaciones ?? [],
       mayoreoActivo: body.mayoreoActivo ?? false,
       mayoreoMin: body.mayoreoMin ?? 0,
+      // Cadena de N niveles — ver nota en POST. Dual-write legacy ya resuelto
+      // en el frontend (ArticleDrawer.jsx handleSave) para cadenas de 2 niveles.
+      nivelesUnidad: Array.isArray(body.nivelesUnidad) ? body.nivelesUnidad : [],
     },
   }
 
@@ -843,9 +900,9 @@ export async function PUT(req: MedusaRequest, res: MedusaResponse) {
       sku: body.clave,
       barcode: body.claveAlterna || null,
       title: body.descripcion,
-      // Granel = inventario informativo: permite backorder (stock negativo) para
-      // que el descuento no bloquee la venta. Al volver a artículo normal se apaga.
-      allow_backorder: body.esGranel ?? false,
+      // Inventario informativo: permite backorder (stock negativo) para que el
+      // descuento no bloquee la venta. Al volver a artículo normal se apaga.
+      allow_backorder: body.inventarioInformativo ?? false,
     })
 
     // Actualizar precio en el price set

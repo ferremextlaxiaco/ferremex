@@ -108,17 +108,13 @@ export async function PATCH(req: MedusaRequest, res: MedusaResponse) {
           const invId = itemPorSku.get(it.sku as string)
           const locId = invId ? locPorItemId.get(invId) : undefined
           if (invId && locId) {
-            // GRANEL: se descontó `granel_descuento` (unidad base), no `cantidad`
-            // (presentaciones). Reintegramos exactamente lo que se descontó; 0 si la
-            // presentación no tenía factor (nunca tocó inventario).
-            // UNIDAD DE COMPRA (ej. "Bolsa"): se descontó cantidad × factor piezas
-            // reales, no `cantidad` (que está en bolsas) — mismo criterio que granel.
-            const g = it as { granel?: boolean; granel_descuento?: number; unidad_compra_factor?: number }
-            const reintegro = g.granel
-              ? (Number(g.granel_descuento) || 0)
-              : g.unidad_compra_factor
-                ? it.cantidad * g.unidad_compra_factor
-                : it.cantidad
+            // NIVEL de cadena de unidades (ej. "Bolsa" o "Carretilla"): se
+            // descontó cantidad × factor unidades reales, no `cantidad` (que
+            // está en unidades del nivel).
+            const g = it as { unidad_compra_factor?: number }
+            const reintegro = g.unidad_compra_factor
+              ? it.cantidad * g.unidad_compra_factor
+              : it.cantidad
             if (reintegro > 0) {
               await inventoryModule.adjustInventory(invId, locId, +reintegro)
             }

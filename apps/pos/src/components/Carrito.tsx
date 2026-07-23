@@ -29,9 +29,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
   // encargo global TAMPOCO (todo es sobre pedido, sin tope de stock). En venta
   // normal se marcan en rojo y bloquean el cobro hasta corregirlas O marcarlas
   // como ENCARGO. Una línea de encargo NO cuenta como exceso.
-  // Las líneas de artículo especial (granel) tienen inventario informativo
-  // (existencia 0), así que NUNCA cuentan como exceso ni bloquean el cobro.
-  const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia && !i.esEncargo && !i.esGranel
+  // Las líneas de inventario informativo tienen existencia sin tope, así que
+  // NUNCA cuentan como exceso ni bloquean el cobro.
+  const excedeStock = (i: (typeof items)[number]) => i.cantidad > i.existencia && !i.esEncargo && !i.inventarioInformativo
   const skusSinStock = (modoCotizacion || modoEncargo) ? [] : items.filter(excedeStock)
   const hayExcesoStock = skusSinStock.length > 0
 
@@ -123,9 +123,9 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
       e.currentTarget.blur()
     } else if (e.key === "ArrowUp") {
       e.preventDefault()
-      // En cotización, modo encargo global, una línea de encargo o granel
-      // (inventario informativo) se puede exceder la existencia.
-      if (modoCotizacion || modoEncargo || item.esEncargo || item.esGranel || item.cantidad < item.existencia) {
+      // En cotización, modo encargo global, una línea de encargo o de
+      // inventario informativo se puede exceder la existencia.
+      if (modoCotizacion || modoEncargo || item.esEncargo || item.inventarioInformativo || item.cantidad < item.existencia) {
         dispatch({ type: "INCREMENT", sku })
         setDrafts((prev) => ({ ...prev, [sku]: String(item.cantidad + 1) }))
       }
@@ -299,11 +299,11 @@ export function Carrito({ onCobrar, onImprimirCotizacion, onPonerEnEspera }: Car
             // solo las marcadas individualmente.
             const esEncargo = !modoCotizacion && (modoEncargo || !!item.esEncargo)
             // "Sin stock" (rojo, bloquea) solo si excede Y NO está marcado encargo.
-            // Las líneas granel tienen inventario informativo → nunca "sin stock".
-            const sinStock = !modoCotizacion && !modoEncargo && item.cantidad > item.existencia && !esEncargo && !item.esGranel
+            // Las líneas de inventario informativo nunca cuentan "sin stock".
+            const sinStock = !modoCotizacion && !modoEncargo && item.cantidad > item.existencia && !esEncargo && !item.inventarioInformativo
             // La cantidad no se topa al inventario en cotización, modo encargo global,
-            // una línea de encargo individual, ni una línea granel (informativo).
-            const sinTopeCantidad = modoCotizacion || modoEncargo || esEncargo || !!item.esGranel
+            // una línea de encargo individual, ni una línea de inventario informativo.
+            const sinTopeCantidad = modoCotizacion || modoEncargo || esEncargo || !!item.inventarioInformativo
 
             return (
               <div
